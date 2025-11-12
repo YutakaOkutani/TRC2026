@@ -2,10 +2,9 @@
 
 # CanSat Control System
 
-Raspberry Pi Zero 2 W を使用した CanSat 制御システムのリポジトリ。
+Raspberry Pi Zero 2 W を使用した TRC2026に向けた CanSat 制御システムのリポジトリ。
 
-本ドキュメントは開発環境の構築から、実行に必要な初期設定、依存パッケージの導入方法までを網羅する。
-**初めて Raspberry Pi を扱う者でも再現可能なこと**を前提とし、各手順の目的を明記する。
+本ドキュメントは、今後の基準となるように、開発環境の構築から、実行に必要な初期設定、依存パッケージの導入方法までを網羅する。
 
 ---
 
@@ -14,12 +13,11 @@ Raspberry Pi Zero 2 W を使用した CanSat 制御システムのリポジト�
 ### ハードウェア
 
 * Raspberry Pi Zero 2 W
-* microSDカード（16GB、Class 10 推奨）
+* microSDカード（16GB以上あれば良い）
 * 電源（5V / 2.5A）
 * PC（Windows / macOS / Linux のいずれか）
-* 必要に応じて
-  * USB シリアルアダプタ（初期セットアップのため）
-  * OTG ケーブル
+  * USBハブ
+  * Mini HDMI ケーブル
   * 各種センサ・アクチュエータ
 
 ### ソフトウェア
@@ -31,7 +29,7 @@ Raspberry Pi Zero 2 W を使用した CanSat 制御システムのリポジト�
 
 ---
 
-## 2. リポジトリのクローン
+## 2. リポジトリのクローン（ https://github.com/YutakaOkutani/TRC2026 ）
 
 ```
 bash
@@ -81,8 +79,7 @@ cd TRC2026
 接続できない場合は以下を確認：
 
 * 同一ネットワークにいるか
-* ファイアウォールの制限
-* `.local` 解決ができない環境では、ルータの DHCP クライアント一覧から IP を確認する（WindowsやAndroid端末では、mDNS（.local）は安定的にサポートされておらず、ホスト名接続は一般に不安定）
+* `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）は安定的にサポートされておらず、ホスト名接続は一般に不安定）
 
 ---
 
@@ -113,10 +110,10 @@ source venv/bin/activate
 ### 4.2 依存パッケージのインストール
 
 ```bash
+sudo apt update
+sudo apt install -y python3-smbus i2c-tools python3-pigpio pigpio python3-rpi.gpio python3-venv python3-pip git
 pip install -r requirements.txt
 ```
-
-（※ requirements.txt をリポジトリに合わせて管理）
 
 ---
 
@@ -156,24 +153,27 @@ sudo reboot
 
 ```
 .
-├── src/
-│   ├── main.py
-│   ├── sensors/
-│   ├── actuators/
-│   └── utils/
+├── main.py
+├── venv
+├── library/
+│   ├── BNO055.py
+│   ├── BMP180.py
+│   ├── detect_corn.py
 ├── tests/
-├── docs/
+├── requirements.txt
 └── README.md
 ```
 
 各ディレクトリの目的を以下に示す：
 
-* **src/**
-  制御コード本体。センサ読み取り・ミッションロジック・ログ保存・通信処理など。
+* **main.py**
+  制御コード本体。
+* **library**
+  importするライブラリ
 * **tests/**
   モジュール単位の動作確認用。
-* **docs/**
-  回路図・プロトコル仕様・フローチャート等を保存。
+* **requirements.txt**
+  pip でインストールするライブラリのリスト
 * **README.md**
   本書。
 
@@ -183,7 +183,7 @@ sudo reboot
 
 ```bash
 source venv/bin/activate
-python src/main.py
+python3 main.py
 ```
 
 ---
@@ -205,13 +205,12 @@ python src/main.py
 
 * OS 書き込み時に「SSH 有効化」を忘れている → 再度 Imager で設定
 * Wi-Fi 設定誤り → SSID / パスワードを再確認
-* USB シリアルで直接操作する方法も選択肢となる
+* USB シリアルで直接操作する方法も選択肢
 
 ### 9.2 センサが認識されない
 
 * `i2cdetect -y 1` で確認
 * 配線の誤り（特に GND 共通化）を再点検
-* 電源電圧不足に注意
 
 ---
 
@@ -220,5 +219,3 @@ python src/main.py
 適宜設定。
 
 ---
-
-必要であれば、**実際に使用しているセンサモジュールごとのセットアップ手順、main.py の動作仕様、CanSat ミッション中の状態遷移図**なども同じトーンで補足できます。
