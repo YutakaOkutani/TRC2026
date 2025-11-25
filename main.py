@@ -18,7 +18,8 @@ from picamera2 import Picamera2
 # --- 定数設定 ---
 # タイムアウト時間設定（秒）
 TIMEOUT_PHASE_0 = 5 * 60   # 落下判定待ち最大
-TIMEOUT_PHASE_2 = 30       # キャリブレーション最大
+TIMEOUT_PHASE_2 = 2 * 60   # キャリブレーション最大
+TIMEOUT_PHASE_4 = 60       # コーン探索最大
 TIMEOUT_PHASE_5 = 45       # 接近・スタック判定最大
 
 DATA_SAMPLING_RATE = 0.01 
@@ -56,7 +57,7 @@ cone_probability = 0
 fall = 0.0
 upside_down_Flag = 0
 
-# ターゲット座標
+# ターゲット座標（適宜変更）
 TARGET_LAT = 38.26052
 TARGET_LNG = 140.8544151
 
@@ -232,10 +233,10 @@ def main():
                     # direction = angle # 現在の向きを目標にすれば直進する(または停止ロジックを追加)
                     
                     if led_blink_timer % 20 == 0:
-                        print("Waiting for GPS fix...")
-                    direction = 360.0 # 仮:停止待機
+                        print(f"GPS Lost: Keep going to {direction:.1f}...")
+                    pass
 
-                # 距離が近づいたらPhase4へ (GPS生きてる場合)
+                # 距離が近づいたらPhase4へ
                 if distance < 5.0 and gps_detect == 1:
                     print("Close enough: Switching to Camera")
                     phase = 4
@@ -260,8 +261,6 @@ def main():
                     if time.time() - time_start_searching_cone >= TIMEOUT_PHASE_4:
                         print("Camera TIMEOUT: Cone not found or Camera dead")
                         searching_Flag = False
-                        # ここでPhase3に戻るか、Phase5に強行するかは戦略次第
-                        # 今回はGPSに戻る（そしてGPSもタイムアウトしたらまた来る）
                         phase = 3 
                         time_phase3_start = time.time() # タイマーリセット
                 
@@ -311,7 +310,7 @@ def main():
                     # スタック/カメラ故障時の強制ゴール判定
                     if time.time() - time_camera_start >= TIMEOUT_PHASE_5:
                         print("Phase5 TIMEOUT: Force Goal (Assume reached or Stuck)")
-                        phase = 6
+                        phase = 3
                         break
                         
                     if is_reach:
@@ -651,7 +650,7 @@ def moveMotor_thread():
         # ----------------------------------------
         if phase == 3:
             # 目標方位(direction) と 現在方位(angle) の差分を計算
-            target_heading = direction
+            target_heading = direction + -5 # 種子島に合わせた補正値 (要調整)
             current_heading = angle
             
             diff = target_heading - current_heading
@@ -699,8 +698,8 @@ def moveMotor_thread():
             Kp_cam = 80 # ゲイン (要調整)
             turn_cam = err * Kp_cam
             
-            speed_L = BASE_SPEED + turn_cam
-            speed_R = BASE_SPEED - turn_cam
+            speed_L = BASE_SPEED - turn_cam
+            speed_R = BASE_SPEED + turn_cam
             
             speed_L = max(0, min(100, speed_L))
             speed_R = max(0, min(100, speed_R))

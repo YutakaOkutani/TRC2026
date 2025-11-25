@@ -6,11 +6,11 @@ import time
 # EN (Enable) -> PWM (Speed)
 # PH (Phase)  -> High/Low (Direction)
 
-# Motor A (Right)
+# Motor A (Right or Left)
 PIN_ENA = 17  # Enable (PWM Speed)
 PIN_PHA = 19   # Phase (Direction)
 
-# Motor B (Left)
+# Motor B (Left or Right)
 PIN_ENB = 2  # Enable (PWM Speed)
 PIN_PHB = 13   # Phase (Direction)
 
