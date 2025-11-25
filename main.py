@@ -18,8 +18,7 @@ from picamera2 import Picamera2
 # --- 定数設定 ---
 # タイムアウト時間設定（秒）
 TIMEOUT_PHASE_0 = 5 * 60   # 落下判定待ち最大
-TIMEOUT_PHASE_3 = 3 * 60   # GPS誘導最大
-TIMEOUT_PHASE_4 = 20       # カメラ探索最大
+TIMEOUT_PHASE_2 = 30       # キャリブレーション最大
 TIMEOUT_PHASE_5 = 45       # 接近・スタック判定最大
 
 DATA_SAMPLING_RATE = 0.01 
@@ -31,7 +30,7 @@ PIN_PHA = 8
 PIN_ENB = 19
 PIN_PHB = 9
 
-# LEDインジケーター
+# LED Pins
 PIN_LED_1 = 5  # Status Indicator (Red recommended)
 PIN_LED_2 = 6  # Activity Indicator (Green recommended)
 
@@ -132,12 +131,11 @@ def main():
                         break
                     time.sleep(0.1)
                 phase = 1
-
             # ==========================================================
-            # Phase 1: Avoidance (回避行動)
+            # Phase 1: パラシュート分離
             # ==========================================================
             elif phase == 1:
-                print("phase1 : avoidance")
+                print("phase1 : removing parachute")
 
                 pi.write(PIN_LED_1, 1) # Solid ON
                 pi.write(PIN_LED_2, 0)
@@ -145,7 +143,50 @@ def main():
                 direction = -400.0
                 time.sleep(5)
                 phase = 3
-                time_phase3_start = time.time() # Phase3タイマースタート
+                time_phase2_start = time.time() # Phase2タイマースタート
+
+            # ==========================================================
+            # Phase 2: Calibration (キャリブレーション)
+            # ==========================================================
+            elif phase == 2:
+                print("phase2 : BNO Calibration (Spinning)")
+                pi.write(PIN_LED_1, 0)
+                pi.write(PIN_LED_2, 1)
+                
+                calib_start_time = time.time()
+                
+                while True:
+                    # ループ内LED点滅 (キャリブレーション中はチカチカさせる)
+                    led_blink_timer += 1
+                    toggle_led(PIN_LED_1, led_blink_timer, interval=3)
+                    
+                    # タイムアウト判定 (いつまでも補正が終わらない場合の強制脱出)
+                    if time.time() - calib_start_time > TIMEOUT_PHASE_2:
+                        print("Phase2 TIMEOUT: Force Phase 3 (Calibration Incomplete)")
+                        break
+                    
+                    # キャリブレーション状態の確認
+                    if bno is not None:
+                        # getCalibrationStatus -> (sys, gyro, accel, mag) 各0-3
+                        sys_st, gyro_st, accel_st, mag_st = bno.getCalibrationStatus()
+                        
+                        # ログ出力（デバッグ用）
+                        if led_blink_timer % 10 == 0:
+                            print(f"Calib Status: Sys={sys_st} Gyro={gyro_st} Acc={accel_st} Mag={mag_st}")
+                        
+                        # 判定基準: 地磁気(Mag)が 2以上になればOKとする
+                        # (本来は3がベストだが、屋外/本番環境では3になりにくいことがある)
+                        if mag_st >= 2:
+                            print("Calibration OK! (Mag >= 2)")
+                            break
+                    else:
+                        print("BNO None: Skip Calibration")
+                        break
+                        
+                    time.sleep(0.1)
+
+                # 次のフェーズへ
+                phase = 3
 
             # ==========================================================
             # Phase 3: GPS Navigation (GPS誘導)
@@ -160,17 +201,38 @@ def main():
                     phase = 4
                     continue
 
-                # 簡易誘導ロジック
-                # GPSが取れていない(lat=0)場合は直進させる、などの安全策
+                # GPSが有効(lat != 0)なら誘導計算を行う
                 if gps_detect == 1:
-                    # 本来の誘導ロジック
-                    # direction = ...
-                    direction = 360.0 # 仮
-                    # GPS補足時はLED 2を早く点滅させるなどの変化も可能
+                    # 距離と方位を計算
+                    # 現在地(lat, lng) -> ターゲット(TARGET_LAT, TARGET_LNG)
+                    dist, azi = calc_distance_and_azimuth(lat, lng, TARGET_LAT, TARGET_LNG)
+                    
+                    # グローバル変数を更新
+                    distance = dist
+                    direction = azi       # これを更新すると moveMotor_thread が向きを変える
+                    azimuth = azi         # ログ保存用
+                    
+                    # コンソール表示 (デバッグ用: 頻繁に出過ぎるならコメントアウト)
+                    if led_blink_timer % 10 == 0:
+                        print(f"GPS Nav: Dist={distance:.1f}m, TargetDir={direction:.1f}, MyHead={angle:.1f}")
+
+                    # 接近判定 -> Phase 4へ
+                    if distance < 5.0:
+                        print(f"Close enough ({distance:.1f}m): Switching to Camera")
+                        phase = 4
+                        
+                    # GPS補足時はLEDを早く点滅
                     toggle_led(PIN_LED_2, led_blink_timer, interval=2)
+                    
                 else:
-                    # GPS取れないならとりあえず直進? 停止?
-                    print("Waiting for GPS fix...")
+                    # GPSロスト中
+                    # 直進させるか、停止させるかは戦略による。
+                    # ここでは「前回の方位を維持して直進」させるため direction は更新しない。
+                    # 安全のため停止させたい場合は下記コメントアウトを外す
+                    # direction = angle # 現在の向きを目標にすれば直進する(または停止ロジックを追加)
+                    
+                    if led_blink_timer % 20 == 0:
+                        print("Waiting for GPS fix...")
                     direction = 360.0 # 仮:停止待機
 
                 # 距離が近づいたらPhase4へ (GPS生きてる場合)
@@ -357,12 +419,8 @@ def Setup():
             print("WARNING: No ROI image found. Switching to DEFAULT ORANGE detection.")
         
         if roi_img is not None:
-             # BGR -> RGB変換は detect_corn 内で BGR2HSV するので、
-             # cv2.imread (BGR) のままで渡すのが正解です。
-             # 元のコードにあった cv2.cvtColor(..., RGB) は detect_cornの実装によってはバグの元ですが、
-             # 今回提示した新detect_corn.pyは BGR入力を想定しているのでそのまま渡します。
-             pass
-
+            pass
+        
         # 2. ROIセット (Noneならデフォルト色モードになる)
         detector.set_roi_img(roi_img)
         
@@ -504,6 +562,153 @@ def GPS_thread():
             pass # 読み取りエラー無視
 
 # --- Helper Functions ---
+# --- 追加するスレッド関数 ---
+
+def setData_thread():
+    """
+    一定間隔でセンサー値を取得し、グローバル変数を更新＆ログ保存するスレッド
+    """
+    global acc, gyro, mag, lat, lng, alt, pres, distance, azimuth, angle, direction, fall, cone_direction, cone_probability, phase
+
+    while True:
+        # 1. 各種データの取得
+        getBnoData() # 加速度・ジャイロ・磁気・落下判定(fall)を更新
+        getBmpData() # 気圧・高度を更新
+
+        # 2. 現在の方位(Heading)を個別に取得 (getBnoDataに含まれていないため)
+        if bno is not None:
+            try:
+                # getEuler() -> [Heading, Roll, Pitch] (Heading: 0-360)
+                euler = bno.getEuler()
+                angle = euler[0] # グローバル変数の angle を更新
+            except:
+                pass
+
+        # 3. ログファイルへの書き込み
+        try:
+            with open(fileName, "a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    currentMilliTime(), phase,
+                    f"{acc[0]:.2f}", f"{acc[1]:.2f}", f"{acc[2]:.2f}",
+                    f"{gyro[0]:.2f}", f"{gyro[1]:.2f}", f"{gyro[2]:.2f}",
+                    f"{mag[0]:.2f}", f"{mag[1]:.2f}", f"{mag[2]:.2f}",
+                    f"{lat:.6f}", f"{lng:.6f}", f"{alt:.2f}", f"{pres:.2f}",
+                    f"{distance:.2f}", f"{azimuth:.2f}", f"{angle:.2f}", 
+                    f"{direction:.2f}", f"{fall:.2f}",
+                    f"{cone_direction:.2f}", f"{cone_probability:.2f}"
+                ])
+        except Exception as e:
+            print(f"Log Error: {e}")
+
+        # サンプリングレートに従って待機
+        time.sleep(DATA_SAMPLING_RATE)
+
+
+def moveMotor_thread():
+    """
+    現在の Phase とセンサー値に基づいてモーターを動かすスレッド
+    """
+    global direction, phase, cone_direction, angle
+    
+    # 基本スピード (0-100)
+    BASE_SPEED = 60
+    
+    while True:
+        # ----------------------------------------
+        # Phase 0: 落下中 & Phase 6: ゴール -> 停止
+        # ----------------------------------------
+        if phase == 0 or phase == 6:
+            stop_motors()
+            time.sleep(0.1)
+            continue
+
+        # ----------------------------------------
+        # Phase 1: 回避行動 (direction = -400 の場合)
+        # ----------------------------------------
+        if phase == 1 and direction == -400.0:
+            # 後退 (Reverse)
+            # set_motor(ENピン, PHピン, 速度, 方向1/0)
+            SEPARATION_SPEED = 100
+            set_motor(PIN_ENA, PIN_PHA, SEPARATION_SPEED, 1) # 0=Reverse
+            set_motor(PIN_ENB, PIN_PHB, SEPARATION_SPEED, 1)
+            time.sleep(0.05)
+            continue
+
+        # ----------------------------------------
+        # Phase 2: Calibration (キャリブレーション)
+        # ----------------------------------------
+        # 補足: その場で旋回して地磁気センサーを補正する
+        if phase == 2:
+            CALIB_SPEED = 50
+            set_motor(PIN_ENA, PIN_PHA, CALIB_SPEED, 1) # 右: 前進
+            set_motor(PIN_ENB, PIN_PHB, CALIB_SPEED, 0) # 左: 後退
+            time.sleep(0.05)
+            continue
+
+        # ----------------------------------------
+        # Phase 3: GPS誘導 (Heading制御)
+        # ----------------------------------------
+        if phase == 3:
+            # 目標方位(direction) と 現在方位(angle) の差分を計算
+            target_heading = direction
+            current_heading = angle
+            
+            diff = target_heading - current_heading
+            # 差分を -180 〜 +180 に正規化
+            if diff > 180:  diff -= 360
+            if diff < -180: diff += 360
+            
+            # P制御 (比例制御)
+            Kp = 0.5 # ゲイン (要調整)
+            turn_val = diff * Kp
+            
+            # 出力制限 (急激な旋回を抑える)
+            turn_val = max(-30, min(30, turn_val))
+            
+            # 左右のモーター速度を決定 (差動駆動)
+            speed_L = BASE_SPEED + turn_val
+            speed_R = BASE_SPEED - turn_val
+            
+            # 0-100の範囲に収める
+            speed_L = max(0, min(100, speed_L))
+            speed_R = max(0, min(100, speed_R))
+            
+            # 前進 (Forward=1)
+            set_motor(PIN_ENA, PIN_PHA, speed_R, 1)
+            set_motor(PIN_ENB, PIN_PHB, speed_L, 1)
+
+        # ----------------------------------------
+        # Phase 4: カメラ探索 (その場で旋回)
+        # ----------------------------------------
+        elif phase == 4:
+            # 低速で右旋回してコーンを探す
+            SEARCH_SPEED = 40
+            set_motor(PIN_ENA, PIN_PHA, SEARCH_SPEED, 1) # 右: 前進
+            set_motor(PIN_ENB, PIN_PHB, SEARCH_SPEED, 0) # 左: 後退
+            
+        # ----------------------------------------
+        # Phase 5: カメラ接近 (画像認識による制御)
+        # ----------------------------------------
+        elif phase == 5:
+            # cone_direction は 0.0(左端) ～ 1.0(右端)。 0.5が中央。
+            center = 0.5
+            err = cone_direction - center
+            
+            # P制御
+            Kp_cam = 80 # ゲイン (要調整)
+            turn_cam = err * Kp_cam
+            
+            speed_L = BASE_SPEED + turn_cam
+            speed_R = BASE_SPEED - turn_cam
+            
+            speed_L = max(0, min(100, speed_L))
+            speed_R = max(0, min(100, speed_R))
+            
+            set_motor(PIN_ENA, PIN_PHA, speed_R, 1)
+            set_motor(PIN_ENB, PIN_PHB, speed_L, 1)
+
+        time.sleep(0.05) # 制御周期
 
 def currentMilliTime():
     return round(time.time() * 1000)
@@ -516,4 +721,51 @@ def stop_motors():
     pi.set_PWM_dutycycle(PIN_ENA, 0)
     pi.set_PWM_dutycycle(PIN_ENB, 0)
     pi.write(PIN_PHA, 0)
-    pi.write
+    pi.write(PIN_PHB, 0)
+
+def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
+    """
+    2点の緯度経度から距離(m)と方位角(度)を計算する
+    lat1, lng1: 現在地
+    lat2, lng2: ターゲット
+    """
+    # 地球の半径 (m)
+    R = 6378137.0
+    
+    # ラジアンに変換
+    rad_lat1 = math.radians(lat1)
+    rad_lng1 = math.radians(lng1)
+    rad_lat2 = math.radians(lat2)
+    rad_lng2 = math.radians(lng2)
+    
+    # 距離の計算 (Haversine formula または 球面三角法)
+    # ここでは簡易的な球面三角法を使用
+    d_lng = rad_lng2 - rad_lng1
+    
+    # 距離計算
+    sin_lat1 = math.sin(rad_lat1)
+    cos_lat1 = math.cos(rad_lat1)
+    sin_lat2 = math.sin(rad_lat2)
+    cos_lat2 = math.cos(rad_lat2)
+    cos_d_lng = math.cos(d_lng)
+    
+    # 中心角
+    # arccosの引数が1を超えないようクリップ
+    val = sin_lat1 * sin_lat2 + cos_lat1 * cos_lat2 * cos_d_lng
+    val = max(-1.0, min(1.0, val))
+    
+    central_angle = math.acos(val)
+    dist = R * central_angle
+    
+    # 方位角の計算 (Bearing)
+    # 北を0度、時計回りの角度(0-360)を求める
+    y = math.sin(d_lng) * cos_lat2
+    x = cos_lat1 * sin_lat2 - sin_lat1 * cos_lat2 * cos_d_lng
+    
+    azi = math.degrees(math.atan2(y, x))
+    
+    # 0-360度に正規化
+    if azi < 0:
+        azi += 360.0
+        
+    return dist, azi
