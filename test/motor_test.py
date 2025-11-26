@@ -1,5 +1,7 @@
-import pigpio
 import time
+
+from gpiozero import PWMOutputDevice, DigitalOutputDevice
+from gpiozero.pins.lgpio import LGPIOFactory
 
 # --- GPIO Pin Definition ---
 # DRV8256E: Phase/Enable Mode
@@ -8,35 +10,38 @@ import time
 
 # Motor A (Right or Left)
 PIN_ENA = 17  # Enable (PWM Speed)
-PIN_PHA = 19   # Phase (Direction)
+PIN_PHA = 19  # Phase (Direction)
 
 # Motor B (Left or Right)
-PIN_ENB = 2  # Enable (PWM Speed)
-PIN_PHB = 13   # Phase (Direction)
+PIN_ENB = 2   # Enable (PWM Speed)
+PIN_PHB = 13  # Phase (Direction)
 
 # PWM Parameters
-PWM_FREQ = 20000  
+PWM_FREQ = 20000
 
-# --- Initialize pigpio ---
-pi = pigpio.pi()
+# gpiozero devices (setup()で初期化)
+pin_factory = None
+motor_a_pwm = None
+motor_a_dir = None
+motor_b_pwm = None
+motor_b_dir = None
 
-if not pi.connected:
-    print("Error: Could not connect to pigpio daemon.")
-    print("Please run 'sudo pigpiod' in terminal first.")
-    exit()
 
 def setup():
     """GPIOの初期設定"""
-    # モード設定 (すべて出力)
-    pi.set_mode(PIN_ENA, pigpio.OUTPUT)
-    pi.set_mode(PIN_PHA, pigpio.OUTPUT)
-    pi.set_mode(PIN_ENB, pigpio.OUTPUT)
-    pi.set_mode(PIN_PHB, pigpio.OUTPUT)
-    
+    global pin_factory, motor_a_pwm, motor_a_dir, motor_b_pwm, motor_b_dir
+
+    pin_factory = LGPIOFactory()
+    motor_a_pwm = PWMOutputDevice(PIN_ENA, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+    motor_a_dir = DigitalOutputDevice(PIN_PHA, pin_factory=pin_factory, initial_value=False)
+    motor_b_pwm = PWMOutputDevice(PIN_ENB, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+    motor_b_dir = DigitalOutputDevice(PIN_PHB, pin_factory=pin_factory, initial_value=False)
+
     # 初期化（安全のため停止）
     stop()
-    
-    print("Setup Complete: pigpio initialized.")
+
+    print("Setup Complete: gpiozero initialized.")
+
 
 def set_motor(motor_side, speed, direction):
     """
@@ -45,51 +50,47 @@ def set_motor(motor_side, speed, direction):
     :param speed: PWM Duty Cycle (0 - 100)
     :param direction: 1 (Forward/High) or 0 (Reverse/Low)
     """
-    # ピンの選択
     if motor_side == 'A':
-        pin_en = PIN_ENA
-        pin_ph = PIN_PHA
+        pwm_dev = motor_a_pwm
+        dir_dev = motor_a_dir
     elif motor_side == 'B':
-        pin_en = PIN_ENB
-        pin_ph = PIN_PHB
+        pwm_dev = motor_b_pwm
+        dir_dev = motor_b_dir
     else:
         return
 
-    # 方向制御 (PH Pin)
-    if direction == 1:
-        pi.write(pin_ph, 1) # Forward (例: High)
-    else:
-        pi.write(pin_ph, 0) # Reverse (例: Low)
+    if pwm_dev is None or dir_dev is None:
+        return
 
-    # 速度制御 (EN Pin - PWM)
-    # pigpioのset_PWM_dutycycleは 0-255 の値を引数に取る
-    # 入力の 0-100 を 0-255 に変換
-    duty_value = int((speed / 100.0) * 255)
-    
-    # 周波数の設定
-    pi.set_PWM_frequency(pin_en, PWM_FREQ)
-    
-    # Duty比の設定
-    pi.set_PWM_dutycycle(pin_en, duty_value)
+    # 方向制御 (PH Pin)
+    dir_dev.value = 1 if direction == 1 else 0
+
+    # 速度制御 (EN Pin - PWM 0.0-1.0)
+    pwm_dev.value = max(0.0, min(1.0, speed / 100.0))
+
 
 def stop():
     """全モーターを停止（Coast）"""
-    pi.set_PWM_dutycycle(PIN_ENA, 0)
-    pi.set_PWM_dutycycle(PIN_ENB, 0)
+    if motor_a_pwm:
+        motor_a_pwm.value = 0
+    if motor_b_pwm:
+        motor_b_pwm.value = 0
+    if motor_a_dir:
+        motor_a_dir.off()
+    if motor_b_dir:
+        motor_b_dir.off()
 
-    pi.write(PIN_PHA, 0)
-    pi.write(PIN_PHB, 0)
 
 def main():
     try:
         setup()
-        print("Motor Test Start: pigpio with DRV8256E")
+        print("Motor Test Start: gpiozero with DRV8256E")
 
         while True:
             # --- 1. Forward (正転) ---
             print("Forward: 50%")
-            set_motor('A', 50, 1) # Right Forward
-            set_motor('B', 50, 1) # Left Forward
+            set_motor('A', 50, 1)  # Right Forward
+            set_motor('B', 50, 1)  # Left Forward
             time.sleep(2)
 
             # --- 2. Stop (停止) ---
@@ -99,8 +100,8 @@ def main():
 
             # --- 3. Reverse (逆転) ---
             print("Reverse: 50%")
-            set_motor('A', 50, 0) # Right Reverse
-            set_motor('B', 50, 0) # Left Reverse
+            set_motor('A', 50, 0)  # Right Reverse
+            set_motor('B', 50, 0)  # Left Reverse
             time.sleep(2)
 
             # --- 4. Turn (旋回テスト) ---
@@ -117,8 +118,7 @@ def main():
     except KeyboardInterrupt:
         print("\nExiting...")
         stop()
-        # pigpioのリソース解放
-        pi.stop()
+
 
 if __name__ == "__main__":
     main()
