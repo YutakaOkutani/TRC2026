@@ -66,10 +66,10 @@ DATA_SAMPLING_RATE = 0.01
 
 # --- Pin Number ---
 # Motor Control Pins
-PIN_ENA = 18
-PIN_PHA = 8
-PIN_ENB = 19
-PIN_PHB = 9
+PIN_ENA = 2
+PIN_PHA = 13
+PIN_ENB = 17
+PIN_PHB = 19
 
 # LED Pins
 PIN_LED_1 = 5  # Status Indicator (Red recommended)
