@@ -5,65 +5,18 @@ import threading
 import datetime
 import csv
 import os
-import pigpio
 import sys
 import cv2
 from picamera2 import Picamera2
+
+from gpiozero import LED, PWMOutputDevice, DigitalOutputDevice, DistanceSensor
+from gpiozero.pins.lgpio import LGPIOFactory
 
 # --- 手動ライブラリのインポート ---
 from library import bno055
 from library import bmp180
 from library.micropyGPS import MicropyGPS
 from library import detect_corn as dc
-
-class SimpleSonar:
-    def __init__(self, pi_instance, trigger, echo):
-        self.pi = pi_instance
-        self.trig = trigger
-        self.echo = echo
-        self.high_tick = None
-        self.distance = 999.0 # 初期値（遠い）
-        self.last_valid_time = 0 # 最後に距離を更新した時刻
-        self.timeout_sec = 0.5   # これ以上更新がなければデータを無効化
-
-        # ピン設定
-        self.pi.set_mode(self.trig, pigpio.OUTPUT)
-        self.pi.set_mode(self.echo, pigpio.INPUT)
-        self.pi.write(self.trig, 0)
-
-        # コールバック設定 (立ち上がり・立ち下がりを監視)
-        self.cb_rise = self.pi.callback(self.echo, pigpio.RISING_EDGE, self._cb)
-        self.cb_fall = self.pi.callback(self.echo, pigpio.FALLING_EDGE, self._cb)
-
-    def _cb(self, gpio, level, tick):
-        if level == 1: # 立ち上がり
-            self.high_tick = tick
-        elif level == 0: # 立ち下がり
-            if self.high_tick is not None:
-                diff = pigpio.tickDiff(self.high_tick, tick)
-                # 距離計算 (cm)
-                dist = (diff / 1000000.0) * 34000 / 2
-
-                if 2.0 < dist < 400.0:
-                    self.distance = dist
-                    self.last_valid_time = time.time() # 最後に距離を更新した時刻を記録
-                else:
-                    # 異常値は無視
-                    pass
-
-    def trigger(self):
-        """計測パルス発信"""
-        self.pi.gpio_trigger(self.trig, 10, 1)
-
-    def get_distance(self):
-        """
-        現在の距離を返す。
-        ただし、最後の更新から時間が経ちすぎている場合は 999.0 (障害物なし) を返す。
-        """
-        if time.time() - self.last_valid_time > self.timeout_sec:
-            return 999.0 # データが古いので無効化（安全側に倒す）
-        else:
-        return self.distance
 
 # --- 定数設定 ---
 # タイムアウト時間設定（秒）
@@ -124,11 +77,15 @@ bno = None
 bmp = None
 detector = None
 
-# pigpio初期化
-pi = pigpio.pi()
-if not pi.connected:
-    print("Error: pigpio daemon not running. Run 'sudo pigpiod'.")
-    sys.exit()
+# gpiozero オブジェクト格納用変数
+led1 = None
+led2 = None
+motor_a_pwm = None
+motor_a_dir = None
+motor_b_pwm = None
+motor_b_dir = None
+sonar = None
+pin_factory = None
 
 # ログファイル
 nowTime = datetime.datetime.now()
@@ -170,8 +127,9 @@ def main():
             if phase == 0:
                 print("phase0 : falling")
                 # LED制御: 0.5秒間隔で点滅 (5 * 0.1s)
-                toggle_led(PIN_LED_1, led_blink_timer, interval=5)
-                pi.write(PIN_LED_2, 0)
+                toggle_led(led1, led_blink_timer, interval=5)
+                if led2:
+                    led2.off()
 
                 start = time.time()
 
@@ -181,7 +139,7 @@ def main():
                 while True:
                     # 落下判定ループ内でも点滅させる
                     led_blink_timer += 1
-                    toggle_led(PIN_LED_1, led_blink_timer, interval=5)
+                    toggle_led(led1, led_blink_timer, interval=5)
 
                     # 1. 加速度判定
                     is_impact = (fall > 30.0) # 30 m/s^2 ≒ 3G (閾値は要検討)
@@ -211,8 +169,10 @@ def main():
             elif phase == 1:
                 print("phase1 : removing parachute")
 
-                pi.write(PIN_LED_1, 1) # Solid ON
-                pi.write(PIN_LED_2, 0)
+                if led1:
+                    led1.on() # Solid ON
+                if led2:
+                    led2.off()
                 
                 direction = -400.0
                 time.sleep(5)
@@ -224,15 +184,17 @@ def main():
             # ==========================================================
             elif phase == 2:
                 print("phase2 : BNO Calibration (Spinning)")
-                pi.write(PIN_LED_1, 0)
-                pi.write(PIN_LED_2, 1)
+                if led1:
+                    led1.off()
+                if led2:
+                    led2.on()
                 
                 calib_start_time = time.time()
                 
                 while True:
                     # ループ内LED点滅 (キャリブレーション中はチカチカさせる)
                     led_blink_timer += 1
-                    toggle_led(PIN_LED_1, led_blink_timer, interval=3)
+                    toggle_led(led1, led_blink_timer, interval=3)
                     
                     # タイムアウト判定 (いつまでも補正が終わらない場合の強制脱出)
                     if time.time() - calib_start_time > TIMEOUT_PHASE_2:
@@ -265,8 +227,9 @@ def main():
             # Phase 3: GPS Navigation (GPS誘導)
             # ==========================================================
             elif phase == 3:
-                pi.write(PIN_LED_1, 0)
-                toggle_led(PIN_LED_2, led_blink_timer, interval=10) # 1秒間隔
+                if led1:
+                    led1.off()
+                toggle_led(led2, led_blink_timer, interval=10) # 1秒間隔
 
                 # GPSが死んでいる、または到達できない場合のタイムアウト処理
                 if time.time() - time_phase3_start > TIMEOUT_PHASE_3:
@@ -295,7 +258,7 @@ def main():
                         phase = 4
                         
                     # GPS補足時はLEDを早く点滅
-                    toggle_led(PIN_LED_2, led_blink_timer, interval=2)
+                    toggle_led(led2, led_blink_timer, interval=2)
                     
                 else:
                     # GPSロスト中
@@ -315,8 +278,10 @@ def main():
             # ==========================================================
             elif phase == 4:
                 print("phase4 : camera searching")
-                pi.write(PIN_LED_1, 0)
-                pi.write(PIN_LED_2, 1) # Solid ON
+                if led1:
+                    led1.off()
+                if led2:
+                    led2.on() # Solid ON
                 
                 # カメラが死んでいても cone_detect はエラーを吐かずに戻ってくる
                 cone_detect()
@@ -351,11 +316,15 @@ def main():
                     led_blink_timer += 1
                     # 交互点滅 (0.2秒間隔)
                     if (led_blink_timer // 2) % 2 == 0:
-                        pi.write(PIN_LED_1, 1)
-                        pi.write(PIN_LED_2, 0)
+                        if led1:
+                            led1.on()
+                        if led2:
+                            led2.off()
                     else:
-                        pi.write(PIN_LED_1, 0)
-                        pi.write(PIN_LED_2, 1)
+                        if led1:
+                            led1.off()
+                        if led2:
+                            led2.on()
 
                     cone_detect()
                     
@@ -395,10 +364,11 @@ def main():
             # ==========================================================
             elif phase == 6:
                 print("phase6 : Goal!!")
-                pi.write(PIN_LED_1, 1)
-                pi.write(PIN_LED_2, 1)
+                if led1:
+                    led1.on()
+                if led2:
+                    led2.on()
                 stop_motors()
-                pi.stop()
                 sys.exit()
 
             time.sleep(0.1)
@@ -406,35 +376,41 @@ def main():
     except KeyboardInterrupt:
         print("\nKeyboardInterrupt")
         stop_motors()
-        pi.stop()
         sys.exit()
 
 # --- LED Helper Functions ---
 
-def toggle_led(pin, timer, interval):
+def toggle_led(led, timer, interval):
     """
     指定したインターバル(ループ回数)ごとにLEDを反転させる
     """
+    if led is None:
+        return
     if (timer // interval) % 2 == 0:
-        pi.write(pin, 1)
+        led.on()
     else:
-        pi.write(pin, 0)
+        led.off()
 
 def signal_led(times):
     """
     指定回数だけ両方のLEDを点滅させる（通知用）
     """
     for _ in range(times):
-        pi.write(PIN_LED_1, 1)
-        pi.write(PIN_LED_2, 1)
+        if led1:
+            led1.on()
+        if led2:
+            led2.on()
         time.sleep(0.2)
-        pi.write(PIN_LED_1, 0)
-        pi.write(PIN_LED_2, 0)
+        if led1:
+            led1.off()
+        if led2:
+            led2.off()
         time.sleep(0.2)
 
 
 def Setup():
-    global bno, bmp, detector, sonar
+    global bno, bmp, detector, sonar, pin_factory
+    global led1, led2, motor_a_pwm, motor_a_dir, motor_b_pwm, motor_b_dir
     
     print("--- Robust Setup Start ---")
     
@@ -449,10 +425,9 @@ def Setup():
             time.sleep(0.5)
         else:
             print("WARNING: BNO055 Init Failed. Proceeding anyway.")
-            # bnoオブジェクトは残すが、中身が正常でない可能性あり
     except Exception as e:
         print(f"BNO055: Critical Error {e}. Proceeding.")
-        bno = None # Noneにしておき、後段でチェックする
+        bno = None
 
     # 2. BMP180 Setup (Ignore on fail)
     try:
@@ -465,18 +440,14 @@ def Setup():
         print(f"BMP180: Critical Error {e}. Proceeding.")
         bmp = None
 
-    # 3. Camera Setup ---
+    # 3. Camera Setup
     print("Camera: Initializing...")
     try:
-        detector = dc.detector() # インスタンス作成
-        
-        # 1. 画像ファイルの読み込み (ロバスト化)
-        # 優先順位: capture_roi_image.pyの保存名 -> ユーザー指定名 -> None
-        roi_path_1 = "./log/captured_roi_img.png" # capture_roi_img.py の保存名
-        roi_path_2 = "./log/captured.png"         # main.py の元の記述
-        
+        detector = dc.detector()
+
+        roi_path_1 = "./log/captured_roi_img.png"
+        roi_path_2 = "./log/captured.png"
         roi_img = None
-        
         if os.path.exists(roi_path_1):
             print(f"Loading ROI from {roi_path_1}")
             roi_img = cv2.imread(roi_path_1)
@@ -485,48 +456,32 @@ def Setup():
             roi_img = cv2.imread(roi_path_2)
         else:
             print("WARNING: No ROI image found. Switching to DEFAULT ORANGE detection.")
-        
-        if roi_img is not None:
-            pass
-        
-        # 2. ROIセット (Noneならデフォルト色モードになる)
+
         detector.set_roi_img(roi_img)
-        
-        # 3. テスト撮影（起動確認）
         detector.detect_cone()
         print("Camera: OK (Initialized)")
-
-    # 4. Sonar Setup
-    print("Sonar: Initializing...")
-    try:
-        # クラスを実体化 (グローバルの pi を渡す)
-        sonar = SimpleSonar(pi, PIN_TRIG, PIN_ECHO)
-        print("Sonar: OK")
-    except Exception as e:
-        print(f"Sonar Error: {e}")
-        sonar = None
-        
     except Exception as e:
         print(f"Camera: Critical Init Error {e}. Proceeding without Vision.")
-        detector = None # 完全に死んでいる場合
+        detector = None
 
-    # 5. GPIO Setup
+    # 4. GPIOZero Setup (LED, Motor, Sonar)
+    print("GPIOZero: Initializing devices...")
     try:
-        pi.set_mode(PIN_ENA, pigpio.OUTPUT)
-        pi.set_mode(PIN_ENB, pigpio.OUTPUT)
-        pi.set_mode(PIN_PHA, pigpio.OUTPUT)
-        pi.set_mode(PIN_PHB, pigpio.OUTPUT)
-
-        pi.set_PWM_range(PIN_ENA, PWM_RANGE)
-        pi.set_PWM_range(PIN_ENB, PWM_RANGE)
-        pi.set_PWM_frequency(PIN_ENA, PWM_FREQ)
-        pi.set_PWM_frequency(PIN_ENB, PWM_FREQ)
+        pin_factory = LGPIOFactory()
+        led1 = LED(PIN_LED_1, pin_factory=pin_factory)
+        led2 = LED(PIN_LED_2, pin_factory=pin_factory)
+        motor_a_pwm = PWMOutputDevice(PIN_ENA, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+        motor_a_dir = DigitalOutputDevice(PIN_PHA, pin_factory=pin_factory, initial_value=False)
+        motor_b_pwm = PWMOutputDevice(PIN_ENB, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+        motor_b_dir = DigitalOutputDevice(PIN_PHB, pin_factory=pin_factory, initial_value=False)
+        sonar = DistanceSensor(echo=PIN_ECHO, trigger=PIN_TRIG, max_distance=4.0, pin_factory=pin_factory)
         stop_motors()
+        print("GPIOZero: OK")
     except Exception as e:
-        print(f"GPIO Setup Error {e}. Motors might not work.")
+        print(f"GPIOZero Setup Error {e}. Motors/LED/Sonar might not work.")
+        led1 = led2 = motor_a_pwm = motor_a_dir = motor_b_pwm = motor_b_dir = sonar = None
 
-    # 6. Threads Start
-    # スレッド起動もtryで囲む（念のため）
+    # 5. Threads Start
     try:
         threading.Thread(target=moveMotor_thread, daemon=True).start()
         threading.Thread(target=setData_thread, daemon=True).start()
@@ -539,18 +494,16 @@ def Setup():
         with open(fileName, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "MilliTime", "Phase", 
+                "MilliTime", "Phase",
                 "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
                 "LAT", "LNG", "ALT", "Pres",
-                "Distance", "Azimuth", "Angle", "Direction", "Fall", 
+                "Distance", "Azimuth", "Angle", "Direction", "Fall",
                 "ConeDir", "ConeProb", "ObstacleDist"
             ])
-    except:
+    except Exception:
         print("Log File Init Failed. No logging.")
 
     print("--- Setup Finished (Ready to Die Trying) ---")
-
-
 # --- 安全なデータ取得関数群 ---
 
 def getBnoData():
@@ -615,13 +568,10 @@ def getSonarData():
         return
 
     try:
-        sonar.trigger() # パルス発信
-        dist = sonar.get_distance() # 距離取得
-        
-        # 異常値フィルタリング（念のためここでもチェック）
-        if 0 < dist < 500: 
-            obstacle_dist = dist
-            
+        dist_m = sonar.distance  # DistanceSensorはメートル単位
+        dist_cm = dist_m * 100.0
+        if 0 < dist_cm < 500:
+            obstacle_dist = dist_cm
     except Exception:
         pass # エラー時は無視（前回の値を維持）
 
@@ -693,8 +643,10 @@ def setData_thread():
             except:
                 pass
         if sonar is not None:
-            sonar.trigger() # 音波発信
-            obstacle_dist = sonar.get_distance() # 最新値取得
+            try:
+                obstacle_dist = sonar.distance * 100.0
+            except Exception:
+                pass
 
         # 3. ログファイルへの書き込み
         try:
@@ -747,13 +699,13 @@ def moveMotor_thread():
             time.sleep(0.2)
             
             # バック
-            set_motor(PIN_ENA, PIN_PHA, 60, 0) # 0=Reverse
-            set_motor(PIN_ENB, PIN_PHB, 60, 0)
+            set_motor(motor_a_pwm, motor_a_dir, 60, 0) # 0=Reverse
+            set_motor(motor_b_pwm, motor_b_dir, 60, 0)
             time.sleep(1.0)
             
             # 旋回 (右へ)
-            set_motor(PIN_ENA, PIN_PHA, 60, 0) # 右後退
-            set_motor(PIN_ENB, PIN_PHB, 60, 1) # 左前進
+            set_motor(motor_a_pwm, motor_a_dir, 60, 0) # 右後退
+            set_motor(motor_b_pwm, motor_b_dir, 60, 1) # 左前進
             time.sleep(0.5)
             
             stop_motors()
@@ -767,8 +719,8 @@ def moveMotor_thread():
             # 後退 (Reverse)
             # set_motor(ENピン, PHピン, 速度, 方向1/0)
             SEPARATION_SPEED = 100
-            set_motor(PIN_ENA, PIN_PHA, SEPARATION_SPEED, 1) # 0=Reverse
-            set_motor(PIN_ENB, PIN_PHB, SEPARATION_SPEED, 1)
+            set_motor(motor_a_pwm, motor_a_dir, SEPARATION_SPEED, 1) # 0=Reverse
+            set_motor(motor_b_pwm, motor_b_dir, SEPARATION_SPEED, 1)
             time.sleep(0.05)
             continue
 
@@ -778,8 +730,8 @@ def moveMotor_thread():
         # 補足: その場で旋回して地磁気センサーを補正する
         if phase == 2:
             CALIB_SPEED = 50
-            set_motor(PIN_ENA, PIN_PHA, CALIB_SPEED, 1) # 右: 前進
-            set_motor(PIN_ENB, PIN_PHB, CALIB_SPEED, 0) # 左: 後退
+            set_motor(motor_a_pwm, motor_a_dir, CALIB_SPEED, 1) # 右: 前進
+            set_motor(motor_b_pwm, motor_b_dir, CALIB_SPEED, 0) # 左: 後退
             time.sleep(0.05)
             continue
 
@@ -812,8 +764,8 @@ def moveMotor_thread():
             speed_R = max(0, min(100, speed_R))
             
             # 前進 (Forward=1)
-            set_motor(PIN_ENA, PIN_PHA, speed_R, 1)
-            set_motor(PIN_ENB, PIN_PHB, speed_L, 1)
+            set_motor(motor_a_pwm, motor_a_dir, speed_R, 1)
+            set_motor(motor_b_pwm, motor_b_dir, speed_L, 1)
 
         # ----------------------------------------
         # Phase 4: カメラ探索 (その場で旋回)
@@ -821,8 +773,8 @@ def moveMotor_thread():
         elif phase == 4:
             # 低速で右旋回してコーンを探す
             SEARCH_SPEED = 40
-            set_motor(PIN_ENA, PIN_PHA, SEARCH_SPEED, 1) # 右: 前進
-            set_motor(PIN_ENB, PIN_PHB, SEARCH_SPEED, 0) # 左: 後退
+            set_motor(motor_a_pwm, motor_a_dir, SEARCH_SPEED, 1) # 右: 前進
+            set_motor(motor_b_pwm, motor_b_dir, SEARCH_SPEED, 0) # 左: 後退
             
         # ----------------------------------------
         # Phase 5: カメラ接近 (画像認識による制御)
@@ -842,23 +794,29 @@ def moveMotor_thread():
             speed_L = max(0, min(100, speed_L))
             speed_R = max(0, min(100, speed_R))
             
-            set_motor(PIN_ENA, PIN_PHA, speed_R, 1)
-            set_motor(PIN_ENB, PIN_PHB, speed_L, 1)
+            set_motor(motor_a_pwm, motor_a_dir, speed_R, 1)
+            set_motor(motor_b_pwm, motor_b_dir, speed_L, 1)
 
         time.sleep(0.05) # 制御周期
 
 def currentMilliTime():
     return round(time.time() * 1000)
 
-def set_motor(motor_pin_en, motor_pin_ph, speed, direction_val):
-    pi.write(motor_pin_ph, direction_val)
-    pi.set_PWM_dutycycle(motor_pin_en, int(speed))
+def set_motor(motor_pwm, motor_dir, speed, forward):
+    """
+    Drive a motor with gpiozero devices. speed: 0-100, forward: bool
+    """
+    if motor_pwm is None or motor_dir is None:
+        return
+    motor_dir.value = 1 if forward else 0
+    motor_pwm.value = max(0.0, min(1.0, speed / 100.0))
+
 
 def stop_motors():
-    pi.set_PWM_dutycycle(PIN_ENA, 0)
-    pi.set_PWM_dutycycle(PIN_ENB, 0)
-    pi.write(PIN_PHA, 0)
-    pi.write(PIN_PHB, 0)
+    if motor_a_pwm:
+        motor_a_pwm.value = 0
+    if motor_b_pwm:
+        motor_b_pwm.value = 0
 
 def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
     """
