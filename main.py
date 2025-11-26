@@ -183,10 +183,10 @@ def main():
                     led_blink_timer += 1
                     toggle_led(PIN_LED_1, led_blink_timer, interval=5)
 
-                    # 1. 加速度判定（閾値を2.5G→ 例えば1.5G程度へ、あるいは衝撃検知用として残す）
-                    is_impact = (fall > 15.0) # 15 m/s^2 ≒ 1.5G (閾値は要検討)
+                    # 1. 加速度判定
+                    is_impact = (fall > 30.0) # 30 m/s^2 ≒ 3G (閾値は要検討)
 
-                    # 2. 高度判定（現在高度が、開始時より30m下がったか？）
+                    # 2. 高度判定
                     altitude_diff = initial_alt - alt
                     is_drop = (altitude_diff > 30.0) # 30m以上の降下で落下と判定
 
@@ -376,10 +376,10 @@ def main():
                         phase = 4
                         break
 
-                    # スタック/カメラ故障時の強制ゴール判定
+                    # スタック/カメラ故障時のタイムアウト
                     if time.time() - time_camera_start >= TIMEOUT_PHASE_5:
-                        print("Phase5 TIMEOUT: Force Goal (Assume reached or Stuck)")
-                        phase = 3
+                        print("Phase5 TIMEOUT: Giving up, forcing Goal")
+                        phase = 6
                         break
                         
                     if is_reach:

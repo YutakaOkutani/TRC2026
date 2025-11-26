@@ -24,19 +24,22 @@
 
 ### 2.1 OS イメージの準備
 
-1. Raspberry Pi Imager をインストールする。
+1. Raspberry Pi Imager をインストールする（https://www.raspberrypi.com/software/）。
 2. 起動後、
+  * Device → *Raspberry PI Zero 2 W* 
+  * OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* を選択（GUIは要らない）
+  * Storage → 該当するMicroSDカードを選択
 
-   * OS → *Raspberry Pi OS Lite（64-bit）* を選択（GUIは要らない）
+3. 以下を設定・有効化する
 
-3. 「設定（歯車アイコン）」を開き、次を有効化（重要）
+   * Hostname
+   * Localisation（国・キーボード設定）
+   * User
+   * Wi-Fi
+   * Remote access（SSHの有効化、パスワード認証で十分）
+   * Raspberry Pi Connect（オフでよい）
 
-   * ホスト名の設定
-   * SSH の有効化
-   * Wi-Fi SSID とパスワードの設定
-   * ロケール（国・キーボード）設定
-
-4. 書き込みを実行
+4. Writing（書き込み）を実行
 
 ---
 
@@ -53,6 +56,11 @@
 
 * 同一ネットワークにいるか
 * `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
+* Permission denied (publickey,password).が出る場合
+以下で接続を実行（その場しのぎだが）
+```bash
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no <ユーザー名>@<IPアドレス>
+```
 
 ---
 
