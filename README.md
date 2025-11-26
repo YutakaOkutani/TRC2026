@@ -88,7 +88,7 @@ source venv/bin/activate
 
 ```bash
 sudo apt update
-sudo apt install -y python3-smbus i2c-tools python3-pigpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3  python3-pandas screen
+sudo apt install -y python3-smbus i2c-tools python3-pigpio pigpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3  python3-pandas screen
 pip install -y numpy opencv-python==4.6.0.66 pyserial # sudo は付けない
 sudo systemctl enable pigpiod
 sudo systemctl start pigpiod
