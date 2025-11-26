@@ -150,7 +150,6 @@ sudo reboot
   importするライブラリ
 * **__init__.py**
   libraryフォルダを認識できるようにするための空のファイル
-  importするライブラリ
 * **tests/**
   モジュール単位の動作確認用。
 * **README.md**
