@@ -57,7 +57,7 @@
 * 同一ネットワークにいるか
 * `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
 * Permission denied (publickey,password).が出る場合
-以下で接続を実行（その場しのぎだが）
+以下で接続を実行（その場しのぎ）
 ```bash
 ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no <ユーザー名>@<IPアドレス>
 ```
@@ -88,7 +88,8 @@ source venv/bin/activate
 
 ```bash
 sudo apt update
-sudo apt install -y python3-smbus i2c-tools python3-pigpio pigpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3 numpy opencv-python==4.6.0.66 python3-pandas pyserial screen
+sudo apt install -y python3-smbus i2c-tools python3-pigpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3  python3-pandas screen
+sudo pip install -y numpy opencv-python==4.6.0.66 pyserial 
 sudo systemctl enable pigpiod
 sudo systemctl start pigpiod
 ```
@@ -231,7 +232,7 @@ static domain_name_servers=192.168.1.1 8.8.8.8
 
 * static ip_address: 割り当てたい固定 IP とサブネット
 * static routers: デフォルトゲートウェイ（通常はルーターのアドレス）
-* static domain_name_servers: DNS サーバー
+* static domain_name_servers: DNS サーバー（static routersに入力したものと同じでよい）
 
 #### 4. 再起動と確認
 
