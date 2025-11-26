@@ -23,6 +23,8 @@ class SimpleSonar:
         self.echo = echo
         self.high_tick = None
         self.distance = 999.0 # 初期値（遠い）
+        self.last_valid_time = 0 # 最後に距離を更新した時刻
+        self.timeout_sec = 0.5   # これ以上更新がなければデータを無効化
 
         # ピン設定
         self.pi.set_mode(self.trig, pigpio.OUTPUT)
@@ -41,16 +43,26 @@ class SimpleSonar:
                 diff = pigpio.tickDiff(self.high_tick, tick)
                 # 距離計算 (cm)
                 dist = (diff / 1000000.0) * 34000 / 2
+
                 if 2.0 < dist < 400.0:
                     self.distance = dist
+                    self.last_valid_time = time.time() # 最後に距離を更新した時刻を記録
                 else:
-                    self.distance = 999.0
+                    # 異常値は無視
+                    pass
 
     def trigger(self):
         """計測パルス発信"""
         self.pi.gpio_trigger(self.trig, 10, 1)
 
     def get_distance(self):
+        """
+        現在の距離を返す。
+        ただし、最後の更新から時間が経ちすぎている場合は 999.0 (障害物なし) を返す。
+        """
+        if time.time() - self.last_valid_time > self.timeout_sec:
+            return 999.0 # データが古いので無効化（安全側に倒す）
+        else:
         return self.distance
 
 # --- 定数設定 ---
@@ -62,7 +74,7 @@ TIMEOUT_PHASE_3 = 5 * 60   # GPS誘導最大
 TIMEOUT_PHASE_4 = 60       # コーン探索最大
 TIMEOUT_PHASE_5 = 45       # 接近・スタック判定最大
 
-DATA_SAMPLING_RATE = 0.01 
+DATA_SAMPLING_RATE = 0.06 # センサーデータ取得間隔（秒）
 
 # --- Pin Number ---
 # Motor Control Pins
@@ -162,15 +174,29 @@ def main():
                 pi.write(PIN_LED_2, 0)
 
                 start = time.time()
+
+                initial_alt = alt 
+                print(f"Start Altitude: {initial_alt:.2f}m")
+
                 while True:
                     # 落下判定ループ内でも点滅させる
                     led_blink_timer += 1
                     toggle_led(PIN_LED_1, led_blink_timer, interval=5)
 
-                    # BNOが死んでいても time.time() で強制脱出
-                    if fall > 25:
-                        print("Detected Fall (Para released)")
-                        time.sleep(10)
+                    # 1. 加速度判定（閾値を2.5G→ 例えば1.5G程度へ、あるいは衝撃検知用として残す）
+                    is_impact = (fall > 15.0) # 15 m/s^2 ≒ 1.5G (閾値は要検討)
+
+                    # 2. 高度判定（現在高度が、開始時より30m下がったか？）
+                    altitude_diff = initial_alt - alt
+                    is_drop = (altitude_diff > 30.0) # 30m以上の降下で落下と判定
+
+                    # 判定ロジック: どちらか、または両方を満たしたらパラシュート開傘とみなす
+                    if is_drop:
+                        print(f"Detected Drop: {altitude_diff:.2f}m")
+                        break
+                    
+                    if is_impact:
+                        print(f"Detected Impact: {fall:.2f}m/s^2")
                         break
                     
                     if time.time() - start > TIMEOUT_PHASE_0:
@@ -625,6 +651,13 @@ def GPS_thread():
             if len(line) > 0 and line[0] == '$':
                 for x in line:
                     gps.update(x)
+
+                # デバッグ用
+                # 実際の戻り値を表示して、[0]でアクセスして良いか確認する
+                # 本番ではコメントアウトする
+                print(f"DEBUG GPS LAT TYPE: {type(gps.latitude)}, VALUE: {gps.latitude}")
+                # ----------------------
+
                 lat = gps.latitude[0]
                 lng = gps.longitude[0]
                 
@@ -803,8 +836,8 @@ def moveMotor_thread():
             Kp_cam = 80 # ゲイン (要調整)
             turn_cam = err * Kp_cam
             
-            speed_L = BASE_SPEED - turn_cam
-            speed_R = BASE_SPEED + turn_cam
+            speed_L = BASE_SPEED + turn_cam
+            speed_R = BASE_SPEED - turn_cam
             
             speed_L = max(0, min(100, speed_L))
             speed_R = max(0, min(100, speed_R))
