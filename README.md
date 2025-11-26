@@ -5,7 +5,7 @@
 
 * Raspberry Pi Zero 2 W
 * microSDカード（16GB以上あれば良い）
-* 電源（5V / 2.5A）（PCからのUSB給電でもよいが、供給が不安定になるときがある）
+* 電源（5V / 2.5A）（PCからのUSB給電でもよいが、不安定になるときがある）
 * PC（Windows / macOS / Linux のいずれか）
   * USBハブ
   * Mini HDMI ケーブル（モニター接続用）
@@ -80,7 +80,7 @@ source venv/bin/activate
 
 ```bash
 sudo apt update
-sudo apt install -y python3-smbus i2c-tools python3-pigpio pigpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3 numpy opencv-python==4.6.0.66 python3-pandas pyserial
+sudo apt install -y python3-smbus i2c-tools python3-pigpio pigpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3 numpy opencv-python==4.6.0.66 python3-pandas pyserial screen
 sudo systemctl enable pigpiod
 sudo systemctl start pigpiod
 ```
@@ -112,9 +112,7 @@ sudo raspi-config
 
 * Interface Options → SPI（必要に応じて）
 
-* Performance → GPU Memory = 16MB
-
-  * **理由：** GUI 不要のため GPU を最低限にし、VRAM の無駄を削減
+* Performance → GPU Memory = （必要に応じて）
 
 完了後、再起動。
 
@@ -136,6 +134,7 @@ sudo reboot
 │   ├── detect_corn.py
 │   ├── capture_roi_img.py
 │   ├── micropyGPS.py
+│   ├── __init__.py
 ├── tests/
 │   ├── motor_test.py
 │   ├── LED.py
@@ -149,20 +148,29 @@ sudo reboot
   制御コード本体。
 * **library**
   importするライブラリ
+* **__init__.py**
+  libraryフォルダを認識できるようにするための空のファイル
+  importするライブラリ
 * **tests/**
   モジュール単位の動作確認用。
-* **requirements.txt**
-  pip でインストールするライブラリのリスト
 * **README.md**
   本書。
 
 ---
 
 ## 7. 実行方法
-
+* メインコード
 ```bash
 source venv/bin/activate
 python3 main.py
+```
+* GPSのテスト（気圧、9軸はライブラリコードを実行すればテスト可能）
+```bash
+sudo screen /dev/ttyAMA0 9600 #ボーレートが違う場合、115200も試す
+```
+* カメラのテスト
+```bash
+rpicam-hello -t 0　#bookwormの場合
 ```
 
 ---
@@ -225,6 +233,27 @@ Raspberry Pi を再起動。
 sudo reboot
 ip a
 ```
+
+
+### VSCodeでSSH接続したラズパイのターミナルを操作する方法
+
+
+#### 1. VS Codeで拡張機能「Remote - SSH」をインストールする
+
+#### 2. 接続
+
+* 左下の「><」アイコン（リモート接続）からRemote-SSH: Connect to Host… を選択
+* 以下を入力
+```
+ssh ユーザー名"@192.168.xx.xx（Raspberry Pi のIP）
+```
+* 接続後、VS Code 下部のステータスバーが「SSH: Raspberry Pi」表示になる
+* Terminal → New Terminal を開くと、Pi のターミナルが利用可能
+
+#### 3. 注意点
+
+* 初回接続時は Pi 側に VS Code サーバが自動インストールされる。
+* ターミナルは Pi のユーザ権限で動く（root操作は sudo）。
 
 
 

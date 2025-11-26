@@ -7,18 +7,58 @@ import csv
 import os
 import pigpio
 import sys
+import cv2
+from picamera2 import Picamera2
 
-# --- ライブラリのインポート ---
+# --- 手動ライブラリのインポート ---
 from library import bno055
 from library import bmp180
 from library.micropyGPS import MicropyGPS
 from library import detect_corn as dc
-from picamera2 import Picamera2
+
+class SimpleSonar:
+    def __init__(self, pi_instance, trigger, echo):
+        self.pi = pi_instance
+        self.trig = trigger
+        self.echo = echo
+        self.high_tick = None
+        self.distance = 999.0 # 初期値（遠い）
+
+        # ピン設定
+        self.pi.set_mode(self.trig, pigpio.OUTPUT)
+        self.pi.set_mode(self.echo, pigpio.INPUT)
+        self.pi.write(self.trig, 0)
+
+        # コールバック設定 (立ち上がり・立ち下がりを監視)
+        self.cb_rise = self.pi.callback(self.echo, pigpio.RISING_EDGE, self._cb)
+        self.cb_fall = self.pi.callback(self.echo, pigpio.FALLING_EDGE, self._cb)
+
+    def _cb(self, gpio, level, tick):
+        if level == 1: # 立ち上がり
+            self.high_tick = tick
+        elif level == 0: # 立ち下がり
+            if self.high_tick is not None:
+                diff = pigpio.tickDiff(self.high_tick, tick)
+                # 距離計算 (cm)
+                dist = (diff / 1000000.0) * 34000 / 2
+                if 2.0 < dist < 400.0:
+                    self.distance = dist
+                else:
+                    self.distance = 999.0
+
+    def trigger(self):
+        """計測パルス発信"""
+        self.pi.gpio_trigger(self.trig, 10, 1)
+
+    def get_distance(self):
+        return self.distance
 
 # --- 定数設定 ---
 # タイムアウト時間設定（秒）
 TIMEOUT_PHASE_0 = 5 * 60   # 落下判定待ち最大
+TIMEOUT_PHASE_1 = 30       # パラシュート分離最大
 TIMEOUT_PHASE_2 = 2 * 60   # キャリブレーション最大
+TIMEOUT_PHASE_3 = 5 * 60   # GPS誘導最大
 TIMEOUT_PHASE_4 = 60       # コーン探索最大
 TIMEOUT_PHASE_5 = 45       # 接近・スタック判定最大
 
@@ -38,6 +78,10 @@ PIN_LED_2 = 6  # Activity Indicator (Green recommended)
 PWM_FREQ = 20000
 PWM_RANGE = 100
 
+# Sonar Pins
+PIN_TRIG = 23
+PIN_ECHO = 24
+
 # --- グローバル変数 (初期値: 安全なデフォルト値) ---
 acc = [0.0, 0.0, 0.0]
 gyro = [0.0, 0.0, 0.0]
@@ -56,6 +100,8 @@ cone_direction = 0.5
 cone_probability = 0
 fall = 0.0
 upside_down_Flag = 0
+sonar = None
+obstacle_dist = 999.0
 
 # ターゲット座標（適宜変更）
 TARGET_LAT = 38.26052
@@ -132,6 +178,7 @@ def main():
                         break
                     time.sleep(0.1)
                 phase = 1
+                time_phase1_start = time.time() # Phase1タイマースタート
             # ==========================================================
             # Phase 1: パラシュート分離
             # ==========================================================
@@ -143,7 +190,7 @@ def main():
                 
                 direction = -400.0
                 time.sleep(5)
-                phase = 3
+                phase = 2
                 time_phase2_start = time.time() # Phase2タイマースタート
 
             # ==========================================================
@@ -185,9 +232,8 @@ def main():
                         break
                         
                     time.sleep(0.1)
-
-                # 次のフェーズへ
                 phase = 3
+                time_phase3_start = time.time() # Phase3タイマースタート
 
             # ==========================================================
             # Phase 3: GPS Navigation (GPS誘導)
@@ -227,11 +273,6 @@ def main():
                     
                 else:
                     # GPSロスト中
-                    # 直進させるか、停止させるかは戦略による。
-                    # ここでは「前回の方位を維持して直進」させるため direction は更新しない。
-                    # 安全のため停止させたい場合は下記コメントアウトを外す
-                    # direction = angle # 現在の向きを目標にすれば直進する(または停止ロジックを追加)
-                    
                     if led_blink_timer % 20 == 0:
                         print(f"GPS Lost: Keep going to {direction:.1f}...")
                     pass
@@ -240,6 +281,7 @@ def main():
                 if distance < 5.0 and gps_detect == 1:
                     print("Close enough: Switching to Camera")
                     phase = 4
+                    time_phase4_start = time.time() # Phase4タイマースタート
 
             # ==========================================================
             # Phase 4: Camera Searching (探索)
@@ -267,6 +309,7 @@ def main():
                 # 見つかったら
                 if cone_probability > 0.1:
                     phase = 5
+                    
 
             # ==========================================================
             # Phase 5: Approach (接近)
@@ -365,7 +408,7 @@ def signal_led(times):
 
 
 def Setup():
-    global bno, bmp, detector
+    global bno, bmp, detector, sonar
     
     print("--- Robust Setup Start ---")
     
@@ -396,7 +439,7 @@ def Setup():
         print(f"BMP180: Critical Error {e}. Proceeding.")
         bmp = None
 
-    # --- Camera Setup ---
+    # 3. Camera Setup ---
     print("Camera: Initializing...")
     try:
         detector = dc.detector() # インスタンス作成
@@ -426,12 +469,22 @@ def Setup():
         # 3. テスト撮影（起動確認）
         detector.detect_cone()
         print("Camera: OK (Initialized)")
+
+    # 4. Sonar Setup
+    print("Sonar: Initializing...")
+    try:
+        # クラスを実体化 (グローバルの pi を渡す)
+        sonar = SimpleSonar(pi, PIN_TRIG, PIN_ECHO)
+        print("Sonar: OK")
+    except Exception as e:
+        print(f"Sonar Error: {e}")
+        sonar = None
         
     except Exception as e:
         print(f"Camera: Critical Init Error {e}. Proceeding without Vision.")
         detector = None # 完全に死んでいる場合
 
-    # 4. GPIO Setup
+    # 5. GPIO Setup
     try:
         pi.set_mode(PIN_ENA, pigpio.OUTPUT)
         pi.set_mode(PIN_ENB, pigpio.OUTPUT)
@@ -446,7 +499,7 @@ def Setup():
     except Exception as e:
         print(f"GPIO Setup Error {e}. Motors might not work.")
 
-    # 5. Threads Start
+    # 6. Threads Start
     # スレッド起動もtryで囲む（念のため）
     try:
         threading.Thread(target=moveMotor_thread, daemon=True).start()
@@ -464,7 +517,7 @@ def Setup():
                 "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
                 "LAT", "LNG", "ALT", "Pres",
                 "Distance", "Azimuth", "Angle", "Direction", "Fall", 
-                "ConeDir", "ConeProb"
+                "ConeDir", "ConeProb", "ObstacleDist"
             ])
     except:
         print("Log File Init Failed. No logging.")
@@ -524,6 +577,28 @@ def cone_detect():
         cone_direction = 0.5
         cone_probability = 0.0
 
+def getSonarData():
+    """
+    超音波センサーの値を安全に更新する
+    エラーが起きても無視して、obstacle_dist を更新しない（初期値 or 前回の値のまま）
+    """
+    global obstacle_dist
+    
+    # センサー初期化に失敗していたら何もしない
+    if sonar is None:
+        return
+
+    try:
+        sonar.trigger() # パルス発信
+        dist = sonar.get_distance() # 距離取得
+        
+        # 異常値フィルタリング（念のためここでもチェック）
+        if 0 < dist < 500: 
+            obstacle_dist = dist
+            
+    except Exception:
+        pass # エラー時は無視（前回の値を維持）
+
 
 def GPS_thread():
     global lat, lng, gps_detect
@@ -568,11 +643,13 @@ def setData_thread():
     一定間隔でセンサー値を取得し、グローバル変数を更新＆ログ保存するスレッド
     """
     global acc, gyro, mag, lat, lng, alt, pres, distance, azimuth, angle, direction, fall, cone_direction, cone_probability, phase
+    global obstacle_dist
 
     while True:
         # 1. 各種データの取得
         getBnoData() # 加速度・ジャイロ・磁気・落下判定(fall)を更新
         getBmpData() # 気圧・高度を更新
+        getSonarData() # 超音波センサーの距離を更新
 
         # 2. 現在の方位(Heading)を個別に取得 (getBnoDataに含まれていないため)
         if bno is not None:
@@ -582,6 +659,9 @@ def setData_thread():
                 angle = euler[0] # グローバル変数の angle を更新
             except:
                 pass
+        if sonar is not None:
+            sonar.trigger() # 音波発信
+            obstacle_dist = sonar.get_distance() # 最新値取得
 
         # 3. ログファイルへの書き込み
         try:
@@ -595,7 +675,8 @@ def setData_thread():
                     f"{lat:.6f}", f"{lng:.6f}", f"{alt:.2f}", f"{pres:.2f}",
                     f"{distance:.2f}", f"{azimuth:.2f}", f"{angle:.2f}", 
                     f"{direction:.2f}", f"{fall:.2f}",
-                    f"{cone_direction:.2f}", f"{cone_probability:.2f}"
+                    f"{cone_direction:.2f}", f"{cone_probability:.2f}",
+                    f"{obstacle_dist:.2f}"
                 ])
         except Exception as e:
             print(f"Log Error: {e}")
@@ -609,10 +690,13 @@ def moveMotor_thread():
     現在の Phase とセンサー値に基づいてモーターを動かすスレッド
     """
     global direction, phase, cone_direction, angle
+    global obstacle_dist
     
     # 基本スピード (0-100)
     BASE_SPEED = 60
-    
+    # 障害物回避距離
+    AVOID_DIST = 30.0 # 30cm以下で回避行動
+
     while True:
         # ----------------------------------------
         # Phase 0: 落下中 & Phase 6: ゴール -> 停止
@@ -621,6 +705,27 @@ def moveMotor_thread():
             stop_motors()
             time.sleep(0.1)
             continue
+        # 障害物回避 (超音波センサー)
+        if phase not in [0, 1, 6] and obstacle_dist < AVOID_DIST:
+            print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
+            
+            # --- 回避動作 (バック＆ターン) ---
+            stop_motors()
+            time.sleep(0.2)
+            
+            # バック
+            set_motor(PIN_ENA, PIN_PHA, 60, 0) # 0=Reverse
+            set_motor(PIN_ENB, PIN_PHB, 60, 0)
+            time.sleep(1.0)
+            
+            # 旋回 (右へ)
+            set_motor(PIN_ENA, PIN_PHA, 60, 0) # 右後退
+            set_motor(PIN_ENB, PIN_PHB, 60, 1) # 左前進
+            time.sleep(0.5)
+            
+            stop_motors()
+            time.sleep(0.2)
+            continue # メインの制御をスキップしてループ先頭へ
 
         # ----------------------------------------
         # Phase 1: 回避行動 (direction = -400 の場合)
