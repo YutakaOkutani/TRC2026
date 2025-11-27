@@ -108,7 +108,7 @@ PasswordAuthentication が no になっていたら yes に変更。
 
 "#" でコメントアウトされている場合は、"#" を外して PasswordAuthentication yes にする
 
-設定を変更したら、SSH サーバーを再起動します。
+設定を変更したら、SSH サーバーを再起動。
 ```bash
 sudo systemctl restart ssh
 ```
@@ -227,11 +227,6 @@ rpicam-hello -t 0　#bookwormの場合
 #### 1. ネットワーク情報の確認
 ```bash
 ip a
-```
-または
-
-```bash
-ifconfig
 ```
 
 #### 2. 設定ファイルの編集
