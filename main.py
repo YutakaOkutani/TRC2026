@@ -233,27 +233,31 @@ class CanSatController:
         self.state.update_navigation(phase=1)
         self.time_phase1_start = time.time()
 
-    def handle_phase1(self, snap):
-    # LED settings
-    self.devices["led1"].on()
-    self.devices["led2"].off()
+    def handle_phase1(self):
+        # LED settings
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        if led1:
+            led1.on()
+        if led2:
+            led2.off()
 
-    print("PH3: Start Parachute Separation")
+        print("PH1: Start Parachute Separation")
 
-    if not hasattr(self, "time_phase1_start") or self.time_phase1_start is None:
-        self.time_phase1_start = time.time()
+        if not hasattr(self, "time_phase1_start") or self.time_phase1_start is None:
+            self.time_phase1_start = time.time()
 
-    elapsed = time.time() - self.time_phase1_start
+        elapsed = time.time() - self.time_phase1_start
 
-    if elapsed < TIMEOUT_PHASE_1:
-        self.state.update_navigation(direction=-400.0, phase=1)
-        return  # Phase1 を継続
-    print("PH3: Parachute Separation TIMEOUT → switching to Phase3")
+        if elapsed < TIMEOUT_PHASE_1:
+            self.state.update_navigation(direction=-400.0, phase=1)
+            return  # Phase1 を継続
+        print("PH1: Parachute Separation TIMEOUT → switching to Phase3")
 
-    # フェーズ遷移
-    self.state.update_navigation(phase=3)
-    self.time_phase3_start = time.time()
-    self.time_phase1_start = None
+        # フェーズ遷移
+        self.state.update_navigation(phase=3)
+        self.time_phase3_start = time.time()
+        self.time_phase1_start = None
 
 
     def handle_phase2(self):
