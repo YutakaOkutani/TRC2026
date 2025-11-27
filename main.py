@@ -186,8 +186,8 @@ class CanSatController:
             self.handle_phase0(st)
         elif phase == 1:
             self.handle_phase1()
-        elif phase == 2:
-            self.handle_phase2()
+        #elif phase == 2:
+        #    self.handle_phase2()
         elif phase == 3:
             self.handle_phase3(st)
         elif phase == 4:
@@ -242,8 +242,9 @@ class CanSatController:
         if led2:
             led2.off()
         self.state.update_navigation(direction=-400.0, phase=1)
-        time.sleep(2.0)
-        self.state.update_navigation(phase=2)
+        time.sleep(3.0)
+        print("Skip Phase2. Transition to Phase 3.")
+        self.state.update_navigation(phase=3)
         self.time_phase2_start = time.time()
 
     def handle_phase2(self):
@@ -325,7 +326,7 @@ class CanSatController:
             if time.time() - self.time_start_searching_cone >= TIMEOUT_PHASE_4:
                 print("Camera TIMEOUT: Cone not found or Camera dead")
                 self.searching_flag = False
-                self.state.update_navigation(phase=3)
+                self.state.update_navigation(phase=4)
                 self.time_phase3_start = time.time()
 
         if cone_prob > 0.1:
@@ -674,12 +675,12 @@ class CanSatController:
                 time.sleep(0.05)
                 continue
 
-            if phase == 2:
-                calib_speed = 50
-                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], calib_speed, True)
-                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], calib_speed, False)
-                time.sleep(0.05)
-                continue
+            #if phase == 2:
+            #    calib_speed = 50
+            #    self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], calib_speed, True)
+            #    self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], calib_speed, False)
+            #    time.sleep(0.05)
+            #    continue
 
             if phase == 3:
                 target_heading = direction - 5
