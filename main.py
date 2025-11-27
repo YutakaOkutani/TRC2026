@@ -326,8 +326,8 @@ class CanSatController:
             if time.time() - self.time_start_searching_cone >= TIMEOUT_PHASE_4:
                 print("Camera TIMEOUT: Cone not found or Camera dead")
                 self.searching_flag = False
-                self.state.update_navigation(phase=4)
-                self.time_phase3_start = time.time()
+                self.state.update_navigation(phase=5)
+                self.time_phase5_start = time.time()
 
         if cone_prob > 0.1:
             self.state.update_navigation(phase=5)
