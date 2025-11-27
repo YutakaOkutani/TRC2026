@@ -83,7 +83,7 @@
 2. PC から次のコマンドで接続
 
    ```bash
-   ssh <ユーザー名>@<ホスト名>.local（or <IPアドレス>）
+   ssh ユーザー名@ホスト名.local（or IPアドレス）
    ```
 3. パスワードは Imager で設定したものを使用
 
@@ -93,7 +93,7 @@
 * `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
 * Permission denied (publickey,password).が出る場合、以下のコマンドで接続
 ```bash
-ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no <ユーザー名>@<IPアドレス>
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no ユーザー名@IPアドレス
 ```
 その後、以下のコマンドでラズパイ上の設定を確認
 ```bash
@@ -274,7 +274,7 @@ ip a
 * 左下の「><」アイコン（リモート接続）からRemote-SSH: Connect to Host… を選択
 * 以下を入力
 ```
-ssh <ユーザー名>@<Raspberry Pi のIPアドレス>
+ssh ユーザー名@ラズパイ のIPアドレス
 ```
 * 接続後、VS Code 下部のステータスバーが「SSH: Raspberry Pi」表示になる
 * Terminal → New Terminal を開くと、Pi のターミナルが利用可能
