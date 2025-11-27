@@ -59,6 +59,7 @@ class CanSatState:
         self.obstacle_dist = 999.0
         self.phase = 0
         self.gps_detect = 0
+        self.cone_is_reached = False
 
     def update_imu(self, acc=None, gyro=None, mag=None, fall=None, angle=None):
         with self.lock:
@@ -100,12 +101,14 @@ class CanSatState:
             if phase is not None:
                 self.phase = phase
 
-    def update_cone(self, cone_direction=None, cone_probability=None):
+    def update_cone(self, cone_direction=None, cone_probability=None, cone_is_reached=None):
         with self.lock:
             if cone_direction is not None:
                 self.cone_direction = cone_direction
             if cone_probability is not None:
                 self.cone_probability = cone_probability
+            if cone_is_reached is not None:
+                self.cone_is_reached = cone_is_reached
 
     def update_obstacle(self, obstacle_dist=None):
         with self.lock:
@@ -132,6 +135,7 @@ class CanSatState:
                 "obstacle_dist": self.obstacle_dist,
                 "phase": self.phase,
                 "gps_detect": self.gps_detect,
+                "cone_is_reached": self.cone_is_reached,
             }
 
 
@@ -227,6 +231,7 @@ class CanSatController:
             time.sleep(0.1)
 
         self.state.update_navigation(phase=1)
+        self.time_phase1_start = time.time()
 
     def handle_phase1(self):
         led1 = self.devices.get("led1")
@@ -236,8 +241,10 @@ class CanSatController:
             led1.on()
         if led2:
             led2.off()
-        self.state.update_navigation(direction=-400.0, phase=2)
-        time.sleep(5)
+        self.state.update_navigation(direction=-400.0, phase=1)
+        time.sleep(2.0)
+        self.state.update_navigation(phase=2)
+        self.time_phase2_start = time.time()
 
     def handle_phase2(self):
         led1 = self.devices.get("led1")
@@ -327,7 +334,6 @@ class CanSatController:
     def handle_phase5(self):
         led1 = self.devices.get("led1")
         led2 = self.devices.get("led2")
-        detector = self.devices.get("detector")
         print("phase5 : approaching")
         self.time_camera_start = time.time()
         self.count_cone_lost = 0
@@ -345,11 +351,10 @@ class CanSatController:
                 if led2:
                     led2.on()
 
-            is_det = False
-            is_reach = False
-            if detector is not None:
-                is_det = detector.is_detected
-                is_reach = detector.is_reached
+            st = self.state.snapshot()
+
+            is_det = st["cone_probability"] > 0.1
+            is_reach = st["cone_is_reached"]
 
             if not is_det:
                 self.count_cone_lost += 1
@@ -526,7 +531,7 @@ class CanSatController:
     def cone_detect(self):
         detector = self.devices.get("detector")
         if detector is None:
-            self.state.update_cone(cone_direction=0.5, cone_probability=0.0)
+            self.state.update_cone(cone_direction=0.5, cone_probability=0.0, cone_is_reached=False)
             return
         try:
             detector.detect_cone()
@@ -534,9 +539,9 @@ class CanSatController:
             cdir = 0.5
             if detector.cone_direction is not None:
                 cdir = 1.0 - detector.cone_direction
-            self.state.update_cone(cone_direction=cdir, cone_probability=prob)
+            self.state.update_cone(cone_direction=cdir, cone_probability=prob, cone_is_reached=detector.is_reached)
         except Exception:
-            self.state.update_cone(cone_direction=0.5, cone_probability=0.0)
+            self.state.update_cone(cone_direction=0.5, cone_probability=0.0, cone_is_reached=False)
 
     # --- Thread loops ---
     def gps_thread(self):
