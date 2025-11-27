@@ -1,5 +1,42 @@
 # TRC2026
-## 1. 開発環境の準備
+# ファイル構成
+```
+├── main.py
+├── venv
+├── library/
+│   ├── bno055.py
+│   ├── bmp180.py
+│   ├── detect_corn.py
+│   ├── capture_roi_img.py
+│   ├── micropyGPS.py
+│   ├── __init__.py
+├── tests/
+│   ├── motor_test.py
+│   ├── LED.py
+├── requirements.txt
+└── README.md
+```
+- 本番用コード：main.py
+- センサー用ライブラリ：bno055.py,bmp180.py,mycropyGPS.py
+- テストコード：motor_test.py, LED.py
+- カメラフェーズ用：capture_roi_image.py,detect_corn.py
+
+# 搭載計器一覧
+|分類|型番|購入サイト|備考|
+| ---- | ---- |---|---|
+|マイコン |Raspberrypizero2W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
+|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBで十分|
+|9軸センサ|BNO055|秋月|
+|気圧センサ|BMP180|電子工作ステーション|
+|モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |POLOLU|
+|モータードライバ|POLOLU-4038|マルツ|DRV8256E搭載モジュール|
+|超音波センサ|HC-SR04|秋月|
+|GPS|GT-502MGG-N|秋月|
+|カメラ|KEYESTUDIO 5MP |Yahooショッピング|互換品であるが十分|
+|バッテリー|B017 VONNEM|Amazon|
+|DC-DCコンバータ|AE-OKL-T/6-W12N-C|秋月|変格ではあるが、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
+
+## 0. 環境構築の準備
 
 ### ハードウェア
 
@@ -13,8 +50,6 @@
 
 ### ソフトウェア
 
-* Git
-* VSCode
 * Raspberry Pi Imager
 * SSH クライアント（Windows なら標準 PowerShell）
 
@@ -27,8 +62,8 @@
 1. Raspberry Pi Imager をインストールする（https://www.raspberrypi.com/software/）。
 2. 起動後、
   * Device → *Raspberry PI Zero 2 W* 
-  * OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* を選択（GUIは要らない）
-  * Storage → 該当するMicroSDカードを選択
+  * OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
+  * Storage → MicroSDカード
 
 3. 以下を設定・有効化する
 
@@ -48,7 +83,7 @@
 2. PC から次のコマンドで接続
 
    ```bash
-   ssh pi@<ホスト名>.local
+   ssh <ユーザー名>@<ホスト名>.local（or <IPアドレス>）
    ```
 3. パスワードは Imager で設定したものを使用
 
@@ -56,10 +91,26 @@
 
 * 同一ネットワークにいるか
 * `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
-* Permission denied (publickey,password).が出る場合
-以下で接続を実行（その場しのぎ）
+* Permission denied (publickey,password).が出る場合、以下のコマンドで接続
 ```bash
 ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no <ユーザー名>@<IPアドレス>
+```
+その後、以下のコマンドでラズパイ上の設定を確認
+```bash
+sudo nano /etc/ssh/sshd_config
+```
+その中に、以下の行があれば確認。
+```
+PasswordAuthentication yes
+```
+
+PasswordAuthentication が no になっていたら yes に変更。
+
+"#" でコメントアウトされている場合は、"#" を外して PasswordAuthentication yes にする
+
+設定を変更したら、SSH サーバーを再起動します。
+```bash
+sudo systemctl restart ssh
 ```
 
 ---
@@ -88,24 +139,15 @@ source venv/bin/activate
 
 ```bash
 sudo apt update
-sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3  python3-pandas screen #ラズパイの新しいOSでは、pigpioのサポートが切れたので、gpiozeroで代替する
-pip install -y numpy opencv-python==4.6.0.66 pyserial #sudoは付けない
+sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio python3-rpi.gpio python3-venv python3-pip git python3-gpiozero python3  python3-pandas screen
+pip install -y numpy opencv-python==4.6.0.66 pyserial
 ```
 
 ---
 
-## 4. リポジトリのクローン（ https://github.com/YutakaOkutani/TRC2026 ）
+## 4. シリアル通信 / GPIO / I2C の有効化
 
-```bash
-git clone https://github.com/YutakaOkutani/TRC2026
-cd TRC2026
-```
-
----
-
-## 5. シリアル通信 / GPIO / I2C の有効化
-
-### 5.1 raspi-config での設定
+### 4.1 raspi-config での設定
 
 ```bash
 sudo raspi-config
@@ -129,51 +171,38 @@ sudo reboot
 
 ---
 
-## 6. プロジェクト構成
+## 5. リポジトリのクローン（ https://github.com/YutakaOkutani/TRC2026 ）
 
+```bash
+git clone https://github.com/YutakaOkutani/TRC2026
+cd TRC2026
 ```
-.
-├── main.py
-├── venv
-├── library/
-│   ├── bno055.py
-│   ├── bmp180.py
-│   ├── detect_corn.py
-│   ├── capture_roi_img.py
-│   ├── micropyGPS.py
-│   ├── __init__.py
-├── tests/
-│   ├── motor_test.py
-│   ├── LED.py
-├── requirements.txt
-└── README.md
-```
-
-各ディレクトリの目的を以下に示す：
-
-* **main.py**
-  制御コード本体。
-* **library**
-  importするライブラリ
-* **__init__.py**
-  libraryフォルダを認識できるようにするための空のファイル
-* **tests/**
-  モジュール単位の動作確認用。
-* **README.md**
-  本書。
 
 ---
 
-## 7. 実行方法
+
+## 6. 実行方法
 * メインコード
 ```bash
 source venv/bin/activate
 python3 main.py
 ```
+
 * GPSのテスト（気圧、9軸はライブラリコードを実行すればテスト可能）
 ```bash
 sudo screen /dev/ttyAMA0 115200 #ボーレートが違う場合、9600も試す
 ```
+
+* カメラを有効化（参照:https://raspida.com/rpi-camera-module-matome/#index_id5）
+```bash
+lsb_release -a #バージョン確認
+nano /boot/firmware/config.txt #bookwormの場合
+#config.txtを編集
+dtoverlay=OV5647
+#canera_auto_detect=1
+camera_auto_detect=0
+```
+
 * カメラのテスト
 ```bash
 rpicam-hello -t 0　#bookwormの場合
@@ -181,16 +210,16 @@ rpicam-hello -t 0　#bookwormの場合
 
 ---
 
-## 8. トラブルシューティング
+## 7. トラブルシューティング
 
-### 8.1 センサが認識されない
+### 7.1 センサが認識されない
 
-* `i2cdetect -y 1` で確認
+* `sudo i2cdetect -y 1` で確認
 * 配線の導通を確認
 
 ---
 
-## 9. その他
+## 8. その他
 
 ### Raspberry Pi Zero 2 W で IP アドレスを固定する手順
 

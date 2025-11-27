@@ -18,6 +18,101 @@ from library import bmp180
 from library.micropyGPS import MicropyGPS
 from library import detect_corn as dc
 
+# --- グローバル状態管理クラス ---
+class CanSatState:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.acc = [0.0, 0.0, 0.0]
+        self.gyro = [0.0, 0.0, 0.0]
+        self.mag = [0.0, 0.0, 0.0]
+        self.lat = 0.0
+        self.lng = 0.0
+        self.alt = 0.0
+        self.pres = 0.0
+        self.distance = 0.0
+        self.azimuth = 0.0
+        self.angle = 0.0
+        self.direction = 0.0
+        self.fall = 0.0
+        self.cone_direction = 0.5
+        self.cone_probability = 0.0
+        self.obstacle_dist = 999.0
+        self.phase = 0
+
+    def update_imu(self, acc=None, gyro=None, mag=None, fall=None, angle=None):
+        with self.lock:
+            if acc is not None:
+                self.acc = acc
+            if gyro is not None:
+                self.gyro = gyro
+            if mag is not None:
+                self.mag = mag
+            if fall is not None:
+                self.fall = fall
+            if angle is not None:
+                self.angle = angle
+
+    def update_gps(self, lat=None, lng=None):
+        with self.lock:
+            if lat is not None:
+                self.lat = lat
+            if lng is not None:
+                self.lng = lng
+
+    def update_barometer(self, alt=None, pres=None):
+        with self.lock:
+            if alt is not None:
+                self.alt = alt
+            if pres is not None:
+                self.pres = pres
+
+    def update_navigation(self, distance=None, azimuth=None, direction=None, phase=None):
+        with self.lock:
+            if distance is not None:
+                self.distance = distance
+            if azimuth is not None:
+                self.azimuth = azimuth
+            if direction is not None:
+                self.direction = direction
+            if phase is not None:
+                self.phase = phase
+
+    def update_cone(self, cone_direction=None, cone_probability=None):
+        with self.lock:
+            if cone_direction is not None:
+                self.cone_direction = cone_direction
+            if cone_probability is not None:
+                self.cone_probability = cone_probability
+
+    def update_obstacle(self, obstacle_dist=None):
+        with self.lock:
+            if obstacle_dist is not None:
+                self.obstacle_dist = obstacle_dist
+
+    def snapshot(self):
+        with self.lock:
+            return {
+                "acc": list(self.acc),
+                "gyro": list(self.gyro),
+                "mag": list(self.mag),
+                "lat": self.lat,
+                "lng": self.lng,
+                "alt": self.alt,
+                "pres": self.pres,
+                "distance": self.distance,
+                "azimuth": self.azimuth,
+                "angle": self.angle,
+                "direction": self.direction,
+                "fall": self.fall,
+                "cone_direction": self.cone_direction,
+                "cone_probability": self.cone_probability,
+                "obstacle_dist": self.obstacle_dist,
+                "phase": self.phase,
+            }
+
+# インスタンス化して各スレッドに渡す
+state = CanSatState()
+
 # --- 定数設定 ---
 # タイムアウト時間設定（秒）
 TIMEOUT_PHASE_0 = 5 * 60   # 落下判定待ち最大
@@ -114,7 +209,7 @@ def main():
     # スタート時のLED合図 (3回点滅)
     signal_led(3)
     
-    phase = 3 # スタートフェーズ（適宜0に変更してください）
+    phase = 0 # スタートフェーズ（適宜変更）
     
     try:
         while True:
@@ -146,7 +241,7 @@ def main():
 
                     # 2. 高度判定
                     altitude_diff = initial_alt - alt
-                    is_drop = (altitude_diff > 30.0) # 30m以上の降下で落下と判定
+                    is_drop = (altitude_diff > 60.0) # 60m以上の降下で落下と判定（閾値は要検討）
 
                     # 判定ロジック: どちらか、または両方を満たしたらパラシュート開傘とみなす
                     if is_drop:
@@ -284,7 +379,7 @@ def main():
                     led2.on() # Solid ON
                 
                 # カメラが死んでいても cone_detect はエラーを吐かずに戻ってくる
-                cone_detect()
+                # cone_detect() ←スレッドで実行するためコメントアウト
                 
                 if not searching_Flag:
                     searching_Flag = True
@@ -326,7 +421,7 @@ def main():
                         if led2:
                             led2.on()
 
-                    cone_detect()
+                    # cone_detect() ← スレッドで実行するためコメントアウト
                     
                     # カメラ故障時は detector.is_detected は常に False になる想定
                     is_det = False
@@ -407,7 +502,7 @@ def signal_led(times):
             led2.off()
         time.sleep(0.2)
 
-
+# --- Robust Setup Function ---
 def Setup():
     global bno, bmp, detector, sonar, pin_factory
     global led1, led2, motor_a_pwm, motor_a_dir, motor_b_pwm, motor_b_dir
@@ -486,6 +581,8 @@ def Setup():
         threading.Thread(target=moveMotor_thread, daemon=True).start()
         threading.Thread(target=setData_thread, daemon=True).start()
         threading.Thread(target=GPS_thread, daemon=True).start()
+        threading.Thread(target=camera_thread, daemon=True).start()
+
     except Exception as e:
         print(f"Thread Start Error {e}.")
 
@@ -504,8 +601,8 @@ def Setup():
         print("Log File Init Failed. No logging.")
 
     print("--- Setup Finished (Ready to Die Trying) ---")
-# --- 安全なデータ取得関数群 ---
 
+# --- 安全なデータ取得関数群 ---
 def getBnoData():
     global acc, gyro, mag, fall
     if bno is None: return # センサーがないなら何もしない(初期値0のまま)
@@ -618,9 +715,28 @@ def GPS_thread():
         except:
             pass # 読み取りエラー無視
 
-# --- Helper Functions ---
-# --- 追加するスレッド関数 ---
 
+def camera_thread():
+    """
+    カメラ処理を独立して行うスレッド
+    Phase 4, 5 のときだけ detect_cone を実行してグローバル変数を更新する
+    """
+    global phase
+    
+    while True:
+        # カメラが必要なフェーズのみ処理を実行
+        if phase in [4, 5]:
+            # 既存の cone_detect() 関数を呼べばOK
+            # 内部で detector.detect_cone() が呼ばれ、重い処理が走る
+            cone_detect()
+            
+            # 処理頻度の調整 (例: 最大20fps程度に制限してCPUを休ませる)
+            time.sleep(0.05)
+        else:
+            # カメラ不要なフェーズはスリープ長めにしてCPU負荷を下げる
+            time.sleep(0.5)
+
+# --- Helper Functions ---
 def setData_thread():
     """
     一定間隔でセンサー値を取得し、グローバル変数を更新＆ログ保存するスレッド
@@ -669,7 +785,7 @@ def setData_thread():
         # サンプリングレートに従って待機
         time.sleep(DATA_SAMPLING_RATE)
 
-
+# --- Motor Control Functions ---
 def moveMotor_thread():
     """
     現在の Phase とセンサー値に基づいてモーターを動かすスレッド
@@ -691,7 +807,7 @@ def moveMotor_thread():
             time.sleep(0.1)
             continue
         # 障害物回避 (超音波センサー)
-        if phase not in [0, 1, 6] and obstacle_dist < AVOID_DIST:
+        if phase not in [0, 1, 5, 6] and obstacle_dist < AVOID_DIST:
             print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
             
             # --- 回避動作 (バック＆ターン) ---
@@ -810,7 +926,6 @@ def set_motor(motor_pwm, motor_dir, speed, forward):
         return
     motor_dir.value = 1 if forward else 0
     motor_pwm.value = max(0.0, min(1.0, speed / 100.0))
-
 
 def stop_motors():
     if motor_a_pwm:
