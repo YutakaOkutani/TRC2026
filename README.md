@@ -17,9 +17,9 @@
 └── README.md
 ```
 - 本番用コード：main.py
-- センサー用ライブラリ：bno055.py,bmp180.py,mycropyGPS.py
+- センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
 - テストコード：motor_test.py, LED.py
-- カメラフェーズ用：capture_roi_image.py,detect_corn.py
+- カメラフェーズ用：capture_roi_image.py, detect_corn.py
 
 # 搭載計器一覧
 |分類|型番|購入サイト|備考|

@@ -1,24 +1,44 @@
-import serial
-import time
-import math
-import threading
-import datetime
 import csv
+import datetime
+import math
 import os
 import sys
+import threading
+import time
+
 import cv2
+import serial
+from gpiozero import DigitalOutputDevice, DistanceSensor, LED, PWMOutputDevice
+from gpiozero.pins.lgpio import LGPIOFactory
 from picamera2 import Picamera2
 
-from gpiozero import LED, PWMOutputDevice, DigitalOutputDevice, DistanceSensor
-from gpiozero.pins.lgpio import LGPIOFactory
-
-# --- 手動ライブラリのインポート ---
-from library import bno055
-from library import bmp180
-from library.micropyGPS import MicropyGPS
+from library import bmp180, bno055
 from library import detect_corn as dc
+from library.micropyGPS import MicropyGPS
 
-# --- グローバル状態管理クラス ---
+# --- Constants ---
+TIMEOUT_PHASE_0 = 5 * 60   # 落下判定の最大
+TIMEOUT_PHASE_1 = 30       # パラシュート切離の最大
+TIMEOUT_PHASE_2 = 2 * 60   # キャリブレーションの最大
+TIMEOUT_PHASE_3 = 5 * 60   # GPS誘導の最大
+TIMEOUT_PHASE_4 = 60       # コーン探索の最大
+TIMEOUT_PHASE_5 = 45       # 接近・スタック判定の最大
+DATA_SAMPLING_RATE = 0.06  # センサーデータ取得間隔（秒）
+
+PIN_ENA = 2
+PIN_PHA = 13
+PIN_ENB = 17
+PIN_PHB = 19
+PIN_LED_1 = 5
+PIN_LED_2 = 6
+PIN_TRIG = 23
+PIN_ECHO = 24
+PWM_FREQ = 20000
+
+TARGET_LAT = 38.26052
+TARGET_LNG = 140.8544151
+
+
 class CanSatState:
     def __init__(self):
         self.lock = threading.Lock()
@@ -38,6 +58,7 @@ class CanSatState:
         self.cone_probability = 0.0
         self.obstacle_dist = 999.0
         self.phase = 0
+        self.gps_detect = 0
 
     def update_imu(self, acc=None, gyro=None, mag=None, fall=None, angle=None):
         with self.lock:
@@ -52,12 +73,14 @@ class CanSatState:
             if angle is not None:
                 self.angle = angle
 
-    def update_gps(self, lat=None, lng=None):
+    def update_gps(self, lat=None, lng=None, gps_detect=None):
         with self.lock:
             if lat is not None:
                 self.lat = lat
             if lng is not None:
                 self.lng = lng
+            if gps_detect is not None:
+                self.gps_detect = gps_detect
 
     def update_barometer(self, alt=None, pres=None):
         with self.lock:
@@ -108,874 +131,650 @@ class CanSatState:
                 "cone_probability": self.cone_probability,
                 "obstacle_dist": self.obstacle_dist,
                 "phase": self.phase,
+                "gps_detect": self.gps_detect,
             }
 
-# インスタンス化して各スレッドに渡す
-state = CanSatState()
 
-# --- 定数設定 ---
-# タイムアウト時間設定（秒）
-TIMEOUT_PHASE_0 = 5 * 60   # 落下判定待ち最大
-TIMEOUT_PHASE_1 = 30       # パラシュート分離最大
-TIMEOUT_PHASE_2 = 2 * 60   # キャリブレーション最大
-TIMEOUT_PHASE_3 = 5 * 60   # GPS誘導最大
-TIMEOUT_PHASE_4 = 60       # コーン探索最大
-TIMEOUT_PHASE_5 = 45       # 接近・スタック判定最大
-
-DATA_SAMPLING_RATE = 0.06 # センサーデータ取得間隔（秒）
-
-# --- Pin Number ---
-# Motor Control Pins
-PIN_ENA = 2
-PIN_PHA = 13
-PIN_ENB = 17
-PIN_PHB = 19
-
-# LED Pins
-PIN_LED_1 = 5  # Status Indicator (Red recommended)
-PIN_LED_2 = 6  # Activity Indicator (Green recommended)
-
-PWM_FREQ = 20000
-PWM_RANGE = 100
-
-# Sonar Pins
-PIN_TRIG = 23
-PIN_ECHO = 24
-
-# --- グローバル変数 (初期値: 安全なデフォルト値) ---
-acc = [0.0, 0.0, 0.0]
-gyro = [0.0, 0.0, 0.0]
-mag = [0.0, 0.0, 0.0]
-lat = 0.0
-lng = 0.0
-alt = 0.0
-pres = 0.0
-distance = 9999.0 # 初期値は遠くにしておく
-angle = 0.0
-azimuth = 0.0
-direction = 0.0
-phase = 0
-gps_detect = 0
-cone_direction = 0.5
-cone_probability = 0
-fall = 0.0
-upside_down_Flag = 0
-sonar = None
-obstacle_dist = 999.0
-
-# ターゲット座標（適宜変更）
-TARGET_LAT = 38.26052
-TARGET_LNG = 140.8544151
-
-# インスタンス格納用（初期化失敗時はNoneのままにする）
-bno = None
-bmp = None
-detector = None
-
-# gpiozero オブジェクト格納用変数
-led1 = None
-led2 = None
-motor_a_pwm = None
-motor_a_dir = None
-motor_b_pwm = None
-motor_b_dir = None
-sonar = None
-pin_factory = None
-
-# ログファイル
-nowTime = datetime.datetime.now()
-os.makedirs("./log", exist_ok=True)
-fileName = "./log/robust_log_" + nowTime.strftime("%Y-%m%d-%H%M%S") + ".csv"
+def current_milli_time():
+    return round(time.time() * 1000)
 
 
-def main():
-    global phase, start
-    
-    # Flags
-    searching_Flag = False
-    count_cone_lost = 0
-    
-    # Timers
-    time_phase3_start = 0
-    time_start_searching_cone = 0
-    time_camera_start = 0
+class CanSatController:
+    def __init__(self, target_lat, target_lng):
+        self.state = CanSatState()
+        self.target_lat = target_lat
+        self.target_lng = target_lng
+        now_time = datetime.datetime.now()
+        os.makedirs("./log", exist_ok=True)
+        self.log_path = "./log/robust_log_" + now_time.strftime("%Y-%m%d-%H%M%S") + ".csv"
 
-    # LED点滅用カウンター
-    led_blink_timer = 0
+        self.devices = {}
+        self.led_blink_timer = 0
+        self.searching_flag = False
+        self.count_cone_lost = 0
+        self.time_phase3_start = 0
+        self.time_phase4_start = 0
+        self.time_start_searching_cone = 0
+        self.time_camera_start = 0
 
-    # 全センサーの初期化（失敗しても進む）
-    Setup()
+    # --- Main entry ---
+    def run(self):
+        self.setup_hardware()
+        self.signal_led(3)
+        self.state.update_navigation(phase=0)
 
-    # スタート時のLED合図 (3回点滅)
-    signal_led(3)
-    
-    phase = 0 # スタートフェーズ（適宜変更）
-    
-    try:
+        try:
+            while True:
+                self.loop_once()
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\nKeyboardInterrupt")
+            self.stop_motors()
+            sys.exit()
+
+    # --- Main phase loop ---
+    def loop_once(self):
+        st = self.state.snapshot()
+        phase = st["phase"]
+        self.led_blink_timer += 1
+
+        if phase == 0:
+            self.handle_phase0(st)
+        elif phase == 1:
+            self.handle_phase1()
+        elif phase == 2:
+            self.handle_phase2()
+        elif phase == 3:
+            self.handle_phase3(st)
+        elif phase == 4:
+            self.handle_phase4()
+        elif phase == 5:
+            self.handle_phase5()
+        elif phase == 6:
+            self.handle_phase6()
+
+    # --- Phase handlers ---
+    def handle_phase0(self, st):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        print("phase0 : falling")
+        self.toggle_led(led1, self.led_blink_timer, interval=5)
+        if led2:
+            led2.off()
+
+        start = time.time()
+        initial_alt = st["alt"]
+        print(f"Start Altitude: {initial_alt:.2f}m")
+
         while True:
-            # カウンター更新 (約0.1秒ごとに加算)
-            led_blink_timer += 1
+            self.led_blink_timer += 1
+            self.toggle_led(led1, self.led_blink_timer, interval=5)
 
-            # ==========================================================
-            # Phase 0: Falling (落下検知)
-            # ==========================================================
-            if phase == 0:
-                print("phase0 : falling")
-                # LED制御: 0.5秒間隔で点滅 (5 * 0.1s)
-                toggle_led(led1, led_blink_timer, interval=5)
-                if led2:
-                    led2.off()
+            st_now = self.state.snapshot()
+            is_impact = st_now["fall"] > 30.0
+            altitude_diff = initial_alt - st_now["alt"]
+            is_drop = altitude_diff > 60.0
 
-                start = time.time()
+            if is_drop:
+                print(f"Detected Drop: {altitude_diff:.2f}m")
+                break
+            if is_impact:
+                print(f"Detected Impact: {st_now['fall']:.2f}m/s^2")
+                break
+            if time.time() - start > TIMEOUT_PHASE_0:
+                print("Phase0 TIMEOUT: Force proceed (Sensor failure?)")
+                break
+            time.sleep(0.1)
 
-                initial_alt = alt 
-                print(f"Start Altitude: {initial_alt:.2f}m")
+        self.state.update_navigation(phase=1)
 
-                while True:
-                    # 落下判定ループ内でも点滅させる
-                    led_blink_timer += 1
-                    toggle_led(led1, led_blink_timer, interval=5)
+    def handle_phase1(self):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        print("phase1 : removing parachute")
+        if led1:
+            led1.on()
+        if led2:
+            led2.off()
+        self.state.update_navigation(direction=-400.0, phase=2)
+        time.sleep(5)
 
-                    # 1. 加速度判定
-                    is_impact = (fall > 30.0) # 30 m/s^2 ≒ 3G (閾値は要検討)
+    def handle_phase2(self):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        bno = self.devices.get("bno")
+        print("phase2 : BNO Calibration (Spinning)")
+        if led1:
+            led1.off()
+        if led2:
+            led2.on()
 
-                    # 2. 高度判定
-                    altitude_diff = initial_alt - alt
-                    is_drop = (altitude_diff > 60.0) # 60m以上の降下で落下と判定（閾値は要検討）
+        calib_start_time = time.time()
+        while True:
+            self.led_blink_timer += 1
+            self.toggle_led(led1, self.led_blink_timer, interval=3)
 
-                    # 判定ロジック: どちらか、または両方を満たしたらパラシュート開傘とみなす
-                    if is_drop:
-                        print(f"Detected Drop: {altitude_diff:.2f}m")
-                        break
-                    
-                    if is_impact:
-                        print(f"Detected Impact: {fall:.2f}m/s^2")
-                        break
-                    
-                    if time.time() - start > TIMEOUT_PHASE_0:
-                        print("Phase0 TIMEOUT: Force proceed (Sensor failure?)")
-                        break
-                    time.sleep(0.1)
-                phase = 1
-                time_phase1_start = time.time() # Phase1タイマースタート
-            # ==========================================================
-            # Phase 1: パラシュート分離
-            # ==========================================================
-            elif phase == 1:
-                print("phase1 : removing parachute")
+            if time.time() - calib_start_time > TIMEOUT_PHASE_2:
+                print("Phase2 TIMEOUT: Force Phase 3 (Calibration Incomplete)")
+                break
 
-                if led1:
-                    led1.on() # Solid ON
-                if led2:
-                    led2.off()
-                
-                direction = -400.0
-                time.sleep(5)
-                phase = 2
-                time_phase2_start = time.time() # Phase2タイマースタート
-
-            # ==========================================================
-            # Phase 2: Calibration (キャリブレーション)
-            # ==========================================================
-            elif phase == 2:
-                print("phase2 : BNO Calibration (Spinning)")
-                if led1:
-                    led1.off()
-                if led2:
-                    led2.on()
-                
-                calib_start_time = time.time()
-                
-                while True:
-                    # ループ内LED点滅 (キャリブレーション中はチカチカさせる)
-                    led_blink_timer += 1
-                    toggle_led(led1, led_blink_timer, interval=3)
-                    
-                    # タイムアウト判定 (いつまでも補正が終わらない場合の強制脱出)
-                    if time.time() - calib_start_time > TIMEOUT_PHASE_2:
-                        print("Phase2 TIMEOUT: Force Phase 3 (Calibration Incomplete)")
-                        break
-                    
-                    # キャリブレーション状態の確認
-                    if bno is not None:
-                        # getCalibrationStatus -> (sys, gyro, accel, mag) 各0-3
-                        sys_st, gyro_st, accel_st, mag_st = bno.getCalibrationStatus()
-                        
-                        # ログ出力（デバッグ用）
-                        if led_blink_timer % 10 == 0:
-                            print(f"Calib Status: Sys={sys_st} Gyro={gyro_st} Acc={accel_st} Mag={mag_st}")
-                        
-                        # 判定基準: 地磁気(Mag)が 2以上になればOKとする
-                        # (本来は3がベストだが、屋外/本番環境では3になりにくいことがある)
-                        if mag_st >= 2:
-                            print("Calibration OK! (Mag >= 2)")
-                            break
-                    else:
-                        print("BNO None: Skip Calibration")
-                        break
-                        
-                    time.sleep(0.1)
-                phase = 3
-                time_phase3_start = time.time() # Phase3タイマースタート
-
-            # ==========================================================
-            # Phase 3: GPS Navigation (GPS誘導)
-            # ==========================================================
-            elif phase == 3:
-                if led1:
-                    led1.off()
-                toggle_led(led2, led_blink_timer, interval=10) # 1秒間隔
-
-                # GPSが死んでいる、または到達できない場合のタイムアウト処理
-                if time.time() - time_phase3_start > TIMEOUT_PHASE_3:
-                    print("Phase3 TIMEOUT: Give up GPS, switching to Camera")
-                    phase = 4
-                    continue
-
-                # GPSが有効(lat != 0)なら誘導計算を行う
-                if gps_detect == 1:
-                    # 距離と方位を計算
-                    # 現在地(lat, lng) -> ターゲット(TARGET_LAT, TARGET_LNG)
-                    dist, azi = calc_distance_and_azimuth(lat, lng, TARGET_LAT, TARGET_LNG)
-                    
-                    # グローバル変数を更新
-                    distance = dist
-                    direction = azi       # これを更新すると moveMotor_thread が向きを変える
-                    azimuth = azi         # ログ保存用
-                    
-                    # コンソール表示 (デバッグ用: 頻繁に出過ぎるならコメントアウト)
-                    if led_blink_timer % 10 == 0:
-                        print(f"GPS Nav: Dist={distance:.1f}m, TargetDir={direction:.1f}, MyHead={angle:.1f}")
-
-                    # 接近判定 -> Phase 4へ
-                    if distance < 5.0:
-                        print(f"Close enough ({distance:.1f}m): Switching to Camera")
-                        phase = 4
-                        
-                    # GPS補足時はLEDを早く点滅
-                    toggle_led(led2, led_blink_timer, interval=2)
-                    
-                else:
-                    # GPSロスト中
-                    if led_blink_timer % 20 == 0:
-                        print(f"GPS Lost: Keep going to {direction:.1f}...")
-                    pass
-
-                # 距離が近づいたらPhase4へ
-                if distance < 5.0 and gps_detect == 1:
-                    print("Close enough: Switching to Camera")
-                    phase = 4
-                    time_phase4_start = time.time() # Phase4タイマースタート
-
-            # ==========================================================
-            # Phase 4: Camera Searching (探索)
-            # LED動作: LED 2 点灯 (カメラ注視中)
-            # ==========================================================
-            elif phase == 4:
-                print("phase4 : camera searching")
-                if led1:
-                    led1.off()
-                if led2:
-                    led2.on() # Solid ON
-                
-                # カメラが死んでいても cone_detect はエラーを吐かずに戻ってくる
-                # cone_detect() ←スレッドで実行するためコメントアウト
-                
-                if not searching_Flag:
-                    searching_Flag = True
-                    time_start_searching_cone = time.time()
-                else:
-                    # 首振りしても見つからない、またはカメラ故障時のタイムアウト
-                    if time.time() - time_start_searching_cone >= TIMEOUT_PHASE_4:
-                        print("Camera TIMEOUT: Cone not found or Camera dead")
-                        searching_Flag = False
-                        phase = 3 
-                        time_phase3_start = time.time() # タイマーリセット
-                
-                # 見つかったら
-                if cone_probability > 0.1:
-                    phase = 5
-                    
-
-            # ==========================================================
-            # Phase 5: Approach (接近)
-            # LED動作: 両方のLEDが交互に点滅 (緊急/接近モード)
-            # ==========================================================
-            elif phase == 5:
-                print("phase5 : approaching")
-                time_camera_start = time.time()
-                count_cone_lost = 0
-                
-                while True:
-                    # ループ内LED制御
-                    led_blink_timer += 1
-                    # 交互点滅 (0.2秒間隔)
-                    if (led_blink_timer // 2) % 2 == 0:
-                        if led1:
-                            led1.on()
-                        if led2:
-                            led2.off()
-                    else:
-                        if led1:
-                            led1.off()
-                        if led2:
-                            led2.on()
-
-                    # cone_detect() ← スレッドで実行するためコメントアウト
-                    
-                    # カメラ故障時は detector.is_detected は常に False になる想定
-                    is_det = False
-                    is_reach = False
-                    if detector is not None:
-                        is_det = detector.is_detected
-                        is_reach = detector.is_reached
-                    
-                    if not is_det:
-                        count_cone_lost += 1
-                    else:
-                        count_cone_lost = 0
-                    
-                    # 見失いリトライ
-                    if count_cone_lost >= 10:
-                        phase = 4
-                        break
-
-                    # スタック/カメラ故障時のタイムアウト
-                    if time.time() - time_camera_start >= TIMEOUT_PHASE_5:
-                        print("Phase5 TIMEOUT: Giving up, forcing Goal")
-                        phase = 6
-                        break
-                        
-                    if is_reach:
-                        print("Reached Cone! (Visual confirmation)")
-                        phase = 6
-                        break
-                    
-                    time.sleep(0.1)
-
-            # ==========================================================
-            # Phase 6: Goal
-            # LED動作: 両方点灯 (完了)
-            # ==========================================================
-            elif phase == 6:
-                print("phase6 : Goal!!")
-                if led1:
-                    led1.on()
-                if led2:
-                    led2.on()
-                stop_motors()
-                sys.exit()
+            if bno is not None:
+                sys_st, gyro_st, accel_st, mag_st = bno.getCalibrationStatus()
+                if self.led_blink_timer % 10 == 0:
+                    print(f"Calib Status: Sys={sys_st} Gyro={gyro_st} Acc={accel_st} Mag={mag_st}")
+                if mag_st >= 2:
+                    print("Calibration OK! (Mag >= 2)")
+                    break
+            else:
+                print("BNO None: Skip Calibration")
+                break
 
             time.sleep(0.1)
 
-    except KeyboardInterrupt:
-        print("\nKeyboardInterrupt")
-        stop_motors()
-        sys.exit()
+        self.state.update_navigation(phase=3)
+        self.time_phase3_start = time.time()
 
-# --- LED Helper Functions ---
+    def handle_phase3(self, st):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        if led1:
+            led1.off()
+        self.toggle_led(led2, self.led_blink_timer, interval=10)
 
-def toggle_led(led, timer, interval):
-    """
-    指定したインターバル(ループ回数)ごとにLEDを反転させる
-    """
-    if led is None:
-        return
-    if (timer // interval) % 2 == 0:
-        led.on()
-    else:
-        led.off()
+        if time.time() - self.time_phase3_start > TIMEOUT_PHASE_3:
+            print("Phase3 TIMEOUT: Give up GPS, switching to Camera")
+            self.state.update_navigation(phase=4)
+            return
 
-def signal_led(times):
-    """
-    指定回数だけ両方のLEDを点滅させる（通知用）
-    """
-    for _ in range(times):
+        if st["gps_detect"] == 1:
+            dist, azi = calc_distance_and_azimuth(st["lat"], st["lng"], self.target_lat, self.target_lng)
+            self.state.update_navigation(distance=dist, azimuth=azi, direction=azi)
+            if self.led_blink_timer % 10 == 0:
+                print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, MyHead={st['angle']:.1f}")
+            if dist < 5.0:
+                print(f"Close enough ({dist:.1f}m): Switching to Camera")
+                self.state.update_navigation(phase=4)
+            self.toggle_led(led2, self.led_blink_timer, interval=2)
+        else:
+            if self.led_blink_timer % 20 == 0:
+                print("GPS Lost: Keep going...")
+
+    def handle_phase4(self):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        st = self.state.snapshot()
+        cone_prob = st["cone_probability"]
+
+        print("phase4 : camera searching")
+        if led1:
+            led1.off()
+        if led2:
+            led2.on()
+
+        if not self.searching_flag:
+            self.searching_flag = True
+            self.time_start_searching_cone = time.time()
+        else:
+            if time.time() - self.time_start_searching_cone >= TIMEOUT_PHASE_4:
+                print("Camera TIMEOUT: Cone not found or Camera dead")
+                self.searching_flag = False
+                self.state.update_navigation(phase=3)
+                self.time_phase3_start = time.time()
+
+        if cone_prob > 0.1:
+            self.state.update_navigation(phase=5)
+
+    def handle_phase5(self):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        detector = self.devices.get("detector")
+        print("phase5 : approaching")
+        self.time_camera_start = time.time()
+        self.count_cone_lost = 0
+
+        while True:
+            self.led_blink_timer += 1
+            if (self.led_blink_timer // 2) % 2 == 0:
+                if led1:
+                    led1.on()
+                if led2:
+                    led2.off()
+            else:
+                if led1:
+                    led1.off()
+                if led2:
+                    led2.on()
+
+            is_det = False
+            is_reach = False
+            if detector is not None:
+                is_det = detector.is_detected
+                is_reach = detector.is_reached
+
+            if not is_det:
+                self.count_cone_lost += 1
+            else:
+                self.count_cone_lost = 0
+
+            if self.count_cone_lost >= 10:
+                self.state.update_navigation(phase=4)
+                break
+            if time.time() - self.time_camera_start >= TIMEOUT_PHASE_5:
+                print("Phase5 TIMEOUT: Giving up, forcing Goal")
+                self.state.update_navigation(phase=6)
+                break
+            if is_reach:
+                print("Reached Cone! (Visual confirmation)")
+                self.state.update_navigation(phase=6)
+                break
+
+            time.sleep(0.1)
+
+    def handle_phase6(self):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        print("phase6 : Goal!!")
         if led1:
             led1.on()
         if led2:
             led2.on()
-        time.sleep(0.2)
-        if led1:
-            led1.off()
-        if led2:
-            led2.off()
-        time.sleep(0.2)
+        self.stop_motors()
+        sys.exit()
 
-# --- Robust Setup Function ---
-def Setup():
-    global bno, bmp, detector, sonar, pin_factory
-    global led1, led2, motor_a_pwm, motor_a_dir, motor_b_pwm, motor_b_dir
-    
-    print("--- Robust Setup Start ---")
-    
-    # 1. BNO055 Setup (Retry & Ignore)
-    try:
-        bno = bno055.BNO055()
-        for i in range(3):
-            if bno.setUp():
-                print("BNO055: OK")
-                break
-            print(f"BNO055: Retry {i+1}...")
-            time.sleep(0.5)
-        else:
-            print("WARNING: BNO055 Init Failed. Proceeding anyway.")
-    except Exception as e:
-        print(f"BNO055: Critical Error {e}. Proceeding.")
-        bno = None
+    # --- Hardware and threads ---
+    def setup_hardware(self):
+        print("--- Robust Setup Start ---")
+        self.devices = {
+            "bno": None,
+            "bmp": None,
+            "detector": None,
+            "led1": None,
+            "led2": None,
+            "motor_a_pwm": None,
+            "motor_a_dir": None,
+            "motor_b_pwm": None,
+            "motor_b_dir": None,
+            "sonar": None,
+        }
 
-    # 2. BMP180 Setup (Ignore on fail)
-    try:
-        bmp = bmp180.BMP180(oss=3)
-        if bmp.setUp():
-            print("BMP180: OK")
-        else:
-            print("WARNING: BMP180 Init Failed. Proceeding.")
-    except Exception as e:
-        print(f"BMP180: Critical Error {e}. Proceeding.")
-        bmp = None
-
-    # 3. Camera Setup
-    print("Camera: Initializing...")
-    try:
-        detector = dc.detector()
-
-        roi_path_1 = "./log/captured_roi_img.png"
-        roi_path_2 = "./log/captured.png"
-        roi_img = None
-        if os.path.exists(roi_path_1):
-            print(f"Loading ROI from {roi_path_1}")
-            roi_img = cv2.imread(roi_path_1)
-        elif os.path.exists(roi_path_2):
-            print(f"Loading ROI from {roi_path_2}")
-            roi_img = cv2.imread(roi_path_2)
-        else:
-            print("WARNING: No ROI image found. Switching to DEFAULT ORANGE detection.")
-
-        detector.set_roi_img(roi_img)
-        detector.detect_cone()
-        print("Camera: OK (Initialized)")
-    except Exception as e:
-        print(f"Camera: Critical Init Error {e}. Proceeding without Vision.")
-        detector = None
-
-    # 4. GPIOZero Setup (LED, Motor, Sonar)
-    print("GPIOZero: Initializing devices...")
-    try:
-        pin_factory = LGPIOFactory()
-        led1 = LED(PIN_LED_1, pin_factory=pin_factory)
-        led2 = LED(PIN_LED_2, pin_factory=pin_factory)
-        motor_a_pwm = PWMOutputDevice(PIN_ENA, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-        motor_a_dir = DigitalOutputDevice(PIN_PHA, pin_factory=pin_factory, initial_value=False)
-        motor_b_pwm = PWMOutputDevice(PIN_ENB, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-        motor_b_dir = DigitalOutputDevice(PIN_PHB, pin_factory=pin_factory, initial_value=False)
-        sonar = DistanceSensor(echo=PIN_ECHO, trigger=PIN_TRIG, max_distance=4.0, pin_factory=pin_factory)
-        stop_motors()
-        print("GPIOZero: OK")
-    except Exception as e:
-        print(f"GPIOZero Setup Error {e}. Motors/LED/Sonar might not work.")
-        led1 = led2 = motor_a_pwm = motor_a_dir = motor_b_pwm = motor_b_dir = sonar = None
-
-    # 5. Threads Start
-    try:
-        threading.Thread(target=moveMotor_thread, daemon=True).start()
-        threading.Thread(target=setData_thread, daemon=True).start()
-        threading.Thread(target=GPS_thread, daemon=True).start()
-        threading.Thread(target=camera_thread, daemon=True).start()
-
-    except Exception as e:
-        print(f"Thread Start Error {e}.")
-
-    # Log File Init
-    try:
-        with open(fileName, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "MilliTime", "Phase",
-                "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
-                "LAT", "LNG", "ALT", "Pres",
-                "Distance", "Azimuth", "Angle", "Direction", "Fall",
-                "ConeDir", "ConeProb", "ObstacleDist"
-            ])
-    except Exception:
-        print("Log File Init Failed. No logging.")
-
-    print("--- Setup Finished (Ready to Die Trying) ---")
-
-# --- 安全なデータ取得関数群 ---
-def getBnoData():
-    global acc, gyro, mag, fall
-    if bno is None: return # センサーがないなら何もしない(初期値0のまま)
-    
-    try:
-        new_acc = bno.getAcc()
-        new_gyro = bno.getGyro()
-        new_mag = bno.getMag()
-        
-        # Noneチェック
-        if new_acc: acc = new_acc
-        if new_gyro: gyro = new_gyro
-        if new_mag: mag = new_mag
-        
-        fall = math.sqrt(acc[0]**2 + acc[1]**2 + acc[2]**2)
-    except:
-        pass # エラーは無視
-
-def getBmpData():
-    global alt, pres
-    if bmp is None: return
-    
-    try:
-        alt = bmp.getAltitude()
-        pres = bmp.getPressure()
-    except:
-        pass
-
-def cone_detect():
-    global cone_direction, cone_probability
-    # カメラが死んでいたら(detector is None)、何もしない
-    if detector is None:
-        cone_direction = 0.5 # 中央
-        cone_probability = 0.0 # 発見できず
-        return
-
-    try:
-        detector.detect_cone()
-        # 確率更新
-        cone_probability = detector.probability if detector.probability else 0.0
-        # 方向更新 (detect_corn.pyの実装に依存、エラー時は中央へ)
-        if detector.cone_direction is not None:
-            cone_direction = 1.0 - detector.cone_direction
-        else:
-            cone_direction = 0.5
-    except:
-        # カメラ処理中のOpenCVエラーなどもここで握りつぶす
-        cone_direction = 0.5
-        cone_probability = 0.0
-
-def getSonarData():
-    """
-    超音波センサーの値を安全に更新する
-    エラーが起きても無視して、obstacle_dist を更新しない（初期値 or 前回の値のまま）
-    """
-    global obstacle_dist
-    
-    # センサー初期化に失敗していたら何もしない
-    if sonar is None:
-        return
-
-    try:
-        dist_m = sonar.distance  # DistanceSensorはメートル単位
-        dist_cm = dist_m * 100.0
-        if 0 < dist_cm < 500:
-            obstacle_dist = dist_cm
-    except Exception:
-        pass # エラー時は無視（前回の値を維持）
-
-
-def GPS_thread():
-    global lat, lng, gps_detect
-    
-    # シリアル接続試行
-    s = None
-    try:
-        s = serial.Serial("/dev/serial0", 115200, timeout=1)
-    except:
-        print("GPS Serial Open Failed. GPS is DEAD.")
-        # returnせず、ループに入って（何もしないけど）スレッドを維持する手もあるが
-        # ここでは座標0のまま静かに終了させないでおく
-        pass
-
-    gps = MicropyGPS(9, "dd")
-
-    while True:
-        if s is None:
-            time.sleep(1) # シリアルが死んでるなら寝て待つ（再接続ロジック入れてもいいが今回は省略）
-            continue
-            
         try:
-            line = s.readline().decode("utf-8", errors="ignore")
-            if len(line) > 0 and line[0] == '$':
-                for x in line:
-                    gps.update(x)
+            bno = bno055.BNO055()
+            for i in range(3):
+                if bno.setUp():
+                    self.devices["bno"] = bno
+                    print("BNO055: OK")
+                    break
+                print(f"BNO055: Retry {i+1}...")
+                time.sleep(0.5)
+            else:
+                print("WARNING: BNO055 Init Failed.")
+        except Exception as e:
+            print(f"BNO055: Critical Error {e}.")
 
-                # デバッグ用
-                # 実際の戻り値を表示して、[0]でアクセスして良いか確認する
-                # 本番ではコメントアウトする
-                print(f"DEBUG GPS LAT TYPE: {type(gps.latitude)}, VALUE: {gps.latitude}")
-                # ----------------------
+        try:
+            bmp = bmp180.BMP180(oss=3)
+            if bmp.setUp():
+                self.devices["bmp"] = bmp
+                print("BMP180: OK")
+            else:
+                print("WARNING: BMP180 Init Failed.")
+        except Exception as e:
+            print(f"BMP180: Critical Error {e}.")
 
-                lat = gps.latitude[0]
-                lng = gps.longitude[0]
-                
-                if lat != 0.0:
-                    gps_detect = 1
-                else:
-                    gps_detect = 0
-        except:
-            pass # 読み取りエラー無視
+        print("Camera: Initializing...")
+        try:
+            detector = dc.detector()
+            roi_path_1 = "./log/captured_roi_img.png"
+            roi_path_2 = "./log/captured.png"
+            roi_img = None
+            if os.path.exists(roi_path_1):
+                print(f"Loading ROI from {roi_path_1}")
+                roi_img = cv2.imread(roi_path_1)
+            elif os.path.exists(roi_path_2):
+                print(f"Loading ROI from {roi_path_2}")
+                roi_img = cv2.imread(roi_path_2)
+            else:
+                print("WARNING: No ROI image found. Switching to DEFAULT ORANGE detection.")
 
+            detector.set_roi_img(roi_img)
+            detector.detect_cone()
+            self.devices["detector"] = detector
+            print("Camera: OK (Initialized)")
+        except Exception as e:
+            print(f"Camera: Critical Init Error {e}. Proceeding without Vision.")
+            self.devices["detector"] = None
 
-def camera_thread():
-    """
-    カメラ処理を独立して行うスレッド
-    Phase 4, 5 のときだけ detect_cone を実行してグローバル変数を更新する
-    """
-    global phase
-    
-    while True:
-        # カメラが必要なフェーズのみ処理を実行
-        if phase in [4, 5]:
-            # 既存の cone_detect() 関数を呼べばOK
-            # 内部で detector.detect_cone() が呼ばれ、重い処理が走る
-            cone_detect()
-            
-            # 処理頻度の調整 (例: 最大20fps程度に制限してCPUを休ませる)
-            time.sleep(0.05)
-        else:
-            # カメラ不要なフェーズはスリープ長めにしてCPU負荷を下げる
-            time.sleep(0.5)
+        print("GPIOZero: Initializing devices...")
+        try:
+            pin_factory = LGPIOFactory()
+            self.devices["led1"] = LED(PIN_LED_1, pin_factory=pin_factory)
+            self.devices["led2"] = LED(PIN_LED_2, pin_factory=pin_factory)
+            self.devices["motor_a_pwm"] = PWMOutputDevice(PIN_ENA, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+            self.devices["motor_a_dir"] = DigitalOutputDevice(PIN_PHA, pin_factory=pin_factory, initial_value=False)
+            self.devices["motor_b_pwm"] = PWMOutputDevice(PIN_ENB, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+            self.devices["motor_b_dir"] = DigitalOutputDevice(PIN_PHB, pin_factory=pin_factory, initial_value=False)
+            self.devices["sonar"] = DistanceSensor(echo=PIN_ECHO, trigger=PIN_TRIG, max_distance=4.0, pin_factory=pin_factory)
+            self.stop_motors()
+            print("GPIOZero: OK")
+        except Exception as e:
+            print(f"GPIOZero Setup Error {e}.")
 
-# --- Helper Functions ---
-def setData_thread():
-    """
-    一定間隔でセンサー値を取得し、グローバル変数を更新＆ログ保存するスレッド
-    """
-    global acc, gyro, mag, lat, lng, alt, pres, distance, azimuth, angle, direction, fall, cone_direction, cone_probability, phase
-    global obstacle_dist
+        self.start_threads()
+        self.init_log_file()
+        print("--- Setup Finished (Ready to Die Trying) ---")
 
-    while True:
-        # 1. 各種データの取得
-        getBnoData() # 加速度・ジャイロ・磁気・落下判定(fall)を更新
-        getBmpData() # 気圧・高度を更新
-        getSonarData() # 超音波センサーの距離を更新
+    def start_threads(self):
+        try:
+            threading.Thread(target=self.move_motor_thread, daemon=True).start()
+            threading.Thread(target=self.data_thread, daemon=True).start()
+            threading.Thread(target=self.gps_thread, daemon=True).start()
+            threading.Thread(target=self.camera_thread, daemon=True).start()
+        except Exception as e:
+            print(f"Thread Start Error {e}.")
 
-        # 2. 現在の方位(Heading)を個別に取得 (getBnoDataに含まれていないため)
-        if bno is not None:
+    def init_log_file(self):
+        try:
+            with open(self.log_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "MilliTime", "Phase",
+                    "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
+                    "LAT", "LNG", "ALT", "Pres",
+                    "Distance", "Azimuth", "Angle", "Direction", "Fall",
+                    "ConeDir", "ConeProb", "ObstacleDist"
+                ])
+        except Exception:
+            print("Log File Init Failed. No logging.")
+
+    # --- Sensor readers ---
+    def get_bno_data(self):
+        bno_instance = self.devices.get("bno")
+        if bno_instance is None:
+            return None
+        try:
+            acc = bno_instance.getAcc() or [0, 0, 0]
+            gyro = bno_instance.getGyro() or [0, 0, 0]
+            mag = bno_instance.getMag() or [0, 0, 0]
+            fall = math.sqrt(acc[0] ** 2 + acc[1] ** 2 + acc[2] ** 2)
+            euler = bno_instance.getEuler()
+            angle = euler[0] if euler else 0.0
+            return {"acc": acc, "gyro": gyro, "mag": mag, "fall": fall, "angle": angle}
+        except Exception:
+            return None
+
+    def get_bmp_data(self):
+        bmp_instance = self.devices.get("bmp")
+        if bmp_instance is None:
+            return None
+        try:
+            return {"alt": bmp_instance.getAltitude(), "pres": bmp_instance.getPressure()}
+        except Exception:
+            return None
+
+    def get_sonar_data(self):
+        sonar_instance = self.devices.get("sonar")
+        if sonar_instance is None:
+            return None
+        try:
+            dist_m = sonar_instance.distance
+            if dist_m is not None and 0 < dist_m < 4.0:
+                return dist_m * 100.0
+        except Exception:
+            pass
+        return None
+
+    def cone_detect(self):
+        detector = self.devices.get("detector")
+        if detector is None:
+            self.state.update_cone(cone_direction=0.5, cone_probability=0.0)
+            return
+        try:
+            detector.detect_cone()
+            prob = detector.probability if detector.probability else 0.0
+            cdir = 0.5
+            if detector.cone_direction is not None:
+                cdir = 1.0 - detector.cone_direction
+            self.state.update_cone(cone_direction=cdir, cone_probability=prob)
+        except Exception:
+            self.state.update_cone(cone_direction=0.5, cone_probability=0.0)
+
+    # --- Thread loops ---
+    def gps_thread(self):
+        s = None
+        try:
+            s = serial.Serial("/dev/serial0", 115200, timeout=1)
+        except Exception:
+            print("GPS Serial Open Failed. GPS is DEAD.")
+
+        gps = MicropyGPS(9, "dd")
+
+        while True:
+            if s is None:
+                time.sleep(1)
+                continue
             try:
-                # getEuler() -> [Heading, Roll, Pitch] (Heading: 0-360)
-                euler = bno.getEuler()
-                angle = euler[0] # グローバル変数の angle を更新
-            except:
-                pass
-        if sonar is not None:
-            try:
-                obstacle_dist = sonar.distance * 100.0
+                line = s.readline().decode("utf-8", errors="ignore")
+                if len(line) > 0 and line[0] == "$":
+                    for x in line:
+                        gps.update(x)
+                    lat = gps.latitude[0]
+                    lng = gps.longitude[0]
+                    is_detect = 1 if lat != 0.0 else 0
+                    self.state.update_gps(lat=lat, lng=lng, gps_detect=is_detect)
             except Exception:
                 pass
 
-        # 3. ログファイルへの書き込み
-        try:
-            with open(fileName, "a", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    currentMilliTime(), phase,
-                    f"{acc[0]:.2f}", f"{acc[1]:.2f}", f"{acc[2]:.2f}",
-                    f"{gyro[0]:.2f}", f"{gyro[1]:.2f}", f"{gyro[2]:.2f}",
-                    f"{mag[0]:.2f}", f"{mag[1]:.2f}", f"{mag[2]:.2f}",
-                    f"{lat:.6f}", f"{lng:.6f}", f"{alt:.2f}", f"{pres:.2f}",
-                    f"{distance:.2f}", f"{azimuth:.2f}", f"{angle:.2f}", 
-                    f"{direction:.2f}", f"{fall:.2f}",
-                    f"{cone_direction:.2f}", f"{cone_probability:.2f}",
-                    f"{obstacle_dist:.2f}"
-                ])
-        except Exception as e:
-            print(f"Log Error: {e}")
+    def camera_thread(self):
+        while True:
+            current_phase = self.state.snapshot()["phase"]
+            if current_phase in [4, 5]:
+                self.cone_detect()
+                time.sleep(0.05)
+            else:
+                time.sleep(0.5)
 
-        # サンプリングレートに従って待機
-        time.sleep(DATA_SAMPLING_RATE)
+    def data_thread(self):
+        while True:
+            bno_data = self.get_bno_data()
+            bmp_data = self.get_bmp_data()
+            sonar_dist = self.get_sonar_data()
 
-# --- Motor Control Functions ---
-def moveMotor_thread():
-    """
-    現在の Phase とセンサー値に基づいてモーターを動かすスレッド
-    """
-    global direction, phase, cone_direction, angle
-    global obstacle_dist
-    
-    # 基本スピード (0-100)
-    BASE_SPEED = 60
-    # 障害物回避距離
-    AVOID_DIST = 30.0 # 30cm以下で回避行動
+            if bno_data:
+                self.state.update_imu(
+                    acc=bno_data["acc"],
+                    gyro=bno_data["gyro"],
+                    mag=bno_data["mag"],
+                    fall=bno_data["fall"],
+                    angle=bno_data["angle"],
+                )
 
-    while True:
-        # ----------------------------------------
-        # Phase 0: 落下中 & Phase 6: ゴール -> 停止
-        # ----------------------------------------
-        if phase == 0 or phase == 6:
-            stop_motors()
-            time.sleep(0.1)
-            continue
-        # 障害物回避 (超音波センサー)
-        if phase not in [0, 1, 5, 6] and obstacle_dist < AVOID_DIST:
-            print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
-            
-            # --- 回避動作 (バック＆ターン) ---
-            stop_motors()
-            time.sleep(0.2)
-            
-            # バック
-            set_motor(motor_a_pwm, motor_a_dir, 60, 0) # 0=Reverse
-            set_motor(motor_b_pwm, motor_b_dir, 60, 0)
-            time.sleep(1.0)
-            
-            # 旋回 (右へ)
-            set_motor(motor_a_pwm, motor_a_dir, 60, 0) # 右後退
-            set_motor(motor_b_pwm, motor_b_dir, 60, 1) # 左前進
-            time.sleep(0.5)
-            
-            stop_motors()
-            time.sleep(0.2)
-            continue # メインの制御をスキップしてループ先頭へ
+            if bmp_data:
+                self.state.update_barometer(
+                    alt=bmp_data["alt"],
+                    pres=bmp_data["pres"],
+                )
 
-        # ----------------------------------------
-        # Phase 1: 回避行動 (direction = -400 の場合)
-        # ----------------------------------------
-        if phase == 1 and direction == -400.0:
-            # 後退 (Reverse)
-            # set_motor(ENピン, PHピン, 速度, 方向1/0)
-            SEPARATION_SPEED = 100
-            set_motor(motor_a_pwm, motor_a_dir, SEPARATION_SPEED, 1) # 0=Reverse
-            set_motor(motor_b_pwm, motor_b_dir, SEPARATION_SPEED, 1)
+            if sonar_dist is not None:
+                self.state.update_obstacle(obstacle_dist=sonar_dist)
+
+            current_data = self.state.snapshot()
+            try:
+                with open(self.log_path, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        current_milli_time(),
+                        current_data["phase"],
+                        f"{current_data['acc'][0]:.2f}",
+                        f"{current_data['acc'][1]:.2f}",
+                        f"{current_data['acc'][2]:.2f}",
+                        f"{current_data['gyro'][0]:.2f}",
+                        f"{current_data['gyro'][1]:.2f}",
+                        f"{current_data['gyro'][2]:.2f}",
+                        f"{current_data['mag'][0]:.2f}",
+                        f"{current_data['mag'][1]:.2f}",
+                        f"{current_data['mag'][2]:.2f}",
+                        f"{current_data['lat']:.6f}",
+                        f"{current_data['lng']:.6f}",
+                        f"{current_data['alt']:.2f}",
+                        f"{current_data['pres']:.2f}",
+                        f"{current_data['distance']:.2f}",
+                        f"{current_data['azimuth']:.2f}",
+                        f"{current_data['angle']:.2f}",
+                        f"{current_data['direction']:.2f}",
+                        f"{current_data['fall']:.2f}",
+                        f"{current_data['cone_direction']:.2f}",
+                        f"{current_data['cone_probability']:.2f}",
+                        f"{current_data['obstacle_dist']:.2f}",
+                    ])
+            except Exception as e:
+                print(f"Log Error: {e}")
+
+            time.sleep(DATA_SAMPLING_RATE)
+
+    def move_motor_thread(self):
+        BASE_SPEED = 60
+        AVOID_DIST = 30.0
+
+        while True:
+            st = self.state.snapshot()
+            phase = st["phase"]
+            obstacle_dist = st["obstacle_dist"]
+            direction = st["direction"]
+            angle = st["angle"]
+            cone_direction = st["cone_direction"]
+
+            if phase == 0 or phase == 6:
+                self.stop_motors()
+                time.sleep(0.1)
+                continue
+
+            if phase not in [0, 1, 5, 6] and obstacle_dist < AVOID_DIST:
+                print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
+                self.stop_motors()
+                time.sleep(0.2)
+                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], 60, False)
+                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], 60, False)
+                time.sleep(1.0)
+                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], 60, False)
+                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], 60, True)
+                time.sleep(0.5)
+                self.stop_motors()
+                time.sleep(0.2)
+                continue
+
+            if phase == 1 and direction == -400.0:
+                separation_speed = 100
+                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], separation_speed, True)
+                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], separation_speed, True)
+                time.sleep(0.05)
+                continue
+
+            if phase == 2:
+                calib_speed = 50
+                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], calib_speed, True)
+                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], calib_speed, False)
+                time.sleep(0.05)
+                continue
+
+            if phase == 3:
+                target_heading = direction - 5
+                current_heading = angle
+                diff = target_heading - current_heading
+                if diff > 180:
+                    diff -= 360
+                if diff < -180:
+                    diff += 360
+                turn_val = diff * 0.5
+                turn_val = max(-30, min(30, turn_val))
+                speed_l = max(0, min(100, BASE_SPEED + turn_val))
+                speed_r = max(0, min(100, BASE_SPEED - turn_val))
+                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], speed_r, True)
+                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], speed_l, True)
+
+            elif phase == 4:
+                search_speed = 40
+                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], search_speed, True)
+                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], search_speed, False)
+
+            elif phase == 5:
+                center = 0.5
+                err = cone_direction - center
+                turn_cam = err * 80
+                speed_l = max(0, min(100, BASE_SPEED + turn_cam))
+                speed_r = max(0, min(100, BASE_SPEED - turn_cam))
+                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], speed_r, True)
+                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], speed_l, True)
+
             time.sleep(0.05)
-            continue
 
-        # ----------------------------------------
-        # Phase 2: Calibration (キャリブレーション)
-        # ----------------------------------------
-        # 補足: その場で旋回して地磁気センサーを補正する
-        if phase == 2:
-            CALIB_SPEED = 50
-            set_motor(motor_a_pwm, motor_a_dir, CALIB_SPEED, 1) # 右: 前進
-            set_motor(motor_b_pwm, motor_b_dir, CALIB_SPEED, 0) # 左: 後退
-            time.sleep(0.05)
-            continue
+    # --- Actuators ---
+    def set_motor(self, motor_pwm, motor_dir, speed, forward):
+        if motor_pwm is None or motor_dir is None:
+            return
+        motor_dir.value = 1 if forward else 0
+        motor_pwm.value = max(0.0, min(1.0, speed / 100.0))
 
-        # ----------------------------------------
-        # Phase 3: GPS誘導 (Heading制御)
-        # ----------------------------------------
-        if phase == 3:
-            # 目標方位(direction) と 現在方位(angle) の差分を計算
-            target_heading = direction + -5 # 種子島に合わせた補正値 (要調整)
-            current_heading = angle
-            
-            diff = target_heading - current_heading
-            # 差分を -180 〜 +180 に正規化
-            if diff > 180:  diff -= 360
-            if diff < -180: diff += 360
-            
-            # P制御 (比例制御)
-            Kp = 0.5 # ゲイン (要調整)
-            turn_val = diff * Kp
-            
-            # 出力制限 (急激な旋回を抑える)
-            turn_val = max(-30, min(30, turn_val))
-            
-            # 左右のモーター速度を決定 (差動駆動)
-            speed_L = BASE_SPEED + turn_val
-            speed_R = BASE_SPEED - turn_val
-            
-            # 0-100の範囲に収める
-            speed_L = max(0, min(100, speed_L))
-            speed_R = max(0, min(100, speed_R))
-            
-            # 前進 (Forward=1)
-            set_motor(motor_a_pwm, motor_a_dir, speed_R, 1)
-            set_motor(motor_b_pwm, motor_b_dir, speed_L, 1)
+    def stop_motors(self):
+        motor_a_pwm = self.devices.get("motor_a_pwm")
+        motor_b_pwm = self.devices.get("motor_b_pwm")
+        if motor_a_pwm:
+            motor_a_pwm.value = 0
+        if motor_b_pwm:
+            motor_b_pwm.value = 0
 
-        # ----------------------------------------
-        # Phase 4: カメラ探索 (その場で旋回)
-        # ----------------------------------------
-        elif phase == 4:
-            # 低速で右旋回してコーンを探す
-            SEARCH_SPEED = 40
-            set_motor(motor_a_pwm, motor_a_dir, SEARCH_SPEED, 1) # 右: 前進
-            set_motor(motor_b_pwm, motor_b_dir, SEARCH_SPEED, 0) # 左: 後退
-            
-        # ----------------------------------------
-        # Phase 5: カメラ接近 (画像認識による制御)
-        # ----------------------------------------
-        elif phase == 5:
-            # cone_direction は 0.0(左端) ～ 1.0(右端)。 0.5が中央。
-            center = 0.5
-            err = cone_direction - center
-            
-            # P制御
-            Kp_cam = 80 # ゲイン (要調整)
-            turn_cam = err * Kp_cam
-            
-            speed_L = BASE_SPEED + turn_cam
-            speed_R = BASE_SPEED - turn_cam
-            
-            speed_L = max(0, min(100, speed_L))
-            speed_R = max(0, min(100, speed_R))
-            
-            set_motor(motor_a_pwm, motor_a_dir, speed_R, 1)
-            set_motor(motor_b_pwm, motor_b_dir, speed_L, 1)
+    # --- LED helpers ---
+    def toggle_led(self, led, timer, interval):
+        if led is None:
+            return
+        if (timer // interval) % 2 == 0:
+            led.on()
+        else:
+            led.off()
 
-        time.sleep(0.05) # 制御周期
+    def signal_led(self, times):
+        led1 = self.devices.get("led1")
+        led2 = self.devices.get("led2")
+        for _ in range(times):
+            if led1:
+                led1.on()
+            if led2:
+                led2.on()
+            time.sleep(0.2)
+            if led1:
+                led1.off()
+            if led2:
+                led2.off()
+            time.sleep(0.2)
 
-def currentMilliTime():
-    return round(time.time() * 1000)
-
-def set_motor(motor_pwm, motor_dir, speed, forward):
-    """
-    Drive a motor with gpiozero devices. speed: 0-100, forward: bool
-    """
-    if motor_pwm is None or motor_dir is None:
-        return
-    motor_dir.value = 1 if forward else 0
-    motor_pwm.value = max(0.0, min(1.0, speed / 100.0))
-
-def stop_motors():
-    if motor_a_pwm:
-        motor_a_pwm.value = 0
-    if motor_b_pwm:
-        motor_b_pwm.value = 0
 
 def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
-    """
-    2点の緯度経度から距離(m)と方位角(度)を計算する
-    lat1, lng1: 現在地
-    lat2, lng2: ターゲット
-    """
-    # 地球の半径 (m)
     R = 6378137.0
-    
-    # ラジアンに変換
     rad_lat1 = math.radians(lat1)
     rad_lng1 = math.radians(lng1)
     rad_lat2 = math.radians(lat2)
     rad_lng2 = math.radians(lng2)
-    
-    # 距離の計算 (Haversine formula または 球面三角法)
-    # ここでは簡易的な球面三角法を使用
     d_lng = rad_lng2 - rad_lng1
-    
-    # 距離計算
     sin_lat1 = math.sin(rad_lat1)
     cos_lat1 = math.cos(rad_lat1)
     sin_lat2 = math.sin(rad_lat2)
     cos_lat2 = math.cos(rad_lat2)
     cos_d_lng = math.cos(d_lng)
-    
-    # 中心角
-    # arccosの引数が1を超えないようクリップ
     val = sin_lat1 * sin_lat2 + cos_lat1 * cos_lat2 * cos_d_lng
     val = max(-1.0, min(1.0, val))
-    
     central_angle = math.acos(val)
     dist = R * central_angle
-    
-    # 方位角の計算 (Bearing)
-    # 北を0度、時計回りの角度(0-360)を求める
     y = math.sin(d_lng) * cos_lat2
     x = cos_lat1 * sin_lat2 - sin_lat1 * cos_lat2 * cos_d_lng
-    
     azi = math.degrees(math.atan2(y, x))
-    
-    # 0-360度に正規化
     if azi < 0:
         azi += 360.0
-        
     return dist, azi
+
+
+def main():
+    controller = CanSatController(TARGET_LAT, TARGET_LNG)
+    controller.run()
+
+
+if __name__ == "__main__":
+    main()
