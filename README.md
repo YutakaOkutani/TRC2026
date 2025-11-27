@@ -1,5 +1,5 @@
 # TRC2026
-# ファイル構成
+## ファイル構成
 ```
 ├── main.py
 ├── venv
@@ -21,7 +21,7 @@
 - テストコード：motor_test.py, LED.py
 - カメラフェーズ用：capture_roi_image.py, detect_corn.py
 
-# 搭載計器一覧
+## 搭載計器一覧
 |分類|型番|購入サイト|備考|
 | ---- | ---- |---|---|
 |マイコン |Raspberrypizero2W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
