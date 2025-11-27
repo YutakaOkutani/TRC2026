@@ -9,6 +9,7 @@ class detector:
         # パラメータ設定
         self.cone_ratio = 33 / 70  # コーンの縦横比
         self.ratio_thresh = 0.1    # 許容誤差
+        self.reached_occupancy_thresh = 0.8 # 到達判定の面積閾値
 
         # 状態変数
         self.input_img = None
@@ -202,10 +203,10 @@ class detector:
         # 方向 (0.0:左端, 1.0:右端, 0.5:中央)
         self.cone_direction = self.centroids[0] / self.camera_width
 
-        # 接近判定 (画面の15%以上を占めるなら到達)
-        if self.occupancy > 0.15:
+        #   reached_occupancy_thresh を超えたら「密着（到達）」とみなす
+        if  self.occupancy > self.reached_occupancy_thresh:
             self.is_reached = True
-            # 到達時の記念撮影（エラーで落ちないようにtry）
+        # 到達時の記念撮影（エラーで落ちないようにtry）
             try:
                 self.picam2.capture_file("./log/capture_reached.png")
             except:
