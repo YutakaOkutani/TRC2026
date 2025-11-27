@@ -59,7 +59,7 @@
 
 ### 2.1 OS イメージの準備
 
-1. Raspberry Pi Imager をインストールする（https://www.raspberrypi.com/software/）。
+1. Raspberry Pi Imager をインストールする（https://www.raspberrypi.com/software/ ）
 2. 起動後、
   * Device → *Raspberry PI Zero 2 W* 
   * OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
