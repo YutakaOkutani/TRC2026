@@ -19,8 +19,9 @@
 ```
 - 本番用コード：main.py
 - センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
-- テストコード：motor_test.py, LED.py
-- カメラフェーズ用：capture_roi_image.py, detect_corn.py
+- テストコード：motor_test.py, LED.py, gps_test.py
+- カメラフェーズ用：detect_corn.py
+- ゴール画像撮影用：capture_roi_image.py
 - pip でインストールするパッケージ一覧：requirements.txt
 
 ## 搭載計器一覧
