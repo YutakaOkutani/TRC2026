@@ -21,6 +21,7 @@
 - センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
 - テストコード：motor_test.py, LED.py
 - カメラフェーズ用：capture_roi_image.py, detect_corn.py
+- pip でインストールするパッケージ一覧：requirements.txt
 
 ## 搭載計器一覧
 |分類|型番|購入先|備考|
@@ -143,7 +144,7 @@ source venv/bin/activate
 ```bash
 sudo apt update
 sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio python3-venv python3-pip git python3-gpiozero python3 screen libgl1
-pip install smbus2 "numpy>=1.23,<1.25" opencv-python==4.6.0.66 pyserial
+pip install smbus2 "numpy>=1.23,<1.25" opencv-python==4.6.0.66 pyserial # pip install requirements.txt でもよい
 ```
 
 ---
@@ -180,32 +181,6 @@ sudo reboot
 git clone https://github.com/YutakaOkutani/TRC2026
 cd TRC2026
 ```
-* 基本的なgit操作コマンド
-```bash
-# ファイルをステージングに追加
-git add .
-# コミットを作成
-git commit -m "Initial commit"
-# GitHub へ初回プッシュ
-git push -u origin main
-# 2回目以降
-git push
-```
-``` bash
-# ローカルを GitHub の最新版で完全に上書きするコマンド
-git fetch origin
-git reset --hard origin/main
-```
-```bash
-# ローカルの変更を残しつつ、GitHub の更新を取り込むコマンド（pull.ver）
-git pull origin main
-```
-```bash
-# ローカルの変更を残しつつ、GitHub の更新を取り込むコマンド（rebase.ver）
-git pull --rebase origin main
-```
-
-
 ---
 
 
@@ -336,6 +311,36 @@ ssh ユーザー名@IPアドレス
 
 * 初回接続時は Pi 側に VS Code サーバが自動インストールされる。
 * ターミナルは Pi のユーザ権限で動く（root操作は sudo）。
+
+
+
+### 基本的なgit操作コマンド
+
+
+```bash
+# ファイルをステージングに追加
+git add .
+# コミットを作成
+git commit -m "Initial commit"
+# GitHub へ初回プッシュ
+git push -u origin main
+# 2回目以降
+git push
+```
+``` bash
+# ローカルを GitHub の最新版で完全に上書きするコマンド
+git fetch origin
+git reset --hard origin/main
+```
+```bash
+# ローカルの変更を残しつつ、GitHub の更新を取り込むコマンド（pull.ver）
+git pull origin main
+```
+```bash
+# ローカルの変更を残しつつ、GitHub の更新を取り込むコマンド（rebase.ver）
+git pull --rebase origin main
+```
+
 
 
 
