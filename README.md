@@ -13,6 +13,7 @@
 ├── tests/
 │   ├── motor_test.py
 │   ├── LED.py
+│   ├── gps_test.py
 ├── requirements.txt
 └── README.md
 ```
@@ -190,25 +191,47 @@ source venv/bin/activate
 python3 main.py
 ```
 
-* GPSのテスト（気圧、9軸はライブラリコードを実行すればテスト可能）
+* GPSのテスト（生データ取得；テストコードのほうが見やすい）
 ```bash
 sudo screen /dev/ttyAMA0 115200 #ボーレートが違う場合、9600も試す
 ```
 
-* カメラの有効化（参照: https://raspida.com/rpi-camera-module-matome/#index_id5 ）
+* カメラの設定
 ```bash
 lsb_release -a #バージョン確認
-nano /boot/firmware/config.txt #bookwormの場合
-#config.txtを編集
-dtoverlay=OV5647
-#canera_auto_detect=1
-camera_auto_detect=0
+sudo nano /boot/firmware/config.txt
+dtoverlay=OV5647 #OV5647 カメラを明示指定
+camera_auto_detect=0 #カメラ自動検出を無効化
+sudo reboot #編集後、再起動
 ```
 
-* カメラのテスト
+* カメラ認識の確認
 ```bash
-rpicam-hello -t 0　#bookwormの場合
+# 認識デバイスの一覧
+libcamera-hello --list-cameras
+# dmesg による初期化ログ確認
+dmesg | grep -i ov5647
+# 初期化時間の確認
+time rpicam-hello -t 1
 ```
+
+* カメラのプロパティ確認
+```bash
+rpicam-hello --info-text
+```
+
+* カメラ映像のテスト
+```bash
+# ライブプレビュー
+rpicam-hello -t 0
+# 静止画撮影
+rpicam-still -o test.jpg
+# 動画撮影
+rpicam-vid -t 10000 -o test.h264
+# 高解像度での静止画撮影テスト
+rpicam-still --width 2592 --height 1944 -o maxres.jpg
+```
+
 
 ---
 
