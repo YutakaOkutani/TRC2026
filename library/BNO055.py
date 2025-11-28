@@ -1,4 +1,7 @@
-from smbus import SMBus
+try:
+    from smbus2 import SMBus
+except ImportError:
+    from smbus import SMBus
 import time
 import math
 

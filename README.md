@@ -132,8 +132,8 @@ sudo reboot
 ### 3.1 Python 仮想環境の作成
 
 ```bash
-sudo apt install -y python3-venv python3-pip
-python3 -m venv venv
+sudo apt install -y python3-pip python3.10 python3.10-venv
+python3.10 -m venv venv
 source venv/bin/activate
 ```
 
@@ -142,7 +142,7 @@ source venv/bin/activate
 ```bash
 sudo apt update
 sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio python3-venv python3-pip git python3-gpiozero python3 screen libgl1
-pip install numpy opencv-python==4.6.0.66 pyserial
+pip install smbus2 "numpy>=1.23,<1.25" opencv-python==4.6.0.66 pyserial
 ```
 
 ---
