@@ -45,7 +45,7 @@
 * Raspberry Pi Zero 2 W
 * microSDカード（16GB以上あれば良い）
 * 電源（5V / 2.5A）（PCからのUSB給電でもよいが、不安定になるときがある）
-* PC（Windows / macOS / Linux のいずれか）
+* PC
 * USBハブ
 * Mini HDMI ケーブル（モニター接続用）
 * モニター・キーボード（あると便利）
