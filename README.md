@@ -23,7 +23,7 @@
 - カメラフェーズ用：capture_roi_image.py, detect_corn.py
 
 ## 搭載計器一覧
-|分類|型番|購入サイト|備考|
+|分類|型番|購入先|備考|
 | ---- | ---- |---|---|
 |マイコン |Raspberry Pi Zero 2 W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
 |マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBで十分|
@@ -62,7 +62,7 @@
 
 ### 2.1 OS イメージの準備
 
-1. Raspberry Pi Imager をインストールする（https://www.raspberrypi.com/software/ ）
+1. Raspberry Pi Imager をインストールする（ https://www.raspberrypi.com/software/ ）
 2. 起動後、
   * Device → *Raspberry PI Zero 2 W* 
   * OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
@@ -164,7 +164,7 @@ sudo raspi-config
 
 * Interface Options → SPI（必要に応じて）
 
-* Performance → GPU Memory = （必要に応じて）
+* Performance → GPU Memory（必要に応じて）
 
 完了後、再起動。
 
@@ -180,6 +180,31 @@ sudo reboot
 git clone https://github.com/YutakaOkutani/TRC2026
 cd TRC2026
 ```
+* 基本的なgit操作コマンド
+```bash
+# ファイルをステージングに追加
+git add .
+# コミットを作成
+git commit -m "Initial commit"
+# GitHub へ初回プッシュ
+git push -u origin main
+# 2回目以降
+git push
+```
+``` bash
+# ローカルを GitHub の最新版で完全に上書きするコマンド
+git fetch origin
+git reset --hard origin/main
+```
+```bash
+# ローカルの変更を残しつつ、GitHub の更新を取り込むコマンド（pull.ver）
+git pull origin main
+```
+```bash
+# ローカルの変更を残しつつ、GitHub の更新を取り込むコマンド（rebase.ver）
+git pull --rebase origin main
+```
+
 
 ---
 
@@ -193,16 +218,24 @@ python3 main.py
 
 * GPSのテスト（生データ取得；テストコードのほうが見やすい）
 ```bash
-sudo screen /dev/ttyAMA0 115200 #ボーレートが違う場合、9600も試す
+sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
 ```
 
 * カメラの設定
 ```bash
-lsb_release -a #バージョン確認
+# バージョン確認
+lsb_release -a 
+```
+```bash
+# 設定ファイル編集
 sudo nano /boot/firmware/config.txt
-dtoverlay=OV5647 #OV5647 カメラを明示指定
-camera_auto_detect=0 #カメラ自動検出を無効化
-sudo reboot #編集後、再起動
+# 以下の内容を追加または修正
+dtoverlay=OV5647 # OV5647 カメラを明示指定
+camera_auto_detect=0 # カメラ自動検出を無効化
+```
+```bash
+# 編集後、再起動
+sudo reboot
 ```
 
 * カメラ認識の確認
