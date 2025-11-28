@@ -5,7 +5,6 @@ import os
 import sys
 import threading
 import time
-
 import cv2
 import serial
 from gpiozero import DigitalOutputDevice, DistanceSensor, LED, PWMOutputDevice
