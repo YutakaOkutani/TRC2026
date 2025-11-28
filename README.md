@@ -14,12 +14,14 @@
 │   ├── motor_test.py
 │   ├── LED.py
 │   ├── gps_test.py
+│   ├── landing_impact.py
+│   ├── open_parachute.py
 ├── requirements.txt
 └── README.md
 ```
 - 本番用コード：main.py
 - センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
-- テストコード：motor_test.py, LED.py, gps_test.py
+- テストコード：motor_test.py, LED.py, gps_test.py, landing_impact.py（着地衝撃試験用）, open_parachute.py（パラシュート投下試験用）
 - カメラフェーズ用：detect_corn.py
 - ゴール画像撮影用：capture_roi_image.py
 - pip でインストールするパッケージ一覧：requirements.txt
@@ -144,7 +146,7 @@ source venv/bin/activate
 
 ```bash
 sudo apt update
-sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio python3-venv python3-pip git python3-gpiozero python3 screen libgl1
+sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio python3-venv python3-pip git python3-gpiozero python3 screen libgl1 pynmea2
 pip install smbus2 "numpy>=1.23,<1.25" opencv-python==4.6.0.66 pyserial # pip install requirements.txt でもよい
 ```
 
