@@ -192,7 +192,7 @@ source venv/bin/activate
 python3 main.py
 ```
 
-* GPSのテスト（生データ取得；テストコードのほうが見やすい）
+* GPSからの生データ取得（テストコードのほうが見やすい）
 ```bash
 sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
 ```
