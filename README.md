@@ -1,5 +1,5 @@
 # TRC2026
-## ファイル構成
+## ファイル構成（ https://github.com/YutakaOkutani/TRC2026 ）
 ```
 ├── main.py
 ├── venv
