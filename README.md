@@ -24,7 +24,7 @@
 ## 搭載計器一覧
 |分類|型番|購入サイト|備考|
 | ---- | ---- |---|---|
-|マイコン |Raspberrypizero2W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
+|マイコン |Raspberry Pi Zero 2 W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
 |マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBで十分|
 |9軸センサ|BNO055|秋月|
 |気圧センサ|BMP180|電子工作ステーション|
@@ -33,7 +33,7 @@
 |超音波センサ|HC-SR04|秋月|
 |GPS|GT-502MGG-N|秋月|
 |カメラ|KEYESTUDIO 5MP |Yahooショッピング|互換品であるが十分|
-|バッテリー|B017 VONNEM|Amazon|
+|バッテリー|KT850/35-3S|Amazon|
 |DC-DCコンバータ|AE-OKL-T/6-W12N-C|秋月|変格ではあるが、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
 
 ## 0. 環境構築の準備
@@ -44,14 +44,16 @@
 * microSDカード（16GB以上あれば良い）
 * 電源（5V / 2.5A）（PCからのUSB給電でもよいが、不安定になるときがある）
 * PC（Windows / macOS / Linux のいずれか）
-  * USBハブ
-  * Mini HDMI ケーブル（モニター接続用）
-  * モニター・キーボード（あると便利）
+* USBハブ
+* Mini HDMI ケーブル（モニター接続用）
+* モニター・キーボード（あると便利）
 
 ### ソフトウェア
 
 * Raspberry Pi Imager
 * SSH クライアント（Windows なら標準 PowerShell）
+* VSCode
+* Git
 
 ---
 
@@ -193,7 +195,7 @@ python3 main.py
 sudo screen /dev/ttyAMA0 115200 #ボーレートが違う場合、9600も試す
 ```
 
-* カメラを有効化（参照:https://raspida.com/rpi-camera-module-matome/#index_id5）
+* カメラの有効化（参照: https://raspida.com/rpi-camera-module-matome/#index_id5 ）
 ```bash
 lsb_release -a #バージョン確認
 nano /boot/firmware/config.txt #bookwormの場合
@@ -212,7 +214,7 @@ rpicam-hello -t 0　#bookwormの場合
 
 ## 7. トラブルシューティング
 
-### 7.1 センサが認識されない
+### センサが認識されない
 
 * `sudo i2cdetect -y 1` で確認
 * 配線の導通を確認
@@ -269,7 +271,7 @@ ip a
 * 左下の「><」アイコン（リモート接続）からRemote-SSH: Connect to Host… を選択
 * 以下を入力
 ```
-ssh ユーザー名@ラズパイ のIPアドレス
+ssh ユーザー名@IPアドレス
 ```
 * 接続後、VS Code 下部のステータスバーが「SSH: Raspberry Pi」表示になる
 * Terminal → New Terminal を開くと、Pi のターミナルが利用可能
