@@ -304,6 +304,7 @@ class CanSatController:
         if time.time() - self.time_phase3_start > TIMEOUT_PHASE_3:
             print("Phase3 TIMEOUT: Give up GPS, switching to Camera")
             self.state.update_navigation(phase=4)
+            self.time_phase4_start = time.time()
             return
 
         if st["gps_detect"] == 1:
