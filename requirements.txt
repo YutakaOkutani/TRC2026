@@ -1,5 +1,0 @@
-# pip でインストールするパッケージ一覧
-smbus2 
-"numpy>=1.23,<1.25" 
-opencv-python==4.6.0.66 
-pyserial
