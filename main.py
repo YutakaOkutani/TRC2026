@@ -93,6 +93,8 @@ GPS_HEADING_OFFSET = 5.43 # 種子島の磁気偏角（西偏）# Adjust if nece
 GPS_TURN_GAIN = 0.5
 GPS_TURN_CLAMP = 30.0
 GPS_CLOSE_DISTANCE = 5.0
+GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
+GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
 # --- Other Constants ---
 BNO_SETUP_RETRY_COUNT = 3
 BNO_SETUP_RETRY_INTERVAL = 0.5
@@ -585,14 +587,31 @@ class CanSatController:
         s = None
         try:
             s = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
+            try:
+                s.reset_input_buffer()
+            except Exception:
+                pass
         except Exception:
             print("GPS Serial Open Failed. GPS is DEAD.")
         gps = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
+        last_buffer_clear = time.time()
         while True:
             if s is None:
                 time.sleep(1)
                 continue
             try:
+                now = time.time()
+                if (
+                    s.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
+                    and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL
+                ):
+                    try:
+                        s.reset_input_buffer()
+                        gps = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
+                        print("GPS buffer cleared to drop stale data.")
+                    except Exception:
+                        pass
+                    last_buffer_clear = now
                 line = s.readline().decode("utf-8", errors="ignore")
                 if len(line) > 0 and line[0] == "$":
                     for x in line:
