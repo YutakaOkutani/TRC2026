@@ -8,12 +8,12 @@ import traceback
 import pynmea2
 import serial
 
-from library import BNO055 as bno055
-from library import BMP180 as bmp180
+from library import bno055
+from library import bmp180
 
 SERIAL_PORT = "/dev/serial0"
 BAUD_RATE = 115200
-LOG_DIRECTORY = "/home/raspberry/log/landing_impact/"
+LOG_DIRECTORY = "/home/raspberry/log/open_parachute/"
 GPS_READ_TIMEOUT = 0.5
 
 
@@ -213,7 +213,7 @@ def main():
 
     now_time = datetime.datetime.now()
     file_name = os.path.join(
-        LOG_DIRECTORY, f"impact_log_{now_time.strftime('%Y%m%d_%H%M%S')}.csv"
+        LOG_DIRECTORY, f"open_parachute_{now_time.strftime('%Y%m%d_%H%M%S')}.csv"
     )
 
     header = [
