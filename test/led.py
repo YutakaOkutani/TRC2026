@@ -4,7 +4,6 @@ import signal
 import sys
 
 # ピンの設定 (BCM番号で指定)
-# 批判的視点: ここで物理ピン番号と間違えないように注意してください
 led1 = LED(5)
 led2 = LED(6)
 
