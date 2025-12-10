@@ -20,7 +20,7 @@
 ```
 - 本番用コード：main.py
 - センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
-- テストコード：motor_test.py, LED.py, gps_test.py, landing_impact.py（着地衝撃試験用）, open_parachute.py（パラシュート投下試験用）
+- テストコード：motor_test.py, led.py, gps_test.py, landing_impact.py（着地衝撃試験用）, open_parachute.py（パラシュート投下試験用）
 - カメラフェーズ用：detect_corn.py
 - ゴール画像撮影用：capture_roi_image.py
 
@@ -213,8 +213,6 @@ sudo raspi-config
 
 * Interface Options → Serial
 
-* Interface Options → SPI（必要に応じて）
-
 * Performance → GPU Memory（必要に応じて）
 
 完了後、再起動。
@@ -237,7 +235,7 @@ cd TRC2026
 ## 6. 実行方法
 * メインコード
 ```bash
-source venv/bin/activate # 仮想環境でなくても、環境構築ができたら、実行しなくてよい
+source venv/bin/activate # 仮想環境を作らなくても、環境構築ができたら、実行しなくてよい
 python3 main.py
 ```
 
