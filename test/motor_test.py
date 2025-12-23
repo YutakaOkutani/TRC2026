@@ -9,12 +9,12 @@ from gpiozero.pins.lgpio import LGPIOFactory
 # PH (Phase)  -> High/Low (Direction)
 
 # Motor A (Right or Left)
-PIN_ENA = 17  # Enable (PWM Speed)
-PIN_PHA = 19  # Phase (Direction)
+PIN_ENA = 12  # Enable (PWM Speed)
+PIN_PHA = 13  # Phase (Direction)
 
 # Motor B (Left or Right)
-PIN_ENB = 2   # Enable (PWM Speed)
-PIN_PHB = 13  # Phase (Direction)
+PIN_ENB = 19   # Enable (PWM Speed)
+PIN_PHB = 17  # Phase (Direction)
 
 # PWM Parameters
 PWM_FREQ = 20000

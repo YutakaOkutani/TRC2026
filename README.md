@@ -273,7 +273,7 @@ time rpicam-hello -t 1
 
 * カメラのプロパティ確認
 ```bash
-rpicam-hello --info-text
+rpicam-hello *--info-text*
 ```
 
 * カメラ映像のテスト
