@@ -7,8 +7,8 @@ import traceback
 
 import serial
 
-from library import bno055
-from library import bmp180
+from library2 import bno055
+from library2 import bmp180
 
 SERIAL_PORT = "/dev/serial0"
 BAUD_RATE = 115200
