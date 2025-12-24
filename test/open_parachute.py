@@ -5,7 +5,6 @@ import os
 import time
 import traceback
 
-import pynmea2
 import serial
 
 from library import bno055
@@ -13,7 +12,7 @@ from library import bmp180
 
 SERIAL_PORT = "/dev/serial0"
 BAUD_RATE = 115200
-LOG_DIRECTORY = "/home/raspberry/log/open_parachute/"
+LOG_DIRECTORY = "/TRC2026/log/landing_impact/"
 GPS_READ_TIMEOUT = 0.5
 
 
@@ -128,47 +127,74 @@ def get_environment_data(bmp):
     return data
 
 
-def parse_gga_line(line):
-    """Parse a GGA sentence using pynmea2 and return a dict when valid."""
+def _parse_lat_lon(coord, direction, is_latitude):
+    """Convert NMEA lat/lon strings to decimal degrees."""
+    if not coord or not direction:
+        return None
+
     try:
-        message = pynmea2.parse(line)
-    except pynmea2.ParseError:
+        deg_len = 2 if is_latitude else 3
+        degrees = int(coord[:deg_len])
+        minutes = float(coord[deg_len:])
+        decimal = degrees + minutes / 60.0
+        if direction in ("S", "W"):
+            decimal *= -1
+        return decimal
+    except ValueError:
         return None
+
+
+def parse_gga_line(line):
+    """Parse a GGA sentence and return a dict when valid."""
+    line = line.strip()
+    if not line.startswith(("$GPGGA", "$GNGGA")):
+        return None
+
+    try:
+        fields = line.split("*", 1)[0].split(",")
     except Exception:
-        print("[GPS] Unexpected parse error.")
-        traceback.print_exc()
         return None
 
-    if not isinstance(message, pynmea2.types.talker.GGA):
+    if len(fields) < 10:
         return None
 
-    # gps_qual == 0 means invalid fix
-    if getattr(message, "gps_qual", 0) in (None, 0):
+    try:
+        gps_qual = int(fields[6] or 0)
+    except ValueError:
+        gps_qual = 0
+
+    if gps_qual <= 0:
         return None
 
-    if not message.latitude or not message.longitude:
+    latitude = _parse_lat_lon(fields[2], fields[3], is_latitude=True)
+    longitude = _parse_lat_lon(fields[4], fields[5], is_latitude=False)
+
+    if latitude is None or longitude is None:
         return None
 
     timestamp = "00:00:00"
-    try:
-        if message.timestamp:
-            timestamp = message.timestamp.strftime("%H:%M:%S")
-    except Exception:
-        timestamp = "00:00:00"
+    if fields[1]:
+        try:
+            hours = int(fields[1][0:2])
+            minutes = int(fields[1][2:4])
+            seconds = int(float(fields[1][4:]))
+            timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        except Exception:
+            timestamp = "00:00:00"
 
     try:
-        altitude = float(message.altitude) if message.altitude else 0.0
-    except Exception:
+        altitude = float(fields[9]) if fields[9] else 0.0
+    except ValueError:
         altitude = 0.0
 
     try:
-        num_sats = int(message.num_sats) if message.num_sats else 0
-    except Exception:
+        num_sats = int(fields[7]) if fields[7] else 0
+    except ValueError:
         num_sats = 0
 
     return {
-        "latitude": message.latitude,
-        "longitude": message.longitude,
+        "latitude": latitude,
+        "longitude": longitude,
         "altitude_gps": altitude,
         "num_sats": num_sats,
         "gps_timestamp": timestamp,

@@ -168,10 +168,19 @@ sudo reboot
 sudo apt update
 sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio git python3 screen libgl1 
 
-# pynmea2
+# pynmea2（仮想環境必要）
 sudo apt install -y python3-pip
 python3 -m pip install --upgrade pip
 python3 -m pip install pynmea2
+
+# pynmea2（仮想環境不要）
+sudo apt update
+sudo apt install python3-pynmea2
+
+# pynmea2（pipxバージョン）
+sudo apt install pipx
+pipx install pynmea2
+
 
 sudo apt install swig python3-dev python3-setuptools build-essential
 sudo apt install liblgpio1 liblgpio-de
