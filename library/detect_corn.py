@@ -31,10 +31,12 @@ class detector:
         # ROIヒストグラム (Noneならデフォルト色を使用)
         self.__roi_hist = None
         
-        # デフォルトのオレンジ色範囲 (HSV) - ファイル読み込み失敗時の命綱
-        # 環境に合わせて調整してください (OpenCVのHは0-180)
-        self.default_lower = np.array([5, 100, 100])
-        self.default_upper = np.array([25, 255, 255])
+        # デフォルトの赤色範囲 (HSV) - ファイル読み込み失敗時の命綱
+        # Hが0/180をまたぐため2レンジで扱う (OpenCVのHは0-179)
+        self.default_hsv_ranges = [
+            (np.array([0, 100, 100]), np.array([10, 255, 255])),
+            (np.array([170, 100, 100]), np.array([179, 255, 255])),
+        ]
 
     def set_roi_img(self, roi):
         """
@@ -134,7 +136,10 @@ class detector:
     def __simple_threshold(self):
         """単純二値化: デフォルトのHSV範囲で抽出（フォールバック用）"""
         img_hsv = cv2.cvtColor(self.input_img, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(img_hsv, self.default_lower, self.default_upper)
+        masks = [cv2.inRange(img_hsv, lower, upper) for lower, upper in self.default_hsv_ranges]
+        mask = masks[0]
+        for extra in masks[1:]:
+            mask = cv2.bitwise_or(mask, extra)
         self.projected_img = mask # back_projectionの結果と同じ形式（グレースケール）にする
 
     def __binarization_post_process(self):

@@ -479,7 +479,7 @@ class CanSatController:
                 print(f"Loading ROI from {ROI_PATH_2}")
                 roi_img = cv2.imread(ROI_PATH_2)
             else:
-                print("WARNING: No ROI image found. Switching to DEFAULT ORANGE detection.")
+                print("WARNING: No ROI image found. Switching to DEFAULT RED detection.")
             detector.set_roi_img(roi_img)
             detector.detect_cone()
             self.devices["detector"] = detector
