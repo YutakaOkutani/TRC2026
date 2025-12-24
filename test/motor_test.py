@@ -8,34 +8,34 @@ from gpiozero.pins.lgpio import LGPIOFactory
 # EN (Enable) -> PWM (Speed)
 # PH (Phase)  -> High/Low (Direction)
 
-# Motor A (Right or Left)
-PIN_ENA = 12  # Enable (PWM Speed)
-PIN_PHA = 13  # Phase (Direction)
+# Motor 1 (Right or Left)
+PIN_EN1 = 12  # Enable (PWM Speed)
+PIN_PH1 = 13  # Phase (Direction)
 
-# Motor B (Left or Right)
-PIN_ENB = 19   # Enable (PWM Speed)
-PIN_PHB = 17  # Phase (Direction)
+# Motor 2 (Left or Right)
+PIN_EN2 = 19   # Enable (PWM Speed)
+PIN_PH2 = 17  # Phase (Direction)
 
 # PWM Parameters
-PWM_FREQ = 20000
+PWM_FREQ = 1000  # PWM Frequency in Hz
 
 # gpiozero devices (setup()で初期化)
 pin_factory = None
-motor_a_pwm = None
-motor_a_dir = None
-motor_b_pwm = None
-motor_b_dir = None
+motor_1_pwm = None
+motor_1_dir = None
+motor_2_pwm = None
+motor_2_dir = None
 
 
 def setup():
     """GPIOの初期設定"""
-    global pin_factory, motor_a_pwm, motor_a_dir, motor_b_pwm, motor_b_dir
+    global pin_factory, motor_1_pwm, motor_1_dir, motor_2_pwm, motor_2_dir
 
     pin_factory = LGPIOFactory()
-    motor_a_pwm = PWMOutputDevice(PIN_ENA, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-    motor_a_dir = DigitalOutputDevice(PIN_PHA, pin_factory=pin_factory, initial_value=False)
-    motor_b_pwm = PWMOutputDevice(PIN_ENB, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-    motor_b_dir = DigitalOutputDevice(PIN_PHB, pin_factory=pin_factory, initial_value=False)
+    motor_1_pwm = PWMOutputDevice(PIN_EN1, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+    motor_1_dir = DigitalOutputDevice(PIN_PH1, pin_factory=pin_factory, initial_value=False)
+    motor_2_pwm = PWMOutputDevice(PIN_EN2, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+    motor_2_dir = DigitalOutputDevice(PIN_PH2, pin_factory=pin_factory, initial_value=False)
 
     # 初期化（安全のため停止）
     stop()
@@ -51,11 +51,11 @@ def set_motor(motor_side, speed, direction):
     :param direction: 1 (Forward/High) or 0 (Reverse/Low)
     """
     if motor_side == 'A':
-        pwm_dev = motor_a_pwm
-        dir_dev = motor_a_dir
+        pwm_dev = motor_1_pwm
+        dir_dev = motor_1_dir
     elif motor_side == 'B':
-        pwm_dev = motor_b_pwm
-        dir_dev = motor_b_dir
+        pwm_dev = motor_2_pwm
+        dir_dev = motor_2_dir
     else:
         return
 
@@ -71,14 +71,14 @@ def set_motor(motor_side, speed, direction):
 
 def stop():
     """全モーターを停止（Coast）"""
-    if motor_a_pwm:
-        motor_a_pwm.value = 0
-    if motor_b_pwm:
-        motor_b_pwm.value = 0
-    if motor_a_dir:
-        motor_a_dir.off()
-    if motor_b_dir:
-        motor_b_dir.off()
+    if motor_1_pwm:
+        motor_1_pwm.value = 0
+    if motor_2_pwm:
+        motor_2_pwm.value = 0
+    if motor_1_dir:
+        motor_1_dir.off()
+    if motor_2_dir:
+        motor_2_dir.off()
 
 
 def main():

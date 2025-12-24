@@ -71,11 +71,11 @@ LED_INTERVAL_PHASE3 = 10
 LED_INTERVAL_PHASE3_NEAR = 2
 LED_INTERVAL_PHASE5 = 2
 # Motor Pins ---
-PIN_ENA = 12
-PIN_PHA = 13
-PIN_ENB = 19
-PIN_PHB = 17
-PWM_FREQ = 20000
+PIN_EN1 = 12
+PIN_PH1 = 13
+PIN_EN2 = 19
+PIN_PH2 = 17
+PWM_FREQ = 1000 # PWM Frequency in Hz
 # LED Pins ---
 PIN_LED_1 = 5
 PIN_LED_2 = 6
@@ -492,10 +492,10 @@ class CanSatController:
             pin_factory = LGPIOFactory()
             self.devices["led1"] = LED(PIN_LED_1, pin_factory=pin_factory)
             self.devices["led2"] = LED(PIN_LED_2, pin_factory=pin_factory)
-            self.devices["motor_a_pwm"] = PWMOutputDevice(PIN_ENA, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-            self.devices["motor_a_dir"] = DigitalOutputDevice(PIN_PHA, pin_factory=pin_factory, initial_value=False)
-            self.devices["motor_b_pwm"] = PWMOutputDevice(PIN_ENB, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-            self.devices["motor_b_dir"] = DigitalOutputDevice(PIN_PHB, pin_factory=pin_factory, initial_value=False)
+            self.devices["motor_1_pwm"] = PWMOutputDevice(PIN_EN1, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+            self.devices["motor_1_dir"] = DigitalOutputDevice(PIN_PH1, pin_factory=pin_factory, initial_value=False)
+            self.devices["motor_2_pwm"] = PWMOutputDevice(PIN_EN2, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
+            self.devices["motor_2_dir"] = DigitalOutputDevice(PIN_PH2, pin_factory=pin_factory, initial_value=False)
             self.devices["sonar"] = DistanceSensor(echo=PIN_ECHO, trigger=PIN_TRIG, max_distance=SONAR_MAX_DISTANCE, pin_factory=pin_factory)
             self.stop_motors()
             print("GPIOZero: OK")
@@ -701,18 +701,18 @@ class CanSatController:
                 print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
-                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], OBSTACLE_SPEED, False)
-                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], OBSTACLE_SPEED, False)
+                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], OBSTACLE_SPEED, False)
+                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], OBSTACLE_SPEED, False)
                 time.sleep(OBSTACLE_BACKUP_TIME)
-                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], OBSTACLE_SPEED, False)
-                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], OBSTACLE_SPEED, True)
+                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], OBSTACLE_SPEED, False)
+                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], OBSTACLE_SPEED, True)
                 time.sleep(OBSTACLE_TURN_TIME)
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
                 continue
             if phase == 1 and direction == PARACHUTE_DIRECTION:
-                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], PARACHUTE_SEPARATION_SPEED, True)
-                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], PARACHUTE_SEPARATION_SPEED, True)
+                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], PARACHUTE_SEPARATION_SPEED, True)
+                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], PARACHUTE_SEPARATION_SPEED, True)
                 time.sleep(PARACHUTE_MOTOR_PULSE)
                 continue
             #if phase == 2:
@@ -733,18 +733,18 @@ class CanSatController:
                 turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
                 speed_l = max(0, min(100, BASE_SPEED + turn_val))
                 speed_r = max(0, min(100, BASE_SPEED - turn_val))
-                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], speed_r, True)
-                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], speed_l, True)
+                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], speed_r, True)
+                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], speed_l, True)
             elif phase == 4:
-                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], SEARCH_ROTATION_SPEED, True)
-                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], SEARCH_ROTATION_SPEED, False)
+                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], SEARCH_ROTATION_SPEED, True)
+                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], SEARCH_ROTATION_SPEED, False)
             elif phase == 5:
                 err = cone_direction - CONE_CENTER_POSITION
                 turn_cam = err * APPROACH_TURN_GAIN
                 speed_l = max(0, min(100, BASE_SPEED + turn_cam))
                 speed_r = max(0, min(100, BASE_SPEED - turn_cam))
-                self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], speed_r, True)
-                self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], speed_l, True)
+                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], speed_r, True)
+                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], speed_l, True)
             time.sleep(MOTOR_LOOP_INTERVAL)
 
     def set_motor(self, motor_pwm, motor_dir, speed, forward):
@@ -754,12 +754,12 @@ class CanSatController:
         motor_pwm.value = max(0.0, min(1.0, speed / 100.0))
 
     def stop_motors(self):
-        motor_a_pwm = self.devices.get("motor_a_pwm")
-        motor_b_pwm = self.devices.get("motor_b_pwm")
-        if motor_a_pwm:
-            motor_a_pwm.value = 0
-        if motor_b_pwm:
-            motor_b_pwm.value = 0
+        motor_1_pwm = self.devices.get("motor_1_pwm")
+        motor_2_pwm = self.devices.get("motor_2_pwm")
+        if motor_1_pwm:
+            motor_1_pwm.value = 0
+        if motor_2_pwm:
+            motor_2_pwm.value = 0
 
     # --- LED helpers ---
     def toggle_led(self, led, timer, interval):
