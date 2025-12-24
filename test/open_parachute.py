@@ -12,7 +12,7 @@ from library2 import bmp180
 
 SERIAL_PORT = "/dev/serial0"
 BAUD_RATE = 115200
-LOG_DIRECTORY = "/TRC2026/log/landing_impact/"
+LOG_DIRECTORY = "testlog/open_parachute/"
 GPS_READ_TIMEOUT = 0.5
 
 

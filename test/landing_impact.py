@@ -12,7 +12,7 @@ from library2 import bmp180
 
 SERIAL_PORT = "/dev/serial0"
 BAUD_RATE = 115200
-LOG_DIRECTORY = "/TRC2026/log/landing_impact/"
+LOG_DIRECTORY = "testlog/landing_impact/"
 GPS_READ_TIMEOUT = 0.5
 
 
@@ -239,7 +239,7 @@ def main():
 
     now_time = datetime.datetime.now()
     file_name = os.path.join(
-        LOG_DIRECTORY, f"open_parachute_{now_time.strftime('%Y%m%d_%H%M%S')}.csv"
+        LOG_DIRECTORY, f"landing_impact_{now_time.strftime('%Y%m%d_%H%M%S')}.csv"
     )
 
     header = [
