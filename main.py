@@ -64,6 +64,8 @@ SEARCH_ROTATION_SPEED = 40
 APPROACH_TURN_GAIN = 80
 BASE_SPEED = 60
 MOTOR_LOOP_INTERVAL = 0.05
+MOTOR_RAMP_TIME = 0.6
+MOTOR_RAMP_STEP = 0.05
 # --- LED Settings ---
 LED_INTERVAL_PHASE0 = 5
 LED_INTERVAL_PHASE2 = 3
@@ -219,6 +221,7 @@ class CanSatController:
         self.time_phase4_start = 0
         self.time_start_searching_cone = 0
         self.time_camera_start = 0
+        self.motor_state = {}
 
     # --- Main entry ---
     def run(self):
@@ -497,6 +500,11 @@ class CanSatController:
             self.devices["motor_2_pwm"] = PWMOutputDevice(PIN_EN2, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
             self.devices["motor_2_dir"] = DigitalOutputDevice(PIN_PH2, pin_factory=pin_factory, initial_value=False)
             self.devices["sonar"] = DistanceSensor(echo=PIN_ECHO, trigger=PIN_TRIG, max_distance=SONAR_MAX_DISTANCE, pin_factory=pin_factory)
+            self.motor_state = {}
+            for key in ("motor_1_pwm", "motor_2_pwm"):
+                pwm_dev = self.devices.get(key)
+                if pwm_dev:
+                    self.motor_state[pwm_dev] = {"speed": 0.0, "direction": True}
             self.stop_motors()
             print("GPIOZero: OK")
         except Exception as e:
@@ -711,8 +719,8 @@ class CanSatController:
                 time.sleep(OBSTACLE_PAUSE_TIME)
                 continue
             if phase == 1 and direction == PARACHUTE_DIRECTION:
-                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], PARACHUTE_SEPARATION_SPEED, True)
-                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], PARACHUTE_SEPARATION_SPEED, True)
+                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
+                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
                 time.sleep(PARACHUTE_MOTOR_PULSE)
                 continue
             #if phase == 2:
@@ -747,11 +755,37 @@ class CanSatController:
                 self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], speed_l, True)
             time.sleep(MOTOR_LOOP_INTERVAL)
 
-    def set_motor(self, motor_pwm, motor_dir, speed, forward):
+    def _ramp_pwm(self, pwm_dev, start_speed, target_speed, ramp_time, step_interval=MOTOR_RAMP_STEP):
+        """Ramp PWM duty in small steps to avoid sudden current draw."""
+        if pwm_dev is None:
+            return target_speed
+        if ramp_time <= 0 or step_interval <= 0:
+            pwm_dev.value = max(0.0, min(1.0, target_speed / 100.0))
+            return target_speed
+        steps = max(1, int(ramp_time / step_interval))
+        step_duration = ramp_time / steps
+        for step in range(1, steps + 1):
+            duty = start_speed + (target_speed - start_speed) * (step / steps)
+            pwm_dev.value = max(0.0, min(1.0, duty / 100.0))
+            time.sleep(step_duration)
+        return target_speed
+
+    def set_motor(self, motor_pwm, motor_dir, speed, forward, ramp_time=MOTOR_RAMP_TIME, step_interval=MOTOR_RAMP_STEP):
         if motor_pwm is None or motor_dir is None:
             return
+        state = self.motor_state.setdefault(motor_pwm, {"speed": 0.0, "direction": True})
+        current_speed = state["speed"]
+        current_direction = state["direction"]
+
+        # If direction changes, ramp to zero first to reduce stress on the driver.
+        if current_speed > 0 and forward != current_direction:
+            current_speed = self._ramp_pwm(motor_pwm, current_speed, 0, ramp_time / 2, step_interval)
+
         motor_dir.value = 1 if forward else 0
-        motor_pwm.value = max(0.0, min(1.0, speed / 100.0))
+        target_speed = max(0.0, min(100.0, speed))
+        current_speed = self._ramp_pwm(motor_pwm, current_speed, target_speed, ramp_time, step_interval)
+        state["speed"] = current_speed
+        state["direction"] = forward
 
     def stop_motors(self):
         motor_1_pwm = self.devices.get("motor_1_pwm")
@@ -760,6 +794,8 @@ class CanSatController:
             motor_1_pwm.value = 0
         if motor_2_pwm:
             motor_2_pwm.value = 0
+        for state in self.motor_state.values():
+            state["speed"] = 0.0
 
     # --- LED helpers ---
     def toggle_led(self, led, timer, interval):
