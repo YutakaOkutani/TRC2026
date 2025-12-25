@@ -21,8 +21,10 @@ from library.micropyGPS import MicropyGPS
 LOG_DIR = "./log"
 LOG_PREFIX = "robust_log_"
 # --- Target Location ---
-TARGET_LAT = 38.26052 # Latitude of target location
-TARGET_LNG = 140.8544151 # Longitude of target location
+# Latitude of target location
+TARGET_LAT = 38.26052 
+# Longitude of target location
+TARGET_LNG = 140.8544151 
 # --- Timeouts ---
 TIMEOUT_PHASE_0 = 5 * 60
 TIMEOUT_PHASE_1 = 30

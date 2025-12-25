@@ -5,7 +5,7 @@ import os
 
 # --- 設定 ---
 SERIAL_PORT = "/dev/serial0"   # 使用しているポートに合わせて変更
-BAUD_RATE = 115200
+BAUD_RATE = 115200              # GPSモジュールのボーレートに合わせて変更
 UPDATE_INTERVAL_SECONDS = 5    # 何秒ごとに表示を更新するか
 
 
