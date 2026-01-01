@@ -11,6 +11,9 @@
 │   ├── micropyGPS.py
 │   ├── __init__.py
 ├── tests/
+│   ├── library2/
+│       ├── bno055.py
+│       ├── bmp180.py
 │   ├── motor_test.py
 │   ├── led.py
 │   ├── gps_test.py
