@@ -3,7 +3,7 @@
 |分類|型番|購入先|備考|
 | ---- | ---- |---|---|
 |マイコン |Raspberry Pi Zero 2 W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
-|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBで十分|
+|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBでも十分|
 |9軸センサ|BNO055|秋月|
 |気圧センサ|BMP180|電子工作ステーション|
 |モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |POLOLU|
@@ -12,7 +12,7 @@
 |GPS|GT-502MGG-N|秋月|
 |カメラ|KEYESTUDIO 5MP |Yahooショッピング|互換品であるが十分|
 |バッテリー|KT850/35-3S|Amazon|
-|DC-DCコンバータ|AE-OKL-T/6-W12N-C|秋月|変格ではあるが（5V降圧固定にもできる）、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
+|DC-DCコンバータ|AE-OKL-T/6-W12N-C|秋月|変格ではあるが（可変抵抗を置き換えれば固定にもできる）、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
 
 ## ファイル構成（ https://github.com/YutakaOkutani/TRC2026 ）
 ```
