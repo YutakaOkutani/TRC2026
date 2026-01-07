@@ -1,4 +1,19 @@
 # TRC2026
+## 搭載計器一覧
+|分類|型番|購入先|備考|
+| ---- | ---- |---|---|
+|マイコン |Raspberry Pi Zero 2 W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
+|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBで十分|
+|9軸センサ|BNO055|秋月|
+|気圧センサ|BMP180|電子工作ステーション|
+|モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |POLOLU|
+|モータードライバ|POLOLU-4038|マルツ|DRV8256E搭載モジュール|
+|超音波センサ|HC-SR04|秋月|
+|GPS|GT-502MGG-N|秋月|
+|カメラ|KEYESTUDIO 5MP |Yahooショッピング|互換品であるが十分|
+|バッテリー|KT850/35-3S|Amazon|
+|DC-DCコンバータ|AE-OKL-T/6-W12N-C|秋月|変格ではあるが（5V降圧固定にもできる）、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
+
 ## ファイル構成（ https://github.com/YutakaOkutani/TRC2026 ）
 ```
 ├── main.py
@@ -26,21 +41,6 @@
 - テストコード：motor_test.py, led.py, gps_test.py, landing_impact.py（着地衝撃試験用）, open_parachute.py（パラシュート投下試験用）
 - カメラフェーズ用：detect_corn.py
 - ゴール画像撮影用：capture_roi_image.py
-
-## 搭載計器一覧
-|分類|型番|購入先|備考|
-| ---- | ---- |---|---|
-|マイコン |Raspberry Pi Zero 2 W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
-|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBで十分|
-|9軸センサ|BNO055|秋月|
-|気圧センサ|BMP180|電子工作ステーション|
-|モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |POLOLU|
-|モータードライバ|POLOLU-4038|マルツ|DRV8256E搭載モジュール|
-|超音波センサ|HC-SR04|秋月|
-|GPS|GT-502MGG-N|秋月|
-|カメラ|KEYESTUDIO 5MP |Yahooショッピング|互換品であるが十分|
-|バッテリー|KT850/35-3S|Amazon|
-|DC-DCコンバータ|AE-OKL-T/6-W12N-C|秋月|変格ではあるが、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
 
 ## 0. 環境構築の準備
 
@@ -207,6 +207,41 @@ sudo apt install liblgpio1 liblgpio-de
 sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
 sudo apt install python3-numpy python3-smbus python3-serial
 sudo apt install python3-opencv
+```
+```bash
+# パッケージリストの更新
+sudo apt update && sudo apt full-upgrade -y
+
+# 基本ツールと通信関連
+sudo apt install -y git screen i2c-tools python3-smbus python3-serial
+
+# GPIO制御ライブラリ (lgpio)
+sudo apt install -y python3-gpiozero python3-rpi-lgpio
+
+# OpenCV / 画像処理関連（ビルド時間を短縮するため apt でインストール）
+sudo apt install -y python3-opencv python3-numpy libgl1
+
+# カメラ制御（libcamera/Picamera2関連）
+sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
+# リポジトリのクローン
+git clone https://github.com/YutakaOkutani/TRC2026
+cd TRC2026
+
+# 仮想環境の作成（システムパッケージを引き継ぐ --system-site-packages が重要）
+# これにより、aptで入れた OpenCV や Picamera2 を仮想環境内でも使用できます
+python3 -m venv --system-site-packages venv
+
+# 仮想環境の有効化
+source venv/bin/activate
+
+# pip自体の更新
+pip install --upgrade pip
+
+# GPS解析用ライブラリ
+pip install pynmea2
+
+# その他、main.py等で必要なライブラリがあればここで追加
+# pip install smbus2
 ```
 
 ---
