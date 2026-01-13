@@ -81,8 +81,8 @@ PIN_EN2 = 19
 PIN_PH2 = 17
 PWM_FREQ = 1000 # PWM Frequency in Hz
 # LED Pins ---
-PIN_LED_1 = 5
-PIN_LED_2 = 6
+PIN_LED_RED = 5
+PIN_LED_GREEN = 6
 # Sonar Pins ---
 PIN_TRIG = 23
 PIN_ECHO = 24
@@ -261,18 +261,18 @@ class CanSatController:
 
     # --- Phase handlers ---
     def handle_phase0(self, st):
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
         print("phase0 : falling")
-        self.toggle_led(led1, self.led_blink_timer, interval=LED_INTERVAL_PHASE0)
-        if led2:
-            led2.off()
+        self.toggle_led(led_red, self.led_blink_timer, interval=LED_INTERVAL_PHASE0)
+        if led_green:
+            led_green.off()
         start = time.time()
         initial_alt = st["alt"]
         print(f"Start Altitude: {initial_alt:.2f}m")
         while True:
             self.led_blink_timer += 1
-            self.toggle_led(led1, self.led_blink_timer, interval=LED_INTERVAL_PHASE0)
+            self.toggle_led(led_red, self.led_blink_timer, interval=LED_INTERVAL_PHASE0)
             st_now = self.state.snapshot()
             is_impact = st_now["fall"] > IMPACT_FALL_THRESHOLD
             altitude_diff = initial_alt - st_now["alt"]
@@ -292,12 +292,12 @@ class CanSatController:
 
     def handle_phase1(self):
         # LED settings
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
-        if led1:
-            led1.on()
-        if led2:
-            led2.off()
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
+        if led_red:
+            led_red.on()
+        if led_green:
+            led_green.off()
         print("PH1: Start Parachute Separation")
         if not hasattr(self, "time_phase1_start") or self.time_phase1_start is None:
             self.time_phase1_start = time.time()
@@ -312,18 +312,18 @@ class CanSatController:
         self.time_phase1_start = None
 
     def handle_phase2(self):
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
         bno = self.devices.get("bno")
         print("phase2 : BNO Calibration (Spinning)")
-        if led1:
-            led1.off()
-        if led2:
-            led2.on()
+        if led_red:
+            led_red.off()
+        if led_green:
+            led_green.on()
         calib_start_time = time.time()
         while True:
             self.led_blink_timer += 1
-            self.toggle_led(led1, self.led_blink_timer, interval=LED_INTERVAL_PHASE2)
+            self.toggle_led(led_red, self.led_blink_timer, interval=LED_INTERVAL_PHASE2)
             if time.time() - calib_start_time > TIMEOUT_PHASE_2:
                 print("Phase2 TIMEOUT: Force Phase 3 (Calibration Incomplete)")
                 break
@@ -342,11 +342,11 @@ class CanSatController:
         self.time_phase3_start = time.time()
 
     def handle_phase3(self, st):
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
-        if led1:
-            led1.off()
-        self.toggle_led(led2, self.led_blink_timer, interval=LED_INTERVAL_PHASE3)
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
+        if led_red:
+            led_red.off()
+        self.toggle_led(led_green, self.led_blink_timer, interval=LED_INTERVAL_PHASE3)
         if time.time() - self.time_phase3_start > TIMEOUT_PHASE_3:
             print("Phase3 TIMEOUT: Give up GPS, switching to Camera")
             self.state.update_navigation(phase=4)
@@ -360,21 +360,21 @@ class CanSatController:
             if dist < GPS_CLOSE_DISTANCE:
                 print(f"Close enough ({dist:.1f}m): Switching to Camera")
                 self.state.update_navigation(phase=4)
-            self.toggle_led(led2, self.led_blink_timer, interval=LED_INTERVAL_PHASE3_NEAR)
+            self.toggle_led(led_green, self.led_blink_timer, interval=LED_INTERVAL_PHASE3_NEAR)
         else:
             if self.led_blink_timer % 20 == 0:
                 print("GPS Lost: Keep going...")
 
     def handle_phase4(self):
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
         st = self.state.snapshot()
         cone_prob = st["cone_probability"]
         print("phase4 : camera searching")
-        if led1:
-            led1.off()
-        if led2:
-            led2.on()
+        if led_red:
+            led_red.off()
+        if led_green:
+            led_green.on()
         if not self.searching_flag:
             self.searching_flag = True
             self.time_start_searching_cone = time.time()
@@ -388,23 +388,23 @@ class CanSatController:
             self.state.update_navigation(phase=5)
 
     def handle_phase5(self):
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
         print("phase5 : approaching")
         self.time_camera_start = time.time()
         self.count_cone_lost = 0
         while True:
             self.led_blink_timer += 1
             if (self.led_blink_timer // LED_INTERVAL_PHASE5) % 2 == 0:
-                if led1:
-                    led1.on()
-                if led2:
-                    led2.off()
+                if led_red:
+                    led_red.on()
+                if led_green:
+                    led_green.off()
             else:
-                if led1:
-                    led1.off()
-                if led2:
-                    led2.on()
+                if led_red:
+                    led_red.off()
+                if led_green:
+                    led_green.on()
             st = self.state.snapshot()
             is_det = st["cone_probability"] > CONE_PROBABILITY_THRESHOLD
             is_reach = st["cone_is_reached"]
@@ -426,13 +426,13 @@ class CanSatController:
             time.sleep(0.1)
 
     def handle_phase6(self):
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
         print("phase6 : Goal!!")
-        if led1:
-            led1.on()
-        if led2:
-            led2.on()
+        if led_red:
+            led_red.on()
+        if led_green:
+            led_green.on()
         self.stop_motors()
         sys.exit()
 
@@ -443,8 +443,8 @@ class CanSatController:
             "bno": None,
             "bmp": None,
             "detector": None,
-            "led1": None,
-            "led2": None,
+            "led_red": None,
+            "led_green": None,
             "motor_a_pwm": None,
             "motor_a_dir": None,
             "motor_b_pwm": None,
@@ -495,8 +495,8 @@ class CanSatController:
         print("GPIOZero: Initializing devices...")
         try:
             pin_factory = LGPIOFactory()
-            self.devices["led1"] = LED(PIN_LED_1, pin_factory=pin_factory)
-            self.devices["led2"] = LED(PIN_LED_2, pin_factory=pin_factory)
+            self.devices["led_red"] = LED(PIN_LED_RED, pin_factory=pin_factory)
+            self.devices["led_green"] = LED(PIN_LED_GREEN, pin_factory=pin_factory)
             self.devices["motor_1_pwm"] = PWMOutputDevice(PIN_EN1, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
             self.devices["motor_1_dir"] = DigitalOutputDevice(PIN_PH1, pin_factory=pin_factory, initial_value=False)
             self.devices["motor_2_pwm"] = PWMOutputDevice(PIN_EN2, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
@@ -809,18 +809,18 @@ class CanSatController:
             led.off()
 
     def signal_led(self, times):
-        led1 = self.devices.get("led1")
-        led2 = self.devices.get("led2")
+        led_red = self.devices.get("led_red")
+        led_green = self.devices.get("led_green")
         for _ in range(times):
-            if led1:
-                led1.on()
-            if led2:
-                led2.on()
+            if led_red:
+                led_red.on()
+            if led_green:
+                led_green.on()
             time.sleep(0.2)
-            if led1:
-                led1.off()
-            if led2:
-                led2.off()
+            if led_red:
+                led_red.off()
+            if led_green:
+                led_green.off()
             time.sleep(0.2)
 
 # --- Navigation calculation ---

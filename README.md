@@ -29,7 +29,7 @@
 │   ├── micropyGPS.py
 │   ├── __init__.py
 ├── tests/
-│   ├── library2/
+│   ├── library/
 │       ├── bno055.py
 │       ├── bmp180.py
 │   ├── motor_test.py

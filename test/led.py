@@ -4,14 +4,14 @@ import signal
 import sys
 
 # ピンの設定 (BCM番号で指定)
-led1 = LED(5)
-led2 = LED(6)
+led_red = LED(5)
+led_green = LED(6)
 
 def safe_exit(signum, frame):
     """強制終了時(Ctrl+C)にLEDを消灯して終了する"""
     print("\nテストを終了します。すべてのLEDを消灯します。")
-    led1.off()
-    led2.off()
+    led_red.off()
+    led_green.off()
     sys.exit(0)
 
 # Ctrl+C を検知して安全に終了する設定
@@ -25,29 +25,29 @@ try:
     while True:
         # パターン1: GPIO 5のみ点灯
         print("GPIO 5 : ON  | GPIO 6 : OFF")
-        led1.on()
-        led2.off()
+        led_red.on()
+        led_green.off()
         sleep(1)
 
         # パターン2: GPIO 6のみ点灯
         print("GPIO 5 : OFF | GPIO 6 : ON")
-        led1.off()
-        led2.on()
+        led_red.off()
+        led_green.on()
         sleep(1)
 
         # パターン3: 両方点灯
         print("GPIO 5 : ON  | GPIO 6 : ON")
-        led1.on()
-        led2.on()
+        led_red.on()
+        led_green.on()
         sleep(1)
 
         # パターン4: 両方消灯
         print("GPIO 5 : OFF | GPIO 6 : OFF")
-        led1.off()
-        led2.off()
+        led_red.off()
+        led_green.off()
         sleep(1)
 
 except Exception as e:
     print(f"エラーが発生しました: {e}")
-    led1.off()
-    led2.off()
+    led_red.off()
+    led_green.off()
