@@ -2,21 +2,23 @@
 
 ## 搭載計器一覧
 
-|分類|型番|購入先|備考|
+|分類|型番 or 商品名|提供元 or 購入先|備考|
 | ---- | ---- |---|---|
-|SBC |Raspberry Pi Zero 2 W|マルツ（協賛）|OSは、Raspberry Pi OS Lite(64bit)|
-|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|秋月|16GBでも十分|
-|9軸センサ|BNO055|秋月|
-|気圧センサ|BMP180|電子工作ステーション|
-|モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |POLOLU|
-|モータードライバ|POLOLU-4038|マルツ|DRV8256E搭載モジュール|
-|超音波センサ|HC-SR04|秋月|
-|GNSS|GT-502MGG-N|秋月|
-|カメラ|KEYESTUDIO 5MP |Yahooショッピング|純正品ではなく、互換品であるが性能は十分|
-|バッテリー|KT850/35-3S|Amazon|
-|DC-DCコンバータ|AE-OKL-T/6-W12N-C|秋月|変格ではあるが（可変抵抗を置き換えれば固定にできる）、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
+|SBC |Raspberry Pi Zero 2 W|[マルツ（協賛）](https://www.marutsu.co.jp/pc/i/2792770/?srsltid=AfmBOoqj3GkGFJWZ4-w-ZxoEDAaTFkF61yXlAAaS3B1-CzCxX8cdQ3y1)|OSは、Raspberry Pi OS Lite(64bit)|
+|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|[秋月](https://akizukidenshi.com/catalog/g/g115844/)|16GBでも足りる|
+|9軸センサ|BNO055|[秋月](https://akizukidenshi.com/catalog/g/g116996/)|
+|気圧センサ|BMP180|[電子工作ステーション](https://electronicwork.shop/items/633a5766c92c5d60c0317985?srsltid=AfmBOoo89WFWoQuIXLSAinuzEanNzGPgrkFaXNkkVxKlmQEBduGWzTZU)|別に必要ないかも
+|モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |[POLOLU](https://www.pololu.com/product/3207)|
+|モータードライバ|POLOLU-4038|[マルツ](https://www.marutsu.co.jp/pc/i/2350058/?srsltid=AfmBOoosyseXhsd3kJ2jmKrsmHL4Ohx6i0ej_aL8HmGz6hRows6TN5E6)|DRV8256E搭載モジュール|
+|超音波センサ|HC-SR04|[秋月](https://akizukidenshi.com/catalog/g/g111009/)|別に必要ないかも|
+|GNSS受信機|GT-502MGG-N|[秋月](https://akizukidenshi.com/catalog/g/g117980/)|
+|カメラ|KEYESTUDIO 5MP |[Amazon](https://amzn.asia/d/6HFwEA6)|純正品ではなく、互換品であるが性能は十分|
+|バッテリー|KT850/35-3S|[Amazon](https://amzn.asia/d/fa5oPCb)|360mAhでも完走可能だが、充電切れになりやすいため、850mAhのものを今回は選定。持続時間と重量はトレードオフ。|
+|DC-DCコンバータ|AE-OKL-T/6-W12N-C|[秋月](https://akizukidenshi.com/catalog/g/g107728/)|変格ではあるが（可変抵抗を置き換えることで固定にもできる）、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）以上を出せるので選定|
 
-## ファイル構成（ <https://github.com/YutakaOkutani/TRC2026> ）
+* 電子部品は在庫切れになることがよくあるので注意。その場合は、型番検索でほかのベンダーを探す。それでもない場合は代替を探す。
+
+## ファイル構成
 
 ```
 ├── main.py
@@ -40,30 +42,30 @@
 └── README.md
 ```
 
-- 本番用コード：main.py
-- センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
-- テストコード：motor_test.py, led.py, gps_test.py, landing_impact.py（着地衝撃試験用）, open_parachute.py（パラシュート投下試験用）
-- カメラフェーズ用：detect_corn.py
-- ゴール画像撮影用：capture_roi_image.py
+* 本番用コード：main.py
+* センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
+* テストコード：motor_test.py, led.py, gps_test.py, landing_impact.py（着地衝撃試験用）, open_parachute.py（パラシュート投下試験用）
+* カメラフェーズ用：detect_corn.py
+* ゴール画像撮影用：capture_roi_image.py
 
 ## 0. 環境構築の準備
 
 ### ハードウェア
 
-- Raspberry Pi Zero 2 W
-- microSDカード（16GB以上あれば良い）
-- 電源（5V / 2.5A）（PCからのUSB給電でもよいが、不安定になるときがある）
-- PC
-- USBハブ
-- Mini HDMI ケーブル（モニター接続用）
-- モニター・キーボード（あると便利）
+* Raspberry Pi Zero 2 W
+* microSDカード（16GB以上あれば良い）
+* 電源（5V / 2.5A）（PCからのUSB給電でもよいが、不安定になるときがある）
+* PC
+* USBハブ
+* Mini HDMI ケーブル（モニター接続用）
+* モニター・キーボード（あると便利）
 
 ### ソフトウェア
 
-- Raspberry Pi Imager
-- VSCode
-- Git
-- ターミナル
+* Raspberry Pi Imager
+* VSCode
+* Git
+* ターミナル
 
 ---
 
@@ -74,18 +76,18 @@
 1. Raspberry Pi Imager をインストールする（ <https://www.raspberrypi.com/software/> ）
 2. 起動後、
 
-- Device → *Raspberry PI Zero 2 W*
-- OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
-- Storage → MicroSDカード
+* Device → *Raspberry PI Zero 2 W*
+* OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
+* Storage → MicroSDカード
 
 1. 以下を設定・有効化する
 
-   - Hostname
-   - Localisation（国・キーボード設定）
-   - User
-   - Wi-Fi
-   - Remote access（SSHの有効化、パスワード認証で十分）
-   - Raspberry Pi Connect（オフでよい）
+   * Hostname
+   * Localisation（国・キーボード設定）
+   * User
+   * Wi-Fi
+   * Remote access（SSHの有効化、パスワード認証で十分）
+   * Raspberry Pi Connect（オフでよい）
 
 2. Writing（書き込み）を実行
 
@@ -104,9 +106,9 @@
 
 接続できない場合は以下を確認：
 
-- 同一ネットワークにいるか
-- `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
-- Permission denied (publickey,password).が出る場合、以下のコマンドで接続
+* 同一ネットワークにいるか
+* `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
+* Permission denied (publickey,password).が出る場合、以下のコマンドで接続
 
 ```bash
 ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no ユーザー名@IPアドレス
@@ -271,11 +273,11 @@ sudo raspi-config
 
 以下を有効化：
 
-- Interface Options → I2C
+* Interface Options → I2C
 
-- Interface Options → Serial
+* Interface Options → Serial
 
-- Performance → GPU Memory（必要に応じて）
+* Performance → GPU Memory（必要に応じて）
 
 完了後、再起動。
 
@@ -296,20 +298,20 @@ cd TRC2026
 
 ## 6. 実行方法
 
-- メインコード
+* メインコード
 
 ```bash
 source venv/bin/activate # 仮想環境を作らなくても、環境構築ができたら、実行しなくてよい
 python3 main.py
 ```
 
-- GPSからの生データ取得（テストコードのほうが見やすいが一応）
+* GPSからの生データ取得（テストコードのほうが見やすいが一応）
 
 ```bash
 sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
 ```
 
-- カメラの設定
+* カメラの設定
 
 ```bash
 # バージョン確認
@@ -329,7 +331,7 @@ camera_auto_detect=0 # カメラ自動検出を無効化
 sudo reboot
 ```
 
-- カメラ認識の確認
+* カメラ認識の確認
 
 ```bash
 # 認識デバイスの一覧
@@ -340,13 +342,13 @@ dmesg | grep -i ov5647
 time rpicam-hello -t 1
 ```
 
-- カメラのプロパティ確認
+* カメラのプロパティ確認
 
 ```bash
 rpicam-hello *--info-text*
 ```
 
-- カメラ映像のテスト
+* カメラ映像のテスト
 
 ```bash
 # ライブプレビュー
@@ -365,8 +367,8 @@ rpicam-still --width 2592 --height 1944 -o maxres.jpg
 
 ### センサが認識されない
 
-- `sudo i2cdetect -y 1` で確認
-- 配線の導通を確認
+* `sudo i2cdetect -y 1` で確認
+* 配線の導通を確認
 
 ---
 
@@ -399,9 +401,9 @@ static routers=192.168.1.1
 static domain_name_servers=192.168.1.1 8.8.8.8
 ```
 
-- static ip_address: 割り当てたい固定 IP とサブネット
-- static routers: デフォルトゲートウェイ（通常はルーターのアドレス）
-- static domain_name_servers: DNS サーバー（static routersに入力したものと同じでよい）
+* static ip_address: 割り当てたい固定 IP とサブネット
+* static routers: デフォルトゲートウェイ（通常はルーターのアドレス）
+* static domain_name_servers: DNS サーバー（static routersに入力したものと同じでよい）
 
 #### 4. 再起動と確認
 
@@ -418,21 +420,21 @@ ip a
 
 #### 2. 接続
 
-- 左下の「><」アイコン（リモート接続）からRemote-SSH: Connect to Host… を選択
-- 以下を入力
+* 左下の「><」アイコン（リモート接続）からRemote-SSH: Connect to Host… を選択
+* 以下を入力
 
 ```
 ssh ユーザー名@IPアドレス
 ```
 
-- 接続後、VS Code 下部のステータスバーが「SSH: Raspberry Pi」表示になる
+* 接続後、VS Code 下部のステータスバーが「SSH: Raspberry Pi」表示になる
 
-- Terminal → New Terminal を開くと、Pi のターミナルが利用可能
+* Terminal → New Terminal を開くと、Pi のターミナルが利用可能
 
 #### 3. 注意点
 
-- 初回接続時は Pi 側に VS Code サーバが自動インストールされる。
-- ターミナルは Pi のユーザ権限で動く（root操作は sudo）。
+* 初回接続時は Pi 側に VS Code サーバが自動インストールされる。
+* ターミナルは Pi のユーザ権限で動く（root操作は sudo）。
 
 ### 基本的なgit操作コマンド
 
