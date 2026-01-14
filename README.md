@@ -425,46 +425,6 @@ journalctl -u cansat.service -e
 
 ---
 
-### Raspberry Pi Zero 2 W で IP アドレスを固定する手順
-
-#### 1. ネットワーク情報の確認
-
-```bash
-ip a
-```
-
-#### 2. 設定ファイルの編集
-
-dhcpcd.conf を編集。
-
-```bash
-sudo nano /etc/dhcpcd.conf
-```
-
-#### 3. 静的アドレス設定の追加
-
-ファイル末尾に以下を追加。IP アドレスやルーター情報は使用中のネットワーク環境に合わせて変更。
-
-```bash
-interface wlan0
-static ip_address=192.168.1.50/24
-static routers=192.168.1.1
-static domain_name_servers=192.168.1.1 8.8.8.8
-```
-
-* static ip_address: 割り当てたい固定 IP とサブネット
-* static routers: デフォルトゲートウェイ（通常はルーターのアドレス）
-* static domain_name_servers: DNS サーバー（static routersに入力したものと同じでよい）
-
-#### 4. 再起動と確認
-
-Raspberry Pi を再起動。
-
-```bash
-sudo reboot
-ip a
-```
-
 ### VSCodeでSSH接続したラズパイのターミナルを操作する方法
 
 #### 1. VS Codeで拡張機能「Remote - SSH」をインストールする
@@ -517,3 +477,165 @@ git pull --rebase origin main
 ```
 
 ---
+
+### Raspberry Pi Zero 2 W で IP アドレスを固定する手順
+
+#### 1. ネットワーク情報の確認
+
+```bash
+ip a
+```
+
+#### 2. 設定ファイルの編集
+
+dhcpcd.conf を編集。
+
+```bash
+sudo nano /etc/dhcpcd.conf
+```
+
+#### 3. 静的アドレス設定の追加
+
+ファイル末尾に以下を追加。IP アドレスやルーター情報は使用中のネットワーク環境に合わせて変更。
+
+```bash
+interface wlan0
+static ip_address=192.168.1.50/24
+static routers=192.168.1.1
+static domain_name_servers=192.168.1.1 8.8.8.8
+```
+
+* static ip_address: 割り当てたい固定 IP とサブネット
+* static routers: デフォルトゲートウェイ（通常はルーターのアドレス）
+* static domain_name_servers: DNS サーバー（static routersに入力したものと同じでよい）
+
+#### 4. 再起動と確認
+
+Raspberry Pi を再起動。
+
+```bash
+sudo reboot
+ip a
+```
+
+---
+
+### Raspberry Pi Zero 2 W の起動時にIPアドレスを任意のDiscordサーバーに送信させるようにする方法
+
+* Discordにログインし、ウェブフックを作成したいサーバーを選択
+
+* テキストチャンネルの設定を開き、「統合」タブを選択し、「ウェブフックの表示」をクリック
+
+* 「新規ウェブフック」をクリックし、ウェブフックの名前やアイコンを設定。
+
+* ウェブフックURLをコピー
+
+#### 1. 必要なライブラリをインストール
+
+```bash
+sudo apt update
+sudo apt install python3-requests
+```
+
+#### 2. スクリプトファイルを作成
+
+```bash
+nano ~/send_ip.py
+```
+
+#### 3. 以下のコードを貼り付け
+
+```bash
+import requests
+import socket
+import time
+
+# DiscordのウェブフックURL
+WEBHOOK_URL = "ここにコピーしたURLを貼り付ける"
+
+def get_ip():
+    # 外部（GoogleのDNSなど）に接続しに行って自分のIPを特定する
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # 実際に接続はしないが、経路を確認することでIPを取得できる
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "取得失敗"
+    finally:
+        s.close()
+    return ip
+
+def send_discord(message):
+    payload = {"content": message}
+    try:
+        requests.post(WEBHOOK_URL, json=payload)
+    except Exception as e:
+        print(f"Error: {e}")
+
+if __name__ == "__main__":
+    # 起動直後はネットワークが不安定な場合があるため少し待つ
+    time.sleep(30)
+    
+    ip_addr = get_ip()
+    msg = f"🚀 ラズパイが起動しました！\nIPアドレス: `{ip_addr}`"
+    send_discord(msg)
+```
+
+```bash
+# 失敗したら再試行するバージョン
+import requests
+import socket
+import time
+
+WEBHOOK_URL = "あなたのURL"
+
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = None
+    finally:
+        s.close()
+    return ip
+
+# 最大10回、30秒おきにリトライする
+for i in range(10):
+    ip_addr = get_ip()
+    if ip_addr:
+        try:
+            payload = {"content": f"🚀 起動成功！\nIPアドレス: `{ip_addr}`"}
+            response = requests.post(WEBHOOK_URL, json=payload)
+            if response.status_code == 204:
+                print("Successfully sent to Discord")
+                break # 成功したら終了
+        except Exception as e:
+            print(f"Post failed: {e}")
+    
+    print(f"Retry {i+1}...")
+    time.sleep(30) # 次のリトライまで待機
+```
+
+#### 4. 自動起動の設定をする
+
+ラズパイが電源ONになったとき、このスクリプトを自動で実行するように設定。ここでは crontab を使う。
+
+##### 1. ラズパイのターミナルで以下を実行
+
+```bash
+crontab -e
+```
+
+（初めて使う場合は、1番の nano を選択）
+
+##### 2. 一番下の行に、以下の内容を追記
+
+```plaintext
+@reboot python3 /home/pi/send_ip.py
+```
+
+パスは適応書き換え
+
+##### 3. 保存して終了（Ctrl+O -> Enter -> Ctrl+X）
