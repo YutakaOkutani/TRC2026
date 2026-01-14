@@ -639,3 +639,9 @@ crontab -e
 パスは適応書き換え
 
 ##### 3. 保存して終了（Ctrl+O -> Enter -> Ctrl+X）
+
+##### 4. 再起動
+
+```bash
+sudo reboot
+```
