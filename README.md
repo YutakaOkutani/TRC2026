@@ -1,6 +1,6 @@
 # TRC2026
 
-## 搭載計器一覧
+## 主な搭載部品一覧
 
 |分類|型番 or 商品名|提供元 or 購入先|備考|
 | ---- | ---- |---|---|
@@ -18,7 +18,7 @@
 
 * 上記の電子部品は在庫切れになることがよくあるので注意。その場合は、型番・商品名検索でほかのベンダーを探す。それでもない場合は代替を探す。
 
-## その他搭載素子一覧
+## その他搭載部品一覧
 
 |分類|型番 or 商品名|提供元 or 購入先|備考|
 | ---- | ---- |---|---|
@@ -60,7 +60,7 @@
 * カメラフェーズ用：detect_corn.py
 * ゴール画像撮影用：capture_roi_image.py
 
-## 0. 環境構築の準備
+## 1. 環境構築の準備
 
 ### ハードウェア
 
@@ -116,7 +116,7 @@
 
 3. パスワードは Imager で設定したものを使用
 
-接続できない場合は以下を確認：
+4. 接続できない場合は以下を確認：
 
 * 同一ネットワークにいるか
 * `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
@@ -126,23 +126,23 @@
 ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no ユーザー名@IPアドレス
 ```
 
-その後、以下のコマンドでラズパイ上の設定を確認
+* その後、以下のコマンドでラズパイ上の設定を確認
 
 ```bash
 sudo nano /etc/ssh/sshd_config
 ```
 
-その中に、以下の行があれば確認。
+* その中に、以下の行があれば確認。
 
 ```
 PasswordAuthentication yes
 ```
 
-PasswordAuthentication が no になっていたら yes に変更。
+* PasswordAuthentication が no になっていたら yes に変更。
 
-"#" でコメントアウトされている場合は、"#" を外して PasswordAuthentication yes にする
+* "#" でコメントアウトされている場合は、"#" を外して PasswordAuthentication yes にする
 
-設定を変更したら、SSH サーバーを再起動。
+* 設定を変更したら、SSH サーバーを再起動。
 
 ```bash
 sudo systemctl restart ssh
@@ -162,42 +162,13 @@ sudo reboot
 
 ## 3. Python 実行環境の構築
 
-### 3.1 Python 仮想環境の作成
-
-```bash
-# sudo apt install -y python3-pip python3.10 python3.10-venv
-# python3.10（opencv-python==4.6.0.66 が入るバージョン（最新版のPythonは当該バージョンをサポートしてない）；opencv-python==4.6.0.66 なのは、動作確認が取れているから。ただ、最新版のPythonをサポートしてないこともある。はじかれた場合は以下を実行
-# sudo apt install -y git build-essential libssl-dev zlib1g-dev \ libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \ libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
-# pyenv をインストール
-# curl https://pyenv.run | bash
-# 確認
-# ls ~/.pyenv
-# .bashrc を編集
-# nano ~/.bashrc
-# ~/.bashrc に以下を追記（自動で追記されている場合あり）
-# export PATH="$HOME/.pyenv/bin:$PATH"
-# eval "$(pyenv init -)"
-# eval "$(pyenv virtualenv-init -)"
-# 読み込み
-# source ~/.bashrc
-# 再度確認
-# pyenv --version
-# Python 3.10 をインストール
-# pyenv install 3.10.13
-# pyenv global 3.10.13
-# 確認
-# python3 --version
-# 仮想環境作成
-# python3 -m venv --system-site-packages venv
-# source venv/bin/activate 
-```
-
-### 3.2 依存パッケージのインストール
+### 3.1 依存パッケージのインストール
 
 ```bash
 sudo apt update
 sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio git python3 screen libgl1 
 
+# GPS処理専用のPythonライブラリ pynmea2 のインストール（serialでも処理できるから導入は任意）
 # pynmea2（仮想環境必要）
 sudo apt install -y python3-pip
 python3 -m pip install --upgrade pip
@@ -218,13 +189,6 @@ sudo apt install liblgpio1 liblgpio-de
 sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
 
 sudo apt install python3-opencv python3-numpy python3-smbus python3-serial
-
-sudo apt install python3-opencv
-
-# pip install smbus2 "numpy>=1.23,<1.25" opencv-python==4.6.0.66 pyserial # pip install requirements.txt でもよい
-# pip install gpiozero 
-# pip install lgpio
-# pip install --no-cache-dir lgpio
 ```
 
 ```bash
@@ -255,7 +219,11 @@ sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
 # リポジトリのクローン
 git clone https://github.com/YutakaOkutani/TRC2026
 cd TRC2026
+```
 
+### 3.1 Python 仮想環境の作成
+
+```bash
 # 仮想環境の作成（システムパッケージを引き継ぐ --system-site-packages が重要）
 # これにより、aptで入れた OpenCV や Picamera2 を仮想環境内でも使用できます
 python3 -m venv --system-site-packages venv
@@ -299,7 +267,7 @@ sudo reboot
 
 ---
 
-## 5. リポジトリのクローン（ <https://github.com/YutakaOkutani/TRC2026> ）
+## 5. リポジトリのクローン
 
 ```bash
 git clone https://github.com/YutakaOkutani/TRC2026
@@ -308,22 +276,9 @@ cd TRC2026
 
 ---
 
-## 6. 実行方法
+## 6. カメラの設定
 
-* メインコード
-
-```bash
-source venv/bin/activate # 仮想環境を作らなくても、環境構築ができたら、実行しなくてよい
-python3 main.py
-```
-
-* GPSからの生データ取得（テストコードのほうが見やすいが一応）
-
-```bash
-sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
-```
-
-* カメラの設定
+### カメラの初期設定
 
 ```bash
 # バージョン確認
@@ -343,7 +298,7 @@ camera_auto_detect=0 # カメラ自動検出を無効化
 sudo reboot
 ```
 
-* カメラ認識の確認
+### カメラ認識の確認
 
 ```bash
 # 認識デバイスの一覧
@@ -354,13 +309,13 @@ dmesg | grep -i ov5647
 time rpicam-hello -t 1
 ```
 
-* カメラのプロパティ確認
+### カメラのプロパティ確認
 
 ```bash
 rpicam-hello *--info-text*
 ```
 
-* カメラ映像のテスト
+### カメラ映像のテスト
 
 ```bash
 # ライブプレビュー
@@ -371,6 +326,21 @@ rpicam-still -o test.jpg
 rpicam-vid -t 10000 -o test.h264
 # 高解像度での静止画撮影テスト
 rpicam-still --width 2592 --height 1944 -o maxres.jpg
+```
+
+## 6. 実行
+
+### 本番用コード
+
+```bash
+source venv/bin/activate # 必要なければ省略可
+python3 main.py
+```
+
+### GPSからの生データ取得（テストコードのほうが見やすいが一応）
+
+```bash
+sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
 ```
 
 ---
