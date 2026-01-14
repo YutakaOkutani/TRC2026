@@ -116,33 +116,33 @@
 
 3. パスワードは Imager で設定したものを使用
 
-4. 接続できない場合は以下を確認：
+### 2.3 接続できない場合は以下を確認
 
-* 同一ネットワークにいるか
-* `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
-* Permission denied (publickey,password).が出る場合、以下のコマンドで接続
+1. 同一ネットワークにいるか
+2. `.local` 解決ができない環境では、ラズパイの IPアドレス を確認して、ホスト名のところを IP に置き換えて接続する（WindowsやAndroid端末では、mDNS（.local）が安定的にサポートされておらず、ホスト名接続は一般に不安定）
+3. Permission denied (publickey,password).が出る場合、以下のコマンドで接続
 
 ```bash
 ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no ユーザー名@IPアドレス
 ```
 
-* その後、以下のコマンドでラズパイ上の設定を確認
+1. その後、以下のコマンドでラズパイ上の設定を確認
 
 ```bash
 sudo nano /etc/ssh/sshd_config
 ```
 
-* その中に、以下の行があれば確認。
+1. その中に、以下の行があれば確認。
 
 ```
 PasswordAuthentication yes
 ```
 
-* PasswordAuthentication が no になっていたら yes に変更。
+1. PasswordAuthentication が no になっていたら yes に変更。
 
-* "#" でコメントアウトされている場合は、"#" を外して PasswordAuthentication yes にする
+2. "#" でコメントアウトされている場合は、"#" を外して PasswordAuthentication yes にする
 
-* 設定を変更したら、SSH サーバーを再起動。
+3. 設定を変更したら、SSH サーバーを再起動。
 
 ```bash
 sudo systemctl restart ssh
@@ -167,6 +167,9 @@ sudo reboot
 ```bash
 sudo apt update
 sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio git python3 screen libgl1 
+
+sudo apt update
+sudo apt install tmux -y
 
 # GPS処理専用のPythonライブラリ pynmea2 のインストール（serialでも処理できるから導入は任意）
 # pynmea2（仮想環境必要）
@@ -251,7 +254,7 @@ pip install pynmea2
 sudo raspi-config
 ```
 
-以下を有効化：
+### 4.2 以下を有効化
 
 * Interface Options → I2C
 
@@ -328,13 +331,15 @@ rpicam-vid -t 10000 -o test.h264
 rpicam-still --width 2592 --height 1944 -o maxres.jpg
 ```
 
-## 6. 実行
+## 6. 実行（テスト時）
 
 ### 本番用コード
 
 ```bash
+tmux 
 source venv/bin/activate # 必要なければ省略可
 python3 main.py
+tmux attach
 ```
 
 ### GPSからの生データ取得（テストコードのほうが見やすいが一応）
@@ -342,6 +347,10 @@ python3 main.py
 ```bash
 sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
 ```
+
+---
+
+## 7. 実行（本番）
 
 ---
 
@@ -355,6 +364,66 @@ sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
 ---
 
 ## 8. その他
+
+### SSH接続が切れてもプログラムが実行され続けるように設定する手順
+
+#### 1. サービスファイルの作成
+
+```bash
+sudo nano /etc/systemd/system/cansat.service
+```
+
+#### 2.設定内容の書き込み
+
+```bash
+[Unit]
+Description=CanSat Main Mission Script
+After=multi-user.target
+
+[Service]
+# プログラムがあるディレクトリを指定
+WorkingDirectory=/home/pi/cansat
+# 実行コマンド（pythonのフルパスとスクリプトのフルパスを書く）
+ExecStart=/usr/bin/python3 /home/pi/TRC2026/main.py
+# venvを使う場合はこちらに置き換え
+# ExecStart=/home/pi/cansat/venv/bin/python /home/pi/cansat/main.py
+# 落ちても5秒後に自動再起動する設定（ミッション継続に重要）
+Restart=always
+RestartSec=5
+# ログを出力する場合
+StandardOutput=inherit
+StandardError=inherit
+User=pi
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 3. サービスの有効化と開始
+
+```bash
+# 設定の反映
+sudo systemctl daemon-reload
+
+# ラズパイ起動時に自動実行されるように設定
+sudo systemctl enable cansat.service
+
+# 今すぐプログラムを開始する場合
+sudo systemctl start cansat.service
+```
+
+#### 4. 状態の確認
+
+```bash
+sudo systemctl status cansat.service
+```
+
+```bash
+# cansat.service のログを最新のものから表示する
+journalctl -u cansat.service -e
+```
+
+---
 
 ### Raspberry Pi Zero 2 W で IP アドレスを固定する手順
 
