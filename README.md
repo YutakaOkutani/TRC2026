@@ -609,8 +609,8 @@ for i in range(10):
             payload = {"content": f"🚀 起動成功！\nIPアドレス: `{ip_addr}`"}
             response = requests.post(WEBHOOK_URL, json=payload)
             if response.status_code == 204:
-                print("Successfully sent to Discord")
-                break # 成功したら終了
+               print("Successfully sent to Discord")
+               break # 成功したら終了
         except Exception as e:
             print(f"Post failed: {e}")
     
