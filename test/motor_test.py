@@ -18,6 +18,8 @@ PIN_PH2 = 17  # Phase (Direction)
 
 # PWM Parameters
 PWM_FREQ = 1000  # PWM Frequency in Hz
+DEFAULT_SPEED = 50  # Default duty for manual control (0-100)
+COMMAND_BUFFER_SEC = 0.25  # Delay before applying a new command to avoid regen spikes
 
 # gpiozero devices (created in setup())
 pin_factory = None
@@ -120,39 +122,70 @@ def stop():
     motor_state['B']['speed'] = 0.0
 
 
+def drive_forward(speed=DEFAULT_SPEED):
+    """Drive both motors forward."""
+    set_motor('A', speed, 1)
+    set_motor('B', speed, 1)
+
+
+def drive_backward(speed=DEFAULT_SPEED):
+    """Drive both motors backward."""
+    set_motor('A', speed, 0)
+    set_motor('B', speed, 0)
+
+
+def turn_left(speed=DEFAULT_SPEED):
+    """Pivot left: right motor forward, left motor reverse."""
+    set_motor('A', speed, 1)
+    set_motor('B', speed, 0)
+
+
+def turn_right(speed=DEFAULT_SPEED):
+    """Pivot right: right motor reverse, left motor forward."""
+    set_motor('A', speed, 0)
+    set_motor('B', speed, 1)
+
+
 def main():
     try:
         setup()
-        print("Motor Test Start: gpiozero with DRV8256E")
-
+        print("Motor Control Ready (W/A/S/D, space=stop, q=quit)")
         while True:
-            # --- 1. Forward ---
-            print("Forward: 50%")
-            set_motor('A', 50, 1)  # Right Forward
-            set_motor('B', 50, 1)  # Left Forward
-            time.sleep(2)
+            cmd = input("Enter command: ").strip().lower()
 
-            # --- 2. Stop ---
-            print("Stop")
-            stop()
-            time.sleep(1)
+            # Empty input -> ignore to avoid jitter.
+            if not cmd:
+                continue
 
-            # --- 3. Reverse ---
-            print("Reverse: 50%")
-            set_motor('A', 50, 0)  # Right Reverse
-            set_motor('B', 50, 0)  # Left Reverse
-            time.sleep(2)
+            # Take only the first character for simplicity.
+            cmd = cmd[0]
 
-            # --- 4. Turn ---
-            print("Turn Right: A=Forward, B=Reverse")
-            set_motor('A', 40, 1)
-            set_motor('B', 40, 0)
-            time.sleep(2)
+            if cmd == 'q':
+                print("Quit requested.")
+                break
 
-            # --- 5. Stop ---
-            print("Stop")
-            stop()
-            time.sleep(1)
+            if cmd == ' ':
+                print("Stop")
+                stop()
+                continue
+
+            # Apply a short buffer before acting to reduce regen stress.
+            time.sleep(COMMAND_BUFFER_SEC)
+
+            if cmd == 'w':
+                print("Forward")
+                drive_forward()
+            elif cmd == 's':
+                print("Backward")
+                drive_backward()
+            elif cmd == 'a':
+                print("Left")
+                turn_left()
+            elif cmd == 'd':
+                print("Right")
+                turn_right()
+            else:
+                print(f"Unknown command '{cmd}'. Use W/A/S/D, space, or q.")
 
     except KeyboardInterrupt:
         print("\nExiting...")
