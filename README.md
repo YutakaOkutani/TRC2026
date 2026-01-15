@@ -22,10 +22,10 @@
 
 |分類|型番 or 商品名|提供元 or 購入先|備考|
 | ---- | ---- |---|---|
-| 電解コンデンサ | ---- |---|---|
-| 積層セラミックコンデンサ | ---- |---|---|
+| 電解コンデンサ | 35ZLH100MEFC6.3X11 |[秋月](https://akizukidenshi.com/catalog/g/g102724/)|---|
+| 積層セラミックコンデンサ | RDER71H104K0P1H03B |[秋月](https://akizukidenshi.com/catalog/g/g113582/)|---|
 | 金属皮膜抵抗 | ---- |---|---|
-| ダイオード | ---- |---|---|
+| ショットキーバリアダイオード | MA10EB045 |[秋月](https://akizukidenshi.com/catalog/g/g117496/)|---|
 | LED | ---- |---|---|
 | XTコネクタ | ---- |---|---|
 | XHコネクタ | ---- |---|---|
@@ -478,55 +478,15 @@ git pull --rebase origin main
 
 ---
 
-### Raspberry Pi Zero 2 W で IP アドレスを固定する手順
-
-#### 1. ネットワーク情報の確認
-
-```bash
-ip a
-```
-
-#### 2. 設定ファイルの編集
-
-dhcpcd.conf を編集。
-
-```bash
-sudo nano /etc/dhcpcd.conf
-```
-
-#### 3. 静的アドレス設定の追加
-
-ファイル末尾に以下を追加。IP アドレスやルーター情報は使用中のネットワーク環境に合わせて変更。
-
-```bash
-interface wlan0
-static ip_address=192.168.1.50/24
-static routers=192.168.1.1
-static domain_name_servers=192.168.1.1 8.8.8.8
-```
-
-* static ip_address: 割り当てたい固定 IP とサブネット
-* static routers: デフォルトゲートウェイ（通常はルーターのアドレス）
-* static domain_name_servers: DNS サーバー（static routersに入力したものと同じでよい）
-
-#### 4. 再起動と確認
-
-Raspberry Pi を再起動。
-
-```bash
-sudo reboot
-ip a
-```
-
----
-
 ### Raspberry Pi Zero 2 W の起動時にIPアドレスを任意のDiscordサーバーに送信させるようにする方法
+
+#### 0. Discordでウェブフックのリンクを取得
 
 * Discordにログインし、ウェブフックを作成したいサーバーを選択
 
-* テキストチャンネルの設定を開き、「統合」タブを選択し、「ウェブフックの表示」をクリック
+* チャンネルの"Server Settings"を開き、"Integrations"タブを選択し、"Webhooks"をクリック
 
-* 「新規ウェブフック」をクリックし、ウェブフックの名前やアイコンを設定。
+* "New Webhook"をクリックし、ウェブフックの名前やアイコンを設定。
 
 * ウェブフックURLをコピー
 
@@ -582,8 +542,9 @@ if __name__ == "__main__":
     send_discord(msg)
 ```
 
+* 失敗したら再試行するバージョン
+
 ```bash
-# 失敗したら再試行するバージョン
 import requests
 import socket
 import time
@@ -636,12 +597,56 @@ crontab -e
 @reboot python3 /home/pi/send_ip.py
 ```
 
-パスは適応書き換え
+ファイルパスは適応書き換え
 
-##### 3. 保存して終了（Ctrl+O -> Enter -> Ctrl+X）
+##### 3. 保存して終了
 
 ##### 4. 再起動
 
 ```bash
 sudo reboot
 ```
+
+---
+
+### Raspberry Pi Zero 2 W で IP アドレスを固定する手順
+
+#### 1. ネットワーク情報の確認
+
+```bash
+ip a
+```
+
+#### 2. 設定ファイルの編集
+
+dhcpcd.conf を編集。
+
+```bash
+sudo nano /etc/dhcpcd.conf
+```
+
+#### 3. 静的アドレス設定の追加
+
+ファイル末尾に以下を追加。IP アドレスやルーター情報は使用中のネットワーク環境に合わせて変更。
+
+```bash
+interface wlan0
+static ip_address=192.168.1.50/24
+static routers=192.168.1.1
+static domain_name_servers=192.168.1.1 8.8.8.8
+```
+
+* static ip_address: 割り当てたい固定 IP とサブネット
+* static routers: デフォルトゲートウェイ（通常はルーターのアドレス）
+* static domain_name_servers: DNS サーバー（static routersに入力したものと同じでよい）
+
+#### 4. 再起動と確認
+
+Raspberry Pi を再起動。
+
+```bash
+sudo reboot
+ip a
+```
+
+---
