@@ -1,6 +1,8 @@
-import serial
 import time
 import os
+
+import serial
+
 
 
 # --- 設定 ---

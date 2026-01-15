@@ -1,7 +1,8 @@
 # encoding : utf-8
-import cv2
 import numpy as np
 import time
+
+import cv2
 from picamera2 import Picamera2
 
 class detector:
