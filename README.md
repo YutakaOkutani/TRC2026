@@ -59,9 +59,9 @@
 
 * 本番用コード：main.py
 * センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
-* テストコード：motor_test.py, led.py, gps_test.py, landing_impact.py（着地衝撃試験用）, open_parachute.py（パラシュート投下試験用）
 * カメラフェーズ用：detect_corn.py
 * ゴール画像撮影用：capture_roi_image.py
+* テストコード：gps_test.py, gps_test_new.py, landing_impact.py（着地衝撃試験用）, led.py, motor_test.py, open_parachute.py（パラシュート投下試験用）
 
 ## 1. 環境構築の準備
 
