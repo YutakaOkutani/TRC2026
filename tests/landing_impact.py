@@ -11,7 +11,7 @@ from library import bno055
 from library import bmp180
 
 SERIAL_PORT = "/dev/serial0"
-BAUD_RATE = 115200
+BAUD_RATE = 115200 # 9600, 38400
 LOG_DIRECTORY = "testlog/landing_impact/"
 GPS_READ_TIMEOUT = 0.5
 

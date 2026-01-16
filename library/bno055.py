@@ -1,9 +1,11 @@
+import time
+import math
+
 try:
     from smbus2 import SMBus
 except ImportError:
     from smbus import SMBus
-import time
-import math
+
 
 class BNO055:
     """

@@ -7,7 +7,7 @@ from library.micropyGPS import MicropyGPS
 
 # Match main.py defaults
 GPS_SERIAL_PORT = "/dev/serial0"
-GPS_BAUDRATE = 115200
+GPS_BAUDRATE = 115200 # 9600, 38400
 GPS_SERIAL_TIMEOUT = 1
 GPS_TIMEZONE = 9
 GPS_COORD_FORMAT = "dd"

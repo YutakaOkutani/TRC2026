@@ -348,7 +348,7 @@ tmux attach
 ### GPSからの生データ取得（テストコードのほうが見やすいが一応）
 
 ```bash
-sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600も試す
+sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600や38400も試す
 ```
 
 ---
