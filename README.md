@@ -353,10 +353,6 @@ sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600や38400�
 
 ---
 
-## 7. 実行（本番）
-
----
-
 ## 7. トラブルシューティング
 
 ### センサが認識されない
@@ -385,6 +381,7 @@ After=multi-user.target
 
 [Service]
 # プログラムがあるディレクトリを指定
+# パスは適応書き換え 
 WorkingDirectory=/home/pi/cansat
 # 実行コマンド（pythonのフルパスとスクリプトのフルパスを書く）
 ExecStart=/usr/bin/python3 /home/pi/TRC2026/main.py
