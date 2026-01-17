@@ -231,7 +231,7 @@ cd TRC2026
 
 ```bash
 # 仮想環境の作成（システムパッケージを引き継ぐ --system-site-packages が重要）
-# これにより、aptで入れた OpenCV や Picamera2 を仮想環境内でも使用できます
+# これにより、aptで入れた OpenCV や Picamera2 を仮想環境内でも使用可能になる
 python3 -m venv --system-site-packages venv
 
 # 仮想環境の有効化
@@ -262,8 +262,6 @@ sudo raspi-config
 * Interface Options → I2C
 
 * Interface Options → Serial
-
-* Performance → GPU Memory（必要に応じて）
 
 完了後、再起動。
 
