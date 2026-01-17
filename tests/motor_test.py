@@ -1,3 +1,4 @@
+import sys
 import time
 
 from gpiozero import PWMOutputDevice, DigitalOutputDevice
@@ -146,12 +147,72 @@ def turn_right(speed=DEFAULT_SPEED):
     set_motor('B', speed, 1)
 
 
+def _read_key():
+    """
+    Read a single key press and normalize to movement commands.
+    Supports WASD and arrow keys on Windows and POSIX terminals.
+    Returns the lowercase command character or '' if unknown.
+    """
+    try:
+        import msvcrt  # Windows single-key capture
+
+        key = msvcrt.getch()
+        if key in (b'\x00', b'\xe0'):
+            special = msvcrt.getch()
+            arrow_map = {
+                b'H': 'w',  # Up
+                b'P': 's',  # Down
+                b'K': 'a',  # Left
+                b'M': 'd',  # Right
+            }
+            return arrow_map.get(special, '')
+        return key.decode('utf-8', 'ignore').lower()
+    except ImportError:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch1 = sys.stdin.read(1)
+            if ch1 == '\x1b':  # Escape sequence for arrows
+                ch2 = sys.stdin.read(1)
+                if ch2 == '[':
+                    ch3 = sys.stdin.read(1)
+                    arrow_map = {
+                        'A': 'w',  # Up
+                        'B': 's',  # Down
+                        'D': 'a',  # Left
+                        'C': 'd',  # Right
+                    }
+                    return arrow_map.get(ch3, '')
+                return ''
+            return ch1.lower()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _get_command():
+    """
+    Wrapper to fetch a single command key.
+    Falls back to input() if raw capture fails.
+    """
+    try:
+        return _read_key()
+    except Exception:
+        try:
+            return input("Enter command: ").strip().lower()[:1]
+        except EOFError:
+            return ''
+
+
 def main():
     try:
         setup()
-        print("Motor Control Ready (W/A/S/D, space=stop, q=quit)")
+        print("Motor Control Ready (W/A/S/D or Arrow Keys, space=stop, q=quit)")
         while True:
-            cmd = input("Enter command: ").strip().lower()
+            cmd = _get_command()
 
             # Empty input -> ignore to avoid jitter.
             if not cmd:
