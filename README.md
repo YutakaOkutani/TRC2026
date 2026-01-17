@@ -549,7 +549,7 @@ import requests
 import socket
 import time
 
-WEBHOOK_URL = "あなたのURL"
+WEBHOOK_URL = "ここにコピーしたURLを貼り付ける"
 
 def get_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -591,10 +591,11 @@ crontab -e
 
 （初めて使う場合は、1番の nano を選択）
 
-##### 2. 一番下の行に、以下の内容を追記
+##### 2. 一番下の行に、以下の内容を追記（起動時と5分おきに実行するように設定）
 
 ```plaintext
 @reboot python3 /home/pi/send_ip.py
+*/5 * * * * /usr/bin/python3 /home/pi/send_ip.py
 ```
 
 ファイルパスは適応書き換え
@@ -609,7 +610,153 @@ sudo reboot
 
 ---
 
-### Raspberry Pi Zero 2 W で IP アドレスを固定する手順
+### VPNサービスを使って、ラズパイのIPアドレスを固定化する方法（"Tailscale"を使う方法）
+
+#### 0. そもそも
+
+前述のとおり、WindowsPCやAndroid端末は、mDNSが不安定なので、ラズパイとのSSH接続にはIPアドレスが必要
+
+##### 仮想VPNサービス（ここでは"Tailscale"）を使えば
+
+Tailscaleに登録された各デバイスは：
+
+* 固定の仮想IPアドレスを持つ（100.x.y.z 形式）
+
+* デバイスがオンラインの間、そのIPは常に同じ
+
+* 管理画面に表示される
+
+* そのIPで直接SSH接続が可能になる
+
+```bash
+ssh pi@100.x.y.z）
+```
+
+#### 1. 構成手順
+
+##### 0. 前提
+
+PC: Windows（Macならそもそもこの問題は起きないので設定不要）
+スマホ: Android（iPhoneの人も、スマホでターミナル操作をするなら、多分やったほうがいい。）
+
+##### 1. アカウント作成（PCで）
+
+[https://tailscale.com/](https://tailscale.com/)
+
+* Google / GitHub / Microsoft などでログイン
+* これが「あなたの仮想LAN」になる
+
+##### 2. Windows にインストール
+
+[https://tailscale.com/download](https://tailscale.com/download)
+
+* Windows版をDL
+* インストール
+* ログイン
+* "Tailscale" はタスクトレイ常駐アプリとしてふるまう。
+
+##### 3. スマホ にも入れる
+
+* デスクトップで表示されるQRコードか Playストア で検索してインストール
+* ログイン
+* デスクトップに端末が追加されたか確認
+* 案内されるテストコマンドをPCで実行して接続を確認できる
+
+```powershell
+ping 100.x.y.z
+```
+
+---
+
+##### 4.  Raspberry Pi にもインストール
+
+ラズパイで：
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+```
+
+終わったら：
+
+```bash
+sudo tailscale up
+```
+
+すると、URLが出るので、**PCで開いてログイン**。
+
+##### 5. ここまでで何が起きているか
+
+この時点で：
+
+* Windows
+* Android
+* Raspberry Pi
+
+が **同じ仮想LAN** に入る
+
+---
+
+##### 6. ラズパイの固定IPを確認する
+
+ラズパイで：
+
+```bash
+tailscale ip -4
+```
+
+例：
+
+```
+100.64.12.34
+```
+
+これがTaliscaleで表示される内容と一致するか確認する
+
+---
+
+##### 7. SSH接続
+
+Windowsから：
+
+```powershell
+ssh pi@100.64.12.34
+```
+
+---
+
+##### さらに便利なところ
+
+###### ホスト名でSSHできるようになる
+
+Tailscale管理画面に行くと：
+
+```
+raspberrypi.tailnet-name.ts.net
+```
+
+みたいな名前が付くので、
+
+これで
+
+```powershell
+ssh pi@raspberrypi
+```
+
+も可能になる（Windows PowerShellでOK）。
+
+---
+
+###### 再起動時に自動接続
+
+通常は自動で再接続されるが、念のため
+
+```bash
+sudo tailscale set --auto-update
+```
+
+---
+
+### Raspberry Pi Zero 2 W で IP アドレスを静的に固定する手順（非推奨）
 
 #### 1. ネットワーク情報の確認
 
@@ -648,5 +795,10 @@ Raspberry Pi を再起動。
 sudo reboot
 ip a
 ```
+
+#### 5. 非推奨である理由
+
+* スマホのテザリングだとIPアドレスが定期的に変更になるので、このような静的な固定は馴染まない。というのも、デフォルトゲートウェイが変わったら、すべての設定が意味をなさなくなるから。MACアドレスからルーター側で動的に固定する手もあるが、スマホのテザリングではできない。
+* また、これ以外にも上記で紹介したDiscordのウェブフックで通知する方法やTailscale等の仮想LANを使う方法でIPアドレスを得るほうが確実で安全なので、わざわざ静的に固定するインセンティブはほぼない。ので、設定方法を書きはしたが、設定しないのが無難。
 
 ---
