@@ -4,17 +4,18 @@
 
 |分類|型番 or 商品名|提供元 or 購入先|備考|
 | ---- | ---- |---|---|
-|SBC |Raspberry Pi Zero 2 W|[マルツ（協賛）](https://www.marutsu.co.jp/pc/i/2792770/?srsltid=AfmBOoqj3GkGFJWZ4-w-ZxoEDAaTFkF61yXlAAaS3B1-CzCxX8cdQ3y1)|OSは、Raspberry Pi OS Lite(64bit)|
-|マイクロSD |LMEX1L032GG2/LMEX1L032GG4|[秋月](https://akizukidenshi.com/catalog/g/g115844/)|16GBでも足りる|
+|SBC|Raspberry Pi Zero 2 W|[マルツ（協賛）](https://www.marutsu.co.jp/pc/i/2792770/?srsltid=AfmBOoqj3GkGFJWZ4-w-ZxoEDAaTFkF61yXlAAaS3B1-CzCxX8cdQ3y1)|OSは、Raspberry Pi OS Lite(64bit)|
+|マイクロSD|LMEX1L032GG2/LMEX1L032GG4|[秋月](https://akizukidenshi.com/catalog/g/g115844/)|16GBでも足りる|
 |9軸センサ|BNO055|[秋月](https://akizukidenshi.com/catalog/g/g116996/)|
 |気圧センサ|BMP180|[電子工作ステーション](https://electronicwork.shop/items/633a5766c92c5d60c0317985?srsltid=AfmBOoo89WFWoQuIXLSAinuzEanNzGPgrkFaXNkkVxKlmQEBduGWzTZU)|別に必要ないかも
-|モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |[POLOLU](https://www.pololu.com/product/3207)|
+|モーター|99:1 Metal Gearmotor 25Dx54L mm HP 12V |[POLOLU](https://www.pololu.com/product/3207)|ストール電流は5.0A|
 |モータードライバ|POLOLU-4038|[マルツ](https://www.marutsu.co.jp/pc/i/2350058/?srsltid=AfmBOoosyseXhsd3kJ2jmKrsmHL4Ohx6i0ej_aL8HmGz6hRows6TN5E6)|DRV8256E搭載モジュール|
 |超音波センサ|HC-SR04|[秋月](https://akizukidenshi.com/catalog/g/g111009/)|別に必要ないかも|
 |GNSS受信機|GT-502MGG-N|[秋月](https://akizukidenshi.com/catalog/g/g117980/)|
 |カメラ|KEYESTUDIO 5MP |[アマゾン](https://amzn.asia/d/6HFwEA6)|純正品ではなく互換品。であるが性能は十分|
 |バッテリー|KT850/35-3S|[アマゾン](https://amzn.asia/d/fa5oPCb)|360mAhでも完走可能だが、充電切れになりやすいため、850mAhのものを今回は選定。持続時間と重量はトレードオフ。|
-|DC-DCコンバータ|AE-OKL-T/6-W12N-C|[秋月](https://akizukidenshi.com/catalog/g/g107728/)|変格ではあるが（可変抵抗を置き換えることで固定にもできる）、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定|
+|# DC-DCコンバータ|# AE-OKL-T/6-W12N-C|# [秋月](https://akizukidenshi.com/catalog/g/g107728/)|# 変格ではあるが（可変抵抗を置き換えることで固定にもできる）、出力電流が多く（Max6A）、ラズパイの定格電流（2.5A）を出せるので選定（しかし、絶対定格電圧が14Vと3Sのリポに対して余裕がほぼないので危険）|
+|DC-DCコンバータ|DC5-36-TO-DC3V3-5|[Waveshare](https://www.waveshare.com/dc5-36-to-dc3v3-5.htm?sku=29035)|定格電圧が36Vと高く、出力電流も4Vあり、デフォルトで5V出力なので、選定（ピンヘッダで実装もできるが、振動等を考えると表面実装したほうがよい）|
 
 * 上記の電子部品は在庫切れになることがよくあるので注意。その場合は、型番・商品名検索でほかのベンダーを探す。それでもない場合は代替を探す。
 
@@ -25,10 +26,11 @@
 | 電解コンデンサ | 35ZLH100MEFC6.3X11 |[秋月](https://akizukidenshi.com/catalog/g/g102724/)|---|
 | 積層セラミックコンデンサ | RDER71H104K0P1H03B |[秋月](https://akizukidenshi.com/catalog/g/g113582/)|---|
 | 金属皮膜抵抗 | ---- |---|---|
-| ショットキーバリアダイオード | MA10EB045 |[秋月](https://akizukidenshi.com/catalog/g/g117496/)|---|
-| LED | ---- |---|---|
-| XTコネクタ | ---- |---|---|
-| XHコネクタ | ---- |---|---|
+| カーボン抵抗 | ---- |---|金皮より安価。抵抗値のコントロールがシビアでない箇所（例：LED）はカーボン抵抗で十分|
+| ショットキーバリアダイオード | MA10EB045 |[秋月](https://akizukidenshi.com/catalog/g/g117496/)|逆流防止用。とりわけ、モーターの回生エネルギーをDC-DC側に逆流しないようにする役割|
+| LED | ---- |---|チップでもスルーホールでも良い。ミッションの進行度や導通チェックに有用。TRC2026では赤と緑を搭載。|
+| XTコネクタ | ---- |---|リポ用のコネクタとして適している|
+| XHコネクタ | ---- |---|モータ、GNSS、超音波センサー用のコネクタ|
 
 ## ファイル構成
 
@@ -61,7 +63,7 @@
 * センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
 * カメラフェーズ用：detect_corn.py
 * ゴール画像撮影用：capture_roi_image.py
-* テストコード：gps_test.py, gps_test_new.py, landing_impact.py（着地衝撃試験用）, led.py, motor_test.py, open_parachute.py（パラシュート投下試験用）
+* テストコード：gps_test.py, gps_test_new.py, landing_impact.py, led.py, motor_test.py, open_parachute.py（ちなみに、landing_impact.py と open_parachute.py の中身は同じ。ログファイルを区別するために分けてあるだけ。）
 
 ## 1. 環境構築の準備
 
@@ -137,7 +139,7 @@ sudo nano /etc/ssh/sshd_config
 
 1. その中に、以下の行があれば確認。
 
-```
+```plaintext
 PasswordAuthentication yes
 ```
 
@@ -168,66 +170,25 @@ sudo reboot
 ### 3.1 依存パッケージのインストール
 
 ```bash
-sudo apt update
-sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio git python3 screen libgl1 
-
-sudo apt update
-sudo apt install tmux -y
-
-# GPS処理専用のPythonライブラリ pynmea2 のインストール（serialでも処理できるから導入は任意）
-# pynmea2（仮想環境必要）
-sudo apt install -y python3-pip
-python3 -m pip install --upgrade pip
-python3 -m pip install pynmea2
-
-# pynmea2（仮想環境不要）
-sudo apt update
-sudo apt install python3-pynmea2
-
-# pynmea2（pipxバージョン）
-sudo apt install pipx
-pipx install pynmea2
-
-
-sudo apt install swig python3-dev python3-setuptools build-essential
-sudo apt install liblgpio1 liblgpio-de
-
-sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
-
-sudo apt install python3-opencv python3-numpy python3-smbus python3-serial
-```
-
-```bash
-sudo apt update
-sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-rpi-lgpio git python3 screen libgl1
-sudo apt install swig python3-dev python3-setuptools build-essential
-sudo apt install liblgpio1 liblgpio-de
-sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
-sudo apt install python3-numpy python3-smbus python3-serial
-sudo apt install python3-opencv
-```
-
-```bash
-# パッケージリストの更新
+# パッケージリストの更新（基本的に最初に1回でOK）
 sudo apt update && sudo apt full-upgrade -y
 
-# 基本ツールと通信関連
-sudo apt install -y git screen i2c-tools python3-smbus python3-serial
+# 基本ツール・ビルド環境・pip
+sudo apt install -y git screen tmux build-essential python3-pip
 
-# GPIO制御ライブラリ (lgpio)
-sudo apt install -y python3-gpiozero python3-rpi-lgpio
+# I2C / GPIO / シリアルなどのハードウェアアクセス
+sudo apt install -y i2c-tools python3-smbus python3-serial \
+  python3-gpiozero python3-rpi-lgpio liblgpio1 liblgpio-dev
 
-# OpenCV / 画像処理関連（ビルド時間を短縮するため apt でインストール）
-sudo apt install -y python3-opencv python3-numpy libgl1
+# カメラ / 画像処理（apt版のOpenCVを利用してビルド時間短縮）
+sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps \
+  python3-opencv python3-numpy libgl1
 
-# カメラ制御（libcamera/Picamera2関連）
-sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
-# リポジトリのクローン
-git clone https://github.com/YutakaOkutani/TRC2026
-cd TRC2026
+# C拡張が必要なライブラリ用のビルドツール
+sudo apt install -y swig python3-dev python3-setuptools
 ```
 
-### 3.1 Python 仮想環境の作成
+### 3.2 Python 仮想環境の作成
 
 ```bash
 # 仮想環境の作成（システムパッケージを引き継ぐ --system-site-packages が重要）
@@ -372,7 +333,7 @@ sudo nano /etc/systemd/system/cansat.service
 
 #### 2.設定内容の書き込み
 
-```bash
+```
 [Unit]
 Description=CanSat Main Mission Script
 After=multi-user.target
@@ -626,7 +587,7 @@ Tailscaleに登録された各デバイスは：
 
 * そのIPで直接SSH接続が可能になる
 
-```bash
+```powershell
 ssh pi@100.x.y.z）
 ```
 
@@ -642,7 +603,7 @@ PC: Windows（Macならそもそもこの問題は起きないので設定不要
 [https://tailscale.com/](https://tailscale.com/)
 
 * Google / GitHub / Microsoft などでログイン
-* これが「あなたの仮想LAN」になる
+* これが 仮想LAN になる
 
 ##### 2. Windows にインストール
 
@@ -774,7 +735,7 @@ sudo nano /etc/dhcpcd.conf
 
 ファイル末尾に以下を追加。IP アドレスやルーター情報は使用中のネットワーク環境に合わせて変更。
 
-```bash
+```
 interface wlan0
 static ip_address=192.168.1.50/24
 static routers=192.168.1.1
