@@ -4,19 +4,18 @@
 
 ```
 ├── main.py
+├── venv
 ├── library/
 │   ├── __init__.py
 │   ├── bno055.py
 │   ├── bmp180.py
 │   ├── detect_corn.py
 │   ├── capture_roi_img.py
-│   ├── micropyGPS.py
 ├── tests/
 │   ├── library/
 │       ├── __init__.py
 │       ├── bno055.py
 │       ├── bmp180.py
-│       ├── micropyGPS.py
 │   ├── gps_test.py
 │   ├── gps_test_new.py
 │   ├── landing_impact.py
@@ -27,7 +26,7 @@
 ```
 
 * 本番用コード：main.py
-* センサー用ライブラリ：bno055.py, bmp180.py, mycropyGPS.py
+* センサー用ライブラリ：bno055.py, bmp180.py
 * カメラフェーズ用：detect_corn.py
 * ゴール画像撮影用：capture_roi_image.py
 * テストコード：gps_test.py, gps_test_new.py, landing_impact.py, led.py, motor_test.py, open_parachute.py（landing_impact.py と open_parachute.py の中身は同じ。出力されるログファイルを区別するために分けてある）
@@ -142,9 +141,12 @@ sudo apt update && sudo apt full-upgrade -y
 # ===== 基本ツール =====
 sudo apt install -y git screen tmux i2c-tools
 
-# ===== 実行に必要なPythonライブラリ（aptのみで完結）=====
+# ===== 実行に必要なPythonライブラリ（apt）=====
 # GPIO / シリアル / I2C
 sudo apt install -y python3-gpiozero python3-rpi-lgpio liblgpio1 python3-serial python3-smbus
+
+# pipで追加インストールするためのツール
+sudo apt install -y python3-pip python3-setuptools
 
 # カメラ / 画像処理（Picamera2 + OpenCV + NumPy）
 sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps python3-opencv python3-numpy
@@ -152,10 +154,7 @@ sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps python3-o
 # OpenCVでGUI表示（imshow等）する場合に必要。ヘッドレス運用なら不要なことが多い
 sudo apt install -y libgl1
 
-# ===== ここから下は pip や自前ビルドをするなら必要=====
-
-# pipで追加インストールする運用にする場合のみ必要（今回は pip なしで行ける構成にしてあるのでおそらく不要）
-# sudo apt install -y python3-pip python3-setuptools
+# ===== ここから下は自前ビルドをするなら必要=====
 
 # C拡張やライブラリをソースからビルドする場合に必要
 # sudo apt install -y build-essential python3-dev swig
@@ -276,7 +275,7 @@ rpicam-still --width 2592 --height 1944 -o maxres.jpg
 
 ```bash
 tmux 
-source venv/bin/activate # 必要なければ省略可
+source venv/bin/activate
 python3 main.py
 tmux attach
 ```

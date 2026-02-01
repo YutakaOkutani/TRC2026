@@ -1,265 +1,255 @@
-import time
+import math
 import os
+import time
 
+import pynmea2
 import serial
 
+# --- GPS settings (identical to main.py) ---
+GPS_SERIAL_PORT = "/dev/serial0"
+GPS_BAUDRATE = 115200  # 9600, 38400
+GPS_SERIAL_TIMEOUT = 1
+GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
+GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
+GPS_MIN_FIX_QUAL = 1              # 1: GPS fix, 2: DGPS, 4/5: RTK
+GPS_MIN_SATELLITES = 4
+GPS_MAX_HDOP = 5.0
+GPS_MAX_SPEED_MPS = 50.0          # reject if jump implies speed over this (m/s)
+GPS_STABLE_FIX_COUNT = 3          # consecutive good fixes required
+GPS_FIX_LOSS_TIMEOUT = 8.0        # seconds until detect flag drops when no valid fix
 
-
-# --- 設定 ---
-SERIAL_PORT = "/dev/serial0"   # 使用しているポートに合わせて変更
-BAUD_RATE = 115200              # GPSモジュールのボーレートに合わせて変更（例：9600, 38400）
-UPDATE_INTERVAL_SECONDS = 5    # 何秒ごとに表示を更新するか
+# --- Display update interval ---
+UPDATE_INTERVAL_SECONDS = 5
 
 
 def clear_screen():
-    """画面をクリアする関数"""
-    if os.name == "nt":  # Windows
+    """Clear terminal screen for readability."""
+    if os.name == "nt":
         os.system("cls")
-    else:                # Linux / macOS
+    else:
         os.system("clear")
 
 
-def nmea_to_decimal_degrees(nmea_value, direction):
-    """
-    NMEA形式の緯度経度を10進数度に変換する関数。
-    例: '3530.1234', 'N' -> 35.502056...
-        '13944.5678', 'E' -> 139.742797...
-    """
-    if not nmea_value or nmea_value == "0":
-        return 0.0
-
-    try:
-        # 緯度: ddmm.mmmm, 経度: dddmm.mmmm という形式
-        if "." not in nmea_value:
-            return 0.0
-
-        # 小数点より前を取得して度と分に分割
-        head, tail = nmea_value.split(".")
-        if len(head) <= 2:
-            # 想定外フォーマット
-            return 0.0
-
-        # 緯度: 2桁が度, 経度: 3桁が度
-        if len(head) == 4:      # 例: 3530 -> 35度30分
-            deg = int(head[:2])
-            minutes = float(head[2:] + "." + tail)
-        else:                   # 5桁以上は経度とみなす 例: 13944 -> 139度44分
-            deg = int(head[:-2])
-            minutes = float(head[-2:] + "." + tail)
-
-        decimal_deg = deg + minutes / 60.0
-
-        if direction in ("S", "W"):
-            decimal_deg *= -1
-
-        return decimal_deg
-    except (ValueError, IndexError):
-        return 0.0
+def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
+    """Great-circle distance (m) and azimuth (deg) identical to main.py."""
+    R = 6378137.0
+    rad_lat1 = math.radians(lat1)
+    rad_lng1 = math.radians(lng1)
+    rad_lat2 = math.radians(lat2)
+    rad_lng2 = math.radians(lng2)
+    d_lng = rad_lng2 - rad_lng1
+    sin_lat1 = math.sin(rad_lat1)
+    cos_lat1 = math.cos(rad_lat1)
+    sin_lat2 = math.sin(rad_lat2)
+    cos_lat2 = math.cos(rad_lat2)
+    cos_d_lng = math.cos(d_lng)
+    val = sin_lat1 * sin_lat2 + cos_lat1 * cos_lat2 * cos_d_lng
+    val = max(-1.0, min(1.0, val))
+    central_angle = math.acos(val)
+    dist = R * central_angle
+    y = math.sin(d_lng) * cos_lat2
+    x = cos_lat1 * sin_lat2 - sin_lat1 * cos_lat2 * cos_d_lng
+    azi = math.degrees(math.atan2(y, x))
+    if azi < 0:
+        azi += 360.0
+    return dist, azi
 
 
-def get_fix_quality_label(gps_qual_value):
-    """
-    GGAセンテンスの gps_qual から説明文字列を返す。
-    """
-    try:
-        q = int(gps_qual_value)
-    except (TypeError, ValueError):
-        return "不明"
+class RobustGPSReader:
+    """Replicates the GPS handling logic from main.py for standalone scripts."""
 
-    mapping = {
-        0: "No Fix（未測位）",
-        1: "GPS Fix（標準測位）",
-        2: "DGPS Fix（補強あり）",
-        4: "RTK Fixed",
-        5: "RTK Float",
-    }
-    return mapping.get(q, "不明")
+    def __init__(self):
+        self.ser = None
+        self.last_buffer_clear = time.time()
+        self.last_fix_time = 0.0
+        self.last_valid_fix_time = 0.0
+        self.last_valid_latlng = None
+        self.stable_count = 0
 
-
-def parse_gga(sentence):
-    """
-    GGAセンテンスを分解して必要な項目を辞書で返す。
-    対応するフィールド：
-    0: $GPGGA
-    1: 時刻 (hhmmss.sss)
-    2: 緯度 (ddmm.mmmm)
-    3: 北緯/南緯 (N/S)
-    4: 経度 (dddmm.mmmm)
-    5: 東経/西経 (E/W)
-    6: Fix品質 (0～)
-    7: 使用衛星数
-    8: HDOP
-    9: 高度
-    10: 高度の単位 (M)
-    """
-    parts = sentence.strip().split(",")
-
-    # 最低限の長さチェック
-    if len(parts) < 11:
-        return None
-
-    if not (parts[0].startswith("$GPGGA") or parts[0].startswith("$GNGGA")):
-        return None
-
-    time_str = parts[1]
-    lat_raw = parts[2]
-    lat_dir = parts[3]
-    lon_raw = parts[4]
-    lon_dir = parts[5]
-    gps_qual = parts[6]
-    num_sats = parts[7]
-    hdop = parts[8]
-    altitude = parts[9]
-    altitude_units = parts[10]
-
-    # 緯度経度を10進数へ変換
-    lat = nmea_to_decimal_degrees(lat_raw, lat_dir)
-    lon = nmea_to_decimal_degrees(lon_raw, lon_dir)
-
-    # HDOP を数値に変換
-    hdop_value = None
-    if hdop not in ("", None):
+    def open_serial(self):
         try:
-            hdop_value = float(hdop)
-        except ValueError:
-            hdop_value = None
+            ser = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
+            try:
+                ser.reset_input_buffer()
+            except Exception:
+                pass
+            print("GPS serial opened.")
+            return ser
+        except Exception as e:
+            print(f"GPS Serial Open Failed: {e}")
+            return None
 
-    return {
-        "time_str": time_str,
-        "lat": lat,
-        "lat_dir": lat_dir,
-        "lon": lon,
-        "lon_dir": lon_dir,
-        "gps_qual": gps_qual,
-        "num_sats": num_sats,
-        "hdop_raw": hdop,
-        "hdop_value": hdop_value,
-        "altitude": altitude,
-        "altitude_units": altitude_units,
-    }
+    def ensure_serial(self):
+        if self.ser is None or not self.ser.is_open:
+            self.ser = self.open_serial()
+
+    def read_fix(self):
+        """Return a stable fix dict or None, using the same gates as main.py."""
+        self.ensure_serial()
+        if self.ser is None:
+            time.sleep(1)
+            return None
+
+        now = time.time()
+        if self.last_valid_fix_time > 0 and now - self.last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
+            self.stable_count = 0
+
+        if (
+            self.ser.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
+            and now - self.last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL
+        ):
+            try:
+                self.ser.reset_input_buffer()
+                print("GPS buffer cleared to drop stale data.")
+            except Exception:
+                pass
+            self.last_buffer_clear = now
+            self.stable_count = 0
+
+        try:
+            line_bytes = self.ser.readline()
+        except Exception as e:
+            print(f"GPS read error: {e}")
+            try:
+                if self.ser is not None:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+            time.sleep(1)
+            return None
+
+        if not line_bytes:
+            return None
+
+        line = line_bytes.decode("utf-8", errors="ignore").strip()
+        if not (line.startswith("$GPGGA") or line.startswith("$GNGGA")):
+            return None
+
+        try:
+            msg = pynmea2.parse(line, check=True)
+        except Exception:
+            return None
+
+        if getattr(msg, "sentence_type", "") != "GGA":
+            return None
+
+        lat_val = getattr(msg, "latitude", None)
+        lng_val = getattr(msg, "longitude", None)
+        if lat_val is None or lng_val is None:
+            return None
+
+        lat = float(lat_val)
+        lng = float(lng_val)
+
+        gps_qual = getattr(msg, "gps_qual", None)
+        num_sats = getattr(msg, "num_sats", None)
+        hdop = getattr(msg, "horizontal_dil", None)
+
+        try:
+            qual_ok = gps_qual is not None and int(gps_qual) >= GPS_MIN_FIX_QUAL
+        except (TypeError, ValueError):
+            qual_ok = False
+        try:
+            sats_ok = num_sats is not None and int(num_sats) >= GPS_MIN_SATELLITES
+        except (TypeError, ValueError):
+            sats_ok = False
+        try:
+            hdop_ok = hdop is not None and float(hdop) <= GPS_MAX_HDOP
+        except (TypeError, ValueError):
+            hdop_ok = True
+
+        if not (qual_ok and sats_ok and hdop_ok and (lat != 0.0 or lng != 0.0)):
+            self.stable_count = 0
+            return None
+
+        speed_ok = True
+        if self.last_valid_latlng is not None:
+            dist, _ = calc_distance_and_azimuth(
+                self.last_valid_latlng[0], self.last_valid_latlng[1], lat, lng
+            )
+            dt = now - self.last_fix_time if self.last_fix_time > 0 else 0
+            if dt > 0:
+                speed = dist / dt
+                if speed > GPS_MAX_SPEED_MPS:
+                    speed_ok = False
+
+        if not speed_ok:
+            self.stable_count = 0
+            return None
+
+        self.stable_count += 1
+        self.last_fix_time = now
+
+        if self.stable_count >= GPS_STABLE_FIX_COUNT:
+            self.last_valid_fix_time = now
+            self.last_valid_latlng = (lat, lng)
+            try:
+                timestamp = msg.timestamp.strftime("%H:%M:%S")
+            except Exception:
+                timestamp = str(getattr(msg, "timestamp", ""))
+            try:
+                altitude = float(getattr(msg, "altitude", 0.0) or 0.0)
+            except Exception:
+                altitude = 0.0
+            return {
+                "lat": lat,
+                "lng": lng,
+                "gps_qual": gps_qual,
+                "num_sats": num_sats,
+                "hdop": hdop,
+                "altitude": altitude,
+                "timestamp": timestamp,
+                "raw": line,
+            }
+
+        return None
 
 
 def main():
-    try:
-        ser = serial.Serial(SERIAL_PORT, baudrate=BAUD_RATE, timeout=1)
-    except serial.SerialException as e:
-        print(f"シリアルポートを開けませんでした: {e}")
-        return
-
-    print("🛰️ GPS受信待機中... (Ctrl+C で終了)")
+    gps_reader = RobustGPSReader()
     last_print_time = 0.0
-    is_first_fix = True
+    first_fix_printed = False
 
+    print("🛰️ GPS monitor (main.py logic). Waiting for stable fix... Ctrl+C to exit.")
     try:
         while True:
-            line = ser.readline().decode("utf-8", errors="ignore")
-
-            if not line.startswith(("$GPGGA", "$GNGGA")):
-                continue
-
-            data = parse_gga(line)
-            if data is None:
+            fix = gps_reader.read_fix()
+            if fix is None:
                 continue
 
             current_time = time.time()
             if current_time - last_print_time < UPDATE_INTERVAL_SECONDS:
                 continue
-
-            lat_valid = data["lat"] not in (None, 0.0)
-            lon_valid = data["lon"] not in (None, 0.0)
-
-            gps_qual_raw = data["gps_qual"]
-            fix_quality_label = get_fix_quality_label(gps_qual_raw)
-            hdop_value = data["hdop_value"]
-            hdop_raw = data["hdop_raw"]
-            num_sats = data["num_sats"]
-            altitude_raw = data["altitude"]
-            altitude_units = data["altitude_units"]
-
-            # 最初の「有効な測位」で画面クリア
-            if lat_valid and lon_valid and is_first_fix:
-                clear_screen()
-                is_first_fix = False
-
-            print("=" * 40)
-            if lat_valid and lon_valid:
-                print("✅ GPS測位成功")
-            else:
-                print("⚠️ まだ有効なGPS測位が取れていない可能性があります")
-
-            print("-" * 40)
-            print(f"  タイムスタンプ : {data['time_str']}")
-            print(f"  Fix品質        : {gps_qual_raw} ({fix_quality_label})")
-
-            if hdop_value is not None:
-                print(f"  HDOP           : {hdop_value:.2f}")
-            elif hdop_raw not in (None, ""):
-                print(f"  HDOP           : {hdop_raw} (数値変換不可)")
-
-            # 位置情報
-            if lat_valid and lon_valid:
-                print(f"  緯度           : {data['lat']:.6f} {data['lat_dir']}")
-                print(f"  経度           : {data['lon']:.6f} {data['lon_dir']}")
-            else:
-                print("  緯度・経度     : 無効（0 または 未設定）")
-
-            # 高度
-            if altitude_raw not in (None, ""):
-                print(f"  高度           : {altitude_raw} {altitude_units}")
-            else:
-                print("  高度           : 不明")
-
-            print(f"  使用衛星数     : {num_sats}")
-            print("-" * 40)
-
-            # 簡易警告
-            warnings = []
-
-            # 衛星数
-            try:
-                num_sats_int = int(num_sats)
-                if num_sats_int < 4:
-                    warnings.append("衛星数が 4 未満のため、3D測位が不安定な可能性があります。")
-            except (TypeError, ValueError):
-                if num_sats not in ("", None):
-                    warnings.append(f"衛星数が数値として解釈できません: {num_sats}")
-
-            # HDOP
-            if hdop_value is not None:
-                if hdop_value > 5.0:
-                    warnings.append("HDOP が大きく、位置精度が悪い可能性があります。")
-                elif hdop_value > 2.5:
-                    warnings.append("HDOP がやや大きめです（中程度の精度）。")
-
-            # 高度のざっくりチェック
-            try:
-                if altitude_raw not in (None, ""):
-                    alt_val = float(altitude_raw)
-                    if alt_val < -100 or alt_val > 10000:
-                        warnings.append("高度が異常値の可能性があります（-100〜10000mの範囲外）。")
-            except ValueError:
-                warnings.append(f"高度が数値として解釈できません: {altitude_raw}")
-
-            # 緯度経度が無効
-            if not lat_valid or not lon_valid:
-                warnings.append("緯度または経度が 0 もしくは未設定です。まだ Fix が完了していない可能性があります。")
-
-            if warnings:
-                print("⚠️ 注意 / コメント")
-                for w in warnings:
-                    print(f"   - {w}")
-                print("-" * 40)
-
-            print(f"({UPDATE_INTERVAL_SECONDS}秒ごとに更新。 Ctrl+Cで終了)")
-            print("=" * 40)
-
             last_print_time = current_time
 
+            if not first_fix_printed:
+                clear_screen()
+                first_fix_printed = True
+
+            print("=" * 40)
+            print("✅ Stable GPS Fix Acquired")
+            print(f"  Timestamp       : {fix.get('timestamp', '')}")
+            print(f"  Latitude        : {fix['lat']:.6f}")
+            print(f"  Longitude       : {fix['lng']:.6f}")
+            print(f"  Altitude (GGA)  : {fix['altitude']} m")
+            print(f"  Fix Quality     : {fix.get('gps_qual')}")
+            print(f"  Satellites      : {fix.get('num_sats')}")
+            hdop = fix.get("hdop")
+            if hdop is not None:
+                try:
+                    print(f"  HDOP            : {float(hdop):.2f}")
+                except Exception:
+                    print(f"  HDOP            : {hdop}")
+            print("-" * 40)
+            print(f"Raw: {fix.get('raw', '')}")
+            print(f"({UPDATE_INTERVAL_SECONDS}秒ごとに更新。 Ctrl+Cで終了)")
+            print("=" * 40)
     except KeyboardInterrupt:
         print("\nプログラムを終了します。")
     finally:
-        if ser.is_open:
-            ser.close()
+        if gps_reader.ser and gps_reader.ser.is_open:
+            gps_reader.ser.close()
 
 
 if __name__ == "__main__":

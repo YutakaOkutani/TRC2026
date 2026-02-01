@@ -2,6 +2,7 @@ import csv
 import datetime
 import math
 import os
+import pynmea2
 import time
 import traceback
 
@@ -9,23 +10,197 @@ import serial
 
 from library import bno055
 from library import bmp180
-from library.micropyGPS import MicropyGPS
 
-SERIAL_PORT = "/dev/serial0"
-BAUD_RATE = 115200  # 9600, 38400
+# --- GPS settings (identical to main.py) ---
+GPS_SERIAL_PORT = "/dev/serial0"
+GPS_BAUDRATE = 115200  # 9600, 38400
 GPS_SERIAL_TIMEOUT = 1.0
-GPS_TIMEZONE = 9
-GPS_COORD_FORMAT = "dd"
 GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
 GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
-LOG_DIRECTORY = "testlog/landing_impact/"
+GPS_MIN_FIX_QUAL = 1              # 1: GPS fix, 2: DGPS, 4/5: RTK
+GPS_MIN_SATELLITES = 4
+GPS_MAX_HDOP = 5.0
+GPS_MAX_SPEED_MPS = 50.0          # reject if jump implies speed over this (m/s)
+GPS_STABLE_FIX_COUNT = 3          # consecutive good fixes required
+GPS_FIX_LOSS_TIMEOUT = 8.0        # seconds until detect flag drops when no valid fix
+
+# --- Logging settings (mirrors main.py) ---
+LOG_DIR = "testlog/landing_impact"
+LOG_PREFIX = "robust_log_"
+DATA_SAMPLING_RATE = 0.06
+
+
+def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
+    """Great-circle distance (m) and azimuth (deg) identical to main.py."""
+    R = 6378137.0
+    rad_lat1 = math.radians(lat1)
+    rad_lng1 = math.radians(lng1)
+    rad_lat2 = math.radians(lat2)
+    rad_lng2 = math.radians(lng2)
+    d_lng = rad_lng2 - rad_lng1
+    sin_lat1 = math.sin(rad_lat1)
+    cos_lat1 = math.cos(rad_lat1)
+    sin_lat2 = math.sin(rad_lat2)
+    cos_lat2 = math.cos(rad_lat2)
+    cos_d_lng = math.cos(d_lng)
+    val = sin_lat1 * sin_lat2 + cos_lat1 * cos_lat2 * cos_d_lng
+    val = max(-1.0, min(1.0, val))
+    central_angle = math.acos(val)
+    dist = R * central_angle
+    y = math.sin(d_lng) * cos_lat2
+    x = cos_lat1 * sin_lat2 - sin_lat1 * cos_lat2 * cos_d_lng
+    azi = math.degrees(math.atan2(y, x))
+    if azi < 0:
+        azi += 360.0
+    return dist, azi
+
+
+def current_milli_time():
+    return round(time.time() * 1000)
+
+
+class RobustGPSReader:
+    """GPS reader that mirrors main.py's parsing, gating, and stability checks."""
+
+    def __init__(self):
+        self.ser = None
+        self.last_buffer_clear = time.time()
+        self.last_fix_time = 0.0
+        self.last_valid_fix_time = 0.0
+        self.last_valid_latlng = None
+        self.stable_count = 0
+
+    def open_serial(self):
+        try:
+            ser = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
+            try:
+                ser.reset_input_buffer()
+            except Exception:
+                pass
+            print("GPS serial ready.")
+            return ser
+        except Exception as exc:
+            print(f"Could not open GPS serial port {GPS_SERIAL_PORT}: {exc}")
+            return None
+
+    def ensure_serial(self):
+        if self.ser is None or not self.ser.is_open:
+            self.ser = self.open_serial()
+
+    def read_fix(self):
+        """Return a stable fix dict or None using the same logic as main.py."""
+        self.ensure_serial()
+        if self.ser is None:
+            time.sleep(1)
+            return None
+
+        now = time.time()
+        if self.last_valid_fix_time > 0 and now - self.last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
+            self.stable_count = 0
+
+        if (
+            self.ser.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
+            and now - self.last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL
+        ):
+            try:
+                self.ser.reset_input_buffer()
+                print("GPS buffer cleared to drop stale data.")
+            except Exception:
+                pass
+            self.last_buffer_clear = now
+            self.stable_count = 0
+
+        try:
+            line_bytes = self.ser.readline()
+        except Exception as exc:
+            print(f"[GPS] Failed to read line: {exc}")
+            try:
+                if self.ser is not None:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+            time.sleep(1)
+            return None
+
+        if not line_bytes:
+            return None
+
+        line = line_bytes.decode("utf-8", errors="ignore").strip()
+        if not (line.startswith("$GPGGA") or line.startswith("$GNGGA")):
+            return None
+
+        try:
+            msg = pynmea2.parse(line, check=True)
+        except Exception:
+            return None
+
+        if getattr(msg, "sentence_type", "") != "GGA":
+            return None
+
+        lat_val = getattr(msg, "latitude", None)
+        lng_val = getattr(msg, "longitude", None)
+        if lat_val is None or lng_val is None:
+            return None
+
+        lat = float(lat_val)
+        lng = float(lng_val)
+
+        gps_qual = getattr(msg, "gps_qual", None)
+        num_sats = getattr(msg, "num_sats", None)
+        hdop = getattr(msg, "horizontal_dil", None)
+
+        try:
+            qual_ok = gps_qual is not None and int(gps_qual) >= GPS_MIN_FIX_QUAL
+        except (TypeError, ValueError):
+            qual_ok = False
+        try:
+            sats_ok = num_sats is not None and int(num_sats) >= GPS_MIN_SATELLITES
+        except (TypeError, ValueError):
+            sats_ok = False
+        try:
+            hdop_ok = hdop is not None and float(hdop) <= GPS_MAX_HDOP
+        except (TypeError, ValueError):
+            hdop_ok = True
+
+        if not (qual_ok and sats_ok and hdop_ok and (lat != 0.0 or lng != 0.0)):
+            self.stable_count = 0
+            return None
+
+        speed_ok = True
+        if self.last_valid_latlng is not None:
+            dist, _ = calc_distance_and_azimuth(
+                self.last_valid_latlng[0], self.last_valid_latlng[1], lat, lng
+            )
+            dt = now - self.last_fix_time if self.last_fix_time > 0 else 0
+            if dt > 0:
+                speed = dist / dt
+                if speed > GPS_MAX_SPEED_MPS:
+                    speed_ok = False
+
+        if not speed_ok:
+            self.stable_count = 0
+            return None
+
+        self.stable_count += 1
+        self.last_fix_time = now
+
+        if self.stable_count >= GPS_STABLE_FIX_COUNT:
+            self.last_valid_fix_time = now
+            self.last_valid_latlng = (lat, lng)
+            return {
+                "lat": lat,
+                "lng": lng,
+            }
+
+        return None
 
 
 def setup_sensors():
     """Initialize sensors and GPS serial connection."""
     bno = None
     bmp = None
-    gps_serial = None
+    gps_reader = RobustGPSReader()
 
     print("Initializing BNO055...")
     try:
@@ -42,261 +217,163 @@ def setup_sensors():
 
     print("Initializing BMP180...")
     try:
-        bmp = bmp180.BMP180()
+        bmp = bmp180.BMP180(oss=3)
         if not bmp.setUp():
             print("BMP180 setup returned False; disabling sensor.")
             bmp = None
         else:
-            temp = bmp.getTemperature()
-            print(f"BMP180 ready. Current temperature: {temp:.2f} C")
+            print("BMP180 ready.")
     except Exception:
         print("Failed to initialize BMP180.")
         traceback.print_exc()
         bmp = None
 
     print("Opening GPS serial port...")
+    gps_reader.ensure_serial()
+
+    return bno, bmp, gps_reader
+
+
+def get_bno_data(bno_instance):
+    """Return the same BNO055 payload as main.py (acc/gyro/mag/fall/angle)."""
+    if bno_instance is None:
+        return None
     try:
-        gps_serial = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=GPS_SERIAL_TIMEOUT)
-        gps_serial.reset_input_buffer()
-        print("GPS serial ready.")
-    except Exception as exc:
-        print(f"Could not open GPS serial port {SERIAL_PORT}: {exc}")
-        gps_serial = None
-
-    return bno, bmp, gps_serial
-
-
-def get_inertial_data(bno):
-    """Read accelerometer, gyro, and magnetometer data."""
-    data = {
-        "acc_x": 0.0,
-        "acc_y": 0.0,
-        "acc_z": 0.0,
-        "acc_combined": 0.0,
-        "gyro_x": 0.0,
-        "gyro_y": 0.0,
-        "gyro_z": 0.0,
-        "mag_x": 0.0,
-        "mag_y": 0.0,
-        "mag_z": 0.0,
-    }
-
-    if not bno:
-        return data
-
-    try:
-        acc = bno.getAcc()
-        data.update(
-            {
-                "acc_x": acc[0],
-                "acc_y": acc[1],
-                "acc_z": acc[2],
-                "acc_combined": math.sqrt(acc[0] ** 2 + acc[1] ** 2 + acc[2] ** 2),
-            }
-        )
+        acc = bno_instance.getAcc() or [0, 0, 0]
+        gyro = bno_instance.getGyro() or [0, 0, 0]
+        mag = bno_instance.getMag() or [0, 0, 0]
+        fall = math.sqrt(acc[0] ** 2 + acc[1] ** 2 + acc[2] ** 2)
+        euler = bno_instance.getEuler()
+        angle = euler[0] if euler else 0.0
+        return {"acc": acc, "gyro": gyro, "mag": mag, "fall": fall, "angle": angle}
     except Exception:
-        print("[BNO055] Failed to read acceleration.")
+        return None
 
+
+def get_bmp_data(bmp_instance):
+    """Return altitude and pressure identical to main.py."""
+    if bmp_instance is None:
+        return None
     try:
-        gyro = bno.getGyro()
-        data.update({"gyro_x": gyro[0], "gyro_y": gyro[1], "gyro_z": gyro[2]})
+        return {"alt": bmp_instance.getAltitude(), "pres": bmp_instance.getPressure()}
     except Exception:
-        print("[BNO055] Failed to read gyro.")
-
-    try:
-        mag = bno.getMag()
-        data.update({"mag_x": mag[0], "mag_y": mag[1], "mag_z": mag[2]})
-    except Exception:
-        print("[BNO055] Failed to read magnetometer.")
-
-    return data
+        return None
 
 
-def get_environment_data(bmp):
-    """Read temperature, pressure, and altitude from BMP180."""
-    data = {"temp": 0.0, "pressure": 0.0, "altitude_bmp": 0.0}
-
-    if not bmp:
-        return data
-
-    try:
-        data.update(
-            {
-                "temp": bmp.getTemperature(),
-                "pressure": bmp.getPressure(),
-                "altitude_bmp": bmp.getAltitude(),
-            }
-        )
-    except Exception:
-        print("[BMP180] Failed to read data.")
-
-    return data
-
-
-def read_gps_data(gps_serial, gps_parser, last_buffer_clear):
-    """Read GPS data using the same MicropyGPS flow as main.py."""
-    if not gps_serial or gps_parser is None:
-        return None, last_buffer_clear, gps_parser
-
-    now = time.time()
-    if (
-        gps_serial.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
-        and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL
-    ):
-        try:
-            gps_serial.reset_input_buffer()
-            gps_parser = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
-            print("GPS buffer cleared to drop stale data.")
-        except Exception:
-            pass
-        last_buffer_clear = now
-
-    try:
-        line = gps_serial.readline().decode("utf-8", errors="ignore")
-    except Exception:
-        print("[GPS] Failed to read line.")
-        return None, last_buffer_clear, gps_parser
-
-    if len(line) > 0 and line[0] == "$":
-        for ch in line:
-            gps_parser.update(ch)
-
-    lat = gps_parser.latitude[0]
-    lng = gps_parser.longitude[0]
-    if lat == 0.0:
-        return None, last_buffer_clear, gps_parser
-
-    altitude = getattr(gps_parser, "altitude", 0.0) or 0.0
-    num_sats = getattr(gps_parser, "satellites_in_use", 0)
-    ts = gps_parser.timestamp
-    try:
-        timestamp = f"{int(ts[0]):02d}:{int(ts[1]):02d}:{int(ts[2]):02d}"
-    except Exception:
-        timestamp = "00:00:00"
-
-    return {
-        "latitude": lat,
-        "longitude": lng,
-        "altitude_gps": altitude,
-        "num_sats": num_sats,
-        "gps_timestamp": timestamp,
-    }, last_buffer_clear, gps_parser
-
-
-def ensure_log_file(file_path, header):
-    os.makedirs(LOG_DIRECTORY, exist_ok=True)
-    with open(file_path, "w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(header)
+def init_log_file(log_path):
+    """Write the identical CSV header main.py uses."""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    with open(log_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "MilliTime", "Phase",
+            "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
+            "LAT", "LNG", "ALT", "Pres",
+            "Distance", "Azimuth", "Angle", "Direction", "Fall",
+            "ConeDir", "ConeProb", "ObstacleDist"
+        ])
 
 
 def main():
-    bno, bmp, gps_serial = setup_sensors()
-    gps_parser = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
-    last_buffer_clear = time.time()
+    bno, bmp, gps_reader = setup_sensors()
 
-    if not any([bno, bmp, gps_serial]):
+    if not any([bno, bmp, gps_reader and gps_reader.ser]):
         print("All sensors failed to initialize; exiting.")
         return
 
     now_time = datetime.datetime.now()
-    file_name = os.path.join(
-        LOG_DIRECTORY, f"landing_impact_{now_time.strftime('%Y%m%d_%H%M%S')}.csv"
-    )
-
-    header = [
-        "Time[s]",
-        "Acc_X[m/s^2]",
-        "Acc_Y[m/s^2]",
-        "Acc_Z[m/s^2]",
-        "Acc_Combined[m/s^2]",
-        "Gyro_X[dps]",
-        "Gyro_Y[dps]",
-        "Gyro_Z[dps]",
-        "Mag_X[uT]",
-        "Mag_Y[uT]",
-        "Mag_Z[uT]",
-        "Temp[C]",
-        "Pressure[hPa]",
-        "Altitude_BMP[m]",
-        "Latitude",
-        "Longitude",
-        "Altitude_GPS[m]",
-        "Num_Satellites",
-        "GPS_Timestamp",
-    ]
-
+    log_path = os.path.join(LOG_DIR, LOG_PREFIX + now_time.strftime("%Y-%m%d-%H%M%S") + ".csv")
     try:
-        ensure_log_file(file_name, header)
+        init_log_file(log_path)
     except IOError as exc:
         print(f"Failed to create log file: {exc}")
         return
 
-    start_time = time.time()
-    last_gps_data = {}
-    loop_count = 0
-
+    last_lat = 0.0
+    last_lng = 0.0
     try:
-        with open(file_name, "a", newline="") as file:
-            writer = csv.writer(file)
-
+        with open(log_path, "a", newline="") as f:
+            writer = csv.writer(f)
             while True:
-                loop_count += 1
-                elapsed_time = time.time() - start_time
+                current_data = {
+                    "phase": 0,
+                    "acc": [0.0, 0.0, 0.0],
+                    "gyro": [0.0, 0.0, 0.0],
+                    "mag": [0.0, 0.0, 0.0],
+                    "lat": last_lat,
+                    "lng": last_lng,
+                    "alt": 0.0,
+                    "pres": 0.0,
+                    "distance": 0.0,
+                    "azimuth": 0.0,
+                    "angle": 0.0,
+                    "direction": 0.0,
+                    "fall": 0.0,
+                    "cone_direction": 0.0,
+                    "cone_probability": 0.0,
+                    "obstacle_dist": 0.0,
+                }
 
-                inertial = get_inertial_data(bno)
-                environment = get_environment_data(bmp)
-                gps_data, last_buffer_clear, gps_parser = read_gps_data(
-                    gps_serial, gps_parser, last_buffer_clear
-                )
+                bno_data = get_bno_data(bno)
+                bmp_data = get_bmp_data(bmp)
+                gps_data = gps_reader.read_fix() if gps_reader else None
 
+                if bno_data:
+                    current_data.update({
+                        "acc": bno_data["acc"],
+                        "gyro": bno_data["gyro"],
+                        "mag": bno_data["mag"],
+                        "fall": bno_data["fall"],
+                        "angle": bno_data["angle"],
+                    })
+                if bmp_data:
+                    current_data.update({
+                        "alt": bmp_data["alt"],
+                        "pres": bmp_data["pres"],
+                    })
                 if gps_data:
-                    last_gps_data = gps_data
+                    last_lat = gps_data["lat"]
+                    last_lng = gps_data["lng"]
+                    current_data["lat"] = last_lat
+                    current_data["lng"] = last_lng
 
-                merged = {**inertial, **environment, **last_gps_data}
-
-                row_data = [
-                    f"{elapsed_time:.3f}",
-                    f"{merged.get('acc_x', 0.0):.4f}",
-                    f"{merged.get('acc_y', 0.0):.4f}",
-                    f"{merged.get('acc_z', 0.0):.4f}",
-                    f"{merged.get('acc_combined', 0.0):.4f}",
-                    f"{merged.get('gyro_x', 0.0):.4f}",
-                    f"{merged.get('gyro_y', 0.0):.4f}",
-                    f"{merged.get('gyro_z', 0.0):.4f}",
-                    f"{merged.get('mag_x', 0.0):.4f}",
-                    f"{merged.get('mag_y', 0.0):.4f}",
-                    f"{merged.get('mag_z', 0.0):.4f}",
-                    f"{merged.get('temp', 0.0):.2f}",
-                    f"{merged.get('pressure', 0.0):.2f}",
-                    f"{merged.get('altitude_bmp', 0.0):.2f}",
-                    f"{merged.get('latitude', 0.0):.6f}",
-                    f"{merged.get('longitude', 0.0):.6f}",
-                    f"{merged.get('altitude_gps', 0.0)}",
-                    merged.get("num_sats", 0),
-                    merged.get("gps_timestamp", "00:00:00"),
-                ]
-
-                writer.writerow(row_data)
-                file.flush()
-
-                print(
-                    f"--- Loop {loop_count} | Elapsed: {elapsed_time:.2f}s | "
-                    f"Acc: {merged.get('acc_combined', 0.0):.3f} m/s^2 | "
-                    f"Temp: {merged.get('temp', 0.0):.2f} C | "
-                    f"GPS sats: {merged.get('num_sats', 0)}"
-                )
+                writer.writerow([
+                    current_milli_time(),
+                    current_data["phase"],
+                    f"{current_data['acc'][0]:.2f}",
+                    f"{current_data['acc'][1]:.2f}",
+                    f"{current_data['acc'][2]:.2f}",
+                    f"{current_data['gyro'][0]:.2f}",
+                    f"{current_data['gyro'][1]:.2f}",
+                    f"{current_data['gyro'][2]:.2f}",
+                    f"{current_data['mag'][0]:.2f}",
+                    f"{current_data['mag'][1]:.2f}",
+                    f"{current_data['mag'][2]:.2f}",
+                    f"{current_data['lat']:.6f}",
+                    f"{current_data['lng']:.6f}",
+                    f"{current_data['alt']:.2f}",
+                    f"{current_data['pres']:.2f}",
+                    f"{current_data['distance']:.2f}",
+                    f"{current_data['azimuth']:.2f}",
+                    f"{current_data['angle']:.2f}",
+                    f"{current_data['direction']:.2f}",
+                    f"{current_data['fall']:.2f}",
+                    f"{current_data['cone_direction']:.2f}",
+                    f"{current_data['cone_probability']:.2f}",
+                    f"{current_data['obstacle_dist']:.2f}",
+                ])
+                f.flush()
+                time.sleep(DATA_SAMPLING_RATE)
     except KeyboardInterrupt:
         print("\nMeasurement stopped by user.")
     except Exception:
         print("Unexpected error during logging.")
         traceback.print_exc()
     finally:
-        if gps_serial and gps_serial.is_open:
-            gps_serial.close()
+        if gps_reader and gps_reader.ser and gps_reader.ser.is_open:
+            gps_reader.ser.close()
             print("Closed GPS serial port.")
-
-        print(f"Log saved to {file_name}")
+        print(f"Log saved to {log_path}")
 
 
 if __name__ == "__main__":

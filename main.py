@@ -2,6 +2,7 @@ import csv
 import datetime
 import math
 import os
+import pynmea2
 import sys
 import threading
 import time
@@ -14,7 +15,6 @@ from picamera2 import Picamera2
 
 from library import bmp180, bno055
 from library import detect_corn as dc
-from library.micropyGPS import MicropyGPS
 
 # --- User Settings (tune here for debugging/operation) ---
 # --- Logging ---
@@ -91,14 +91,18 @@ SONAR_MAX_DISTANCE = 4.0
 GPS_SERIAL_PORT = "/dev/serial0"
 GPS_BAUDRATE = 115200 # 9600, 38400
 GPS_SERIAL_TIMEOUT = 1
-GPS_TIMEZONE = 9 # Japan Standard Time
-GPS_COORD_FORMAT = "dd" # Decimal Degrees
 GPS_HEADING_OFFSET = 5.43 # 種子島の磁気偏角（西偏）# Adjust if necessary
 GPS_TURN_GAIN = 0.5
 GPS_TURN_CLAMP = 30.0
 GPS_CLOSE_DISTANCE = 5.0
 GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
 GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
+GPS_MIN_FIX_QUAL = 1              # 1: GPS fix, 2: DGPS, 4/5: RTK
+GPS_MIN_SATELLITES = 4
+GPS_MAX_HDOP = 5.0
+GPS_MAX_SPEED_MPS = 50.0          # reject if jump implies speed over this (m/s)
+GPS_STABLE_FIX_COUNT = 3          # consecutive good fixes required
+GPS_FIX_LOSS_TIMEOUT = 8.0        # seconds until detect flag drops when no valid fix
 # --- Other Constants ---
 BNO_SETUP_RETRY_COUNT = 3
 BNO_SETUP_RETRY_INTERVAL = 0.5
@@ -594,44 +598,119 @@ class CanSatController:
 
     # --- Thread loops ---
     def gps_thread(self):
-        s = None
-        try:
-            s = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
+        def open_serial():
             try:
-                s.reset_input_buffer()
-            except Exception:
-                pass
-        except Exception:
-            print("GPS Serial Open Failed. GPS is DEAD.")
-        gps = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
+                ser = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
+                try:
+                    ser.reset_input_buffer()
+                except Exception:
+                    pass
+                print("GPS serial opened.")
+                return ser
+            except Exception as e:
+                print(f"GPS Serial Open Failed: {e}")
+                return None
+
+        s = open_serial()
         last_buffer_clear = time.time()
+        last_fix_time = 0.0
+        last_valid_fix_time = 0.0
+        last_valid_latlng = None
+        stable_count = 0
         while True:
-            if s is None:
-                time.sleep(1)
-                continue
             try:
+                if s is None or not s.is_open:
+                    s = open_serial()
+                    time.sleep(1)
+                    continue
                 now = time.time()
+                if last_valid_fix_time > 0 and now - last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
+                    self.state.update_gps(gps_detect=0)
                 if (
                     s.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
                     and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL
                 ):
                     try:
                         s.reset_input_buffer()
-                        gps = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
                         print("GPS buffer cleared to drop stale data.")
                     except Exception:
                         pass
                     last_buffer_clear = now
-                line = s.readline().decode("utf-8", errors="ignore")
-                if len(line) > 0 and line[0] == "$":
-                    for x in line:
-                        gps.update(x)
-                    lat = gps.latitude[0]
-                    lng = gps.longitude[0]
-                    is_detect = 1 if lat != 0.0 else 0
-                    self.state.update_gps(lat=lat, lng=lng, gps_detect=is_detect)
+                line_bytes = s.readline()
+                if not line_bytes:
+                    continue
+                line = line_bytes.decode("utf-8", errors="ignore").strip()
+                # Lightweight filter: only keep GGA sentences (contain fix/quality/hdop we need)
+                if not (line.startswith("$GPGGA") or line.startswith("$GNGGA")):
+                    continue
+                try:
+                    msg = pynmea2.parse(line, check=True)
+                except Exception:
+                    continue
+                if getattr(msg, "sentence_type", "") != "GGA":
+                    continue
+
+                lat_val = getattr(msg, "latitude", None)
+                lng_val = getattr(msg, "longitude", None)
+                if lat_val is None or lng_val is None:
+                    continue
+                lat = float(lat_val)
+                lng = float(lng_val)
+
+                # Fix gate: quality / satellites / HDOP
+                gps_qual = getattr(msg, "gps_qual", None)
+                num_sats = getattr(msg, "num_sats", None)
+                hdop = getattr(msg, "horizontal_dil", None)
+                try:
+                    qual_ok = gps_qual is not None and int(gps_qual) >= GPS_MIN_FIX_QUAL
+                except (TypeError, ValueError):
+                    qual_ok = False
+                try:
+                    sats_ok = num_sats is not None and int(num_sats) >= GPS_MIN_SATELLITES
+                except (TypeError, ValueError):
+                    sats_ok = False
+                try:
+                    hdop_ok = hdop is not None and float(hdop) <= GPS_MAX_HDOP
+                except (TypeError, ValueError):
+                    hdop_ok = True  # allow if missing
+
+                if not (qual_ok and sats_ok and hdop_ok and (lat != 0.0 or lng != 0.0)):
+                    stable_count = 0
+                    continue
+
+                # Outlier/speed gate
+                speed_ok = True
+                if last_valid_latlng is not None:
+                    dist, _ = calc_distance_and_azimuth(
+                        last_valid_latlng[0], last_valid_latlng[1], lat, lng
+                    )
+                    dt = now - last_fix_time if last_fix_time > 0 else 0
+                    if dt > 0:
+                        speed = dist / dt
+                        if speed > GPS_MAX_SPEED_MPS:
+                            speed_ok = False
+                if not speed_ok:
+                    stable_count = 0
+                    continue
+
+                # Stability counter
+                stable_count += 1
+                last_fix_time = now
+                if stable_count >= GPS_STABLE_FIX_COUNT:
+                    self.state.update_gps(lat=lat, lng=lng, gps_detect=1)
+                    last_valid_fix_time = now
+                    last_valid_latlng = (lat, lng)
+                else:
+                    self.state.update_gps(gps_detect=0)
             except Exception:
-                pass
+                try:
+                    if s is not None:
+                        s.close()
+                except Exception:
+                    pass
+                s = None
+                print("GPS serial error; attempting reconnect.")
+                time.sleep(1)
 
     def camera_thread(self):
         while True:
