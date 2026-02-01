@@ -1,8 +1,8 @@
 import math
 import os
+import pynmea2
 import time
 
-import pynmea2
 import serial
 
 # --- GPS settings (identical to main.py) ---
