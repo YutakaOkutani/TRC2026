@@ -392,13 +392,13 @@ git pull --rebase origin main
 
 ---
 
-### VPNサービスを使って、ラズパイのIPアドレスを固定化する方法（"Tailscale"を使う方法）
+### VPNサービスを使って、ラズパイのIPアドレスを固定化する方法（Tailscaleを使う方法）
 
 #### 0. そもそも
 
 前述のとおり、WindowsPCやAndroid端末は、mDNSが不安定なので、ラズパイとのSSH接続にはIPアドレスが必要
 
-##### 仮想VPNサービス（ここでは"Tailscale"）を使えば
+##### 仮想VPNサービス（ここではTailscale）を使えば
 
 Tailscaleに登録された各デバイスは：
 
@@ -435,7 +435,7 @@ PC: Windows（Macならそもそもこの問題は起きないので設定不要
 * Windows版をDL
 * インストール
 * ログイン
-* "Tailscale" はタスクトレイ常駐アプリとしてふるまう。
+* Tailscale はタスクトレイ常駐アプリとしてふるまう。
 
 ##### 3. スマホ にも入れる
 
