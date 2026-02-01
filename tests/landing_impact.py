@@ -9,11 +9,16 @@ import serial
 
 from library import bno055
 from library import bmp180
+from library.micropyGPS import MicropyGPS
 
 SERIAL_PORT = "/dev/serial0"
-BAUD_RATE = 115200 # 9600, 38400
+BAUD_RATE = 115200  # 9600, 38400
+GPS_SERIAL_TIMEOUT = 1.0
+GPS_TIMEZONE = 9
+GPS_COORD_FORMAT = "dd"
+GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
+GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
 LOG_DIRECTORY = "testlog/landing_impact/"
-GPS_READ_TIMEOUT = 0.5
 
 
 def setup_sensors():
@@ -51,7 +56,8 @@ def setup_sensors():
 
     print("Opening GPS serial port...")
     try:
-        gps_serial = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1.0)
+        gps_serial = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=GPS_SERIAL_TIMEOUT)
+        gps_serial.reset_input_buffer()
         print("GPS serial ready.")
     except Exception as exc:
         print(f"Could not open GPS serial port {SERIAL_PORT}: {exc}")
@@ -127,101 +133,54 @@ def get_environment_data(bmp):
     return data
 
 
-def _parse_lat_lon(coord, direction, is_latitude):
-    """Convert NMEA lat/lon strings to decimal degrees."""
-    if not coord or not direction:
-        return None
+def read_gps_data(gps_serial, gps_parser, last_buffer_clear):
+    """Read GPS data using the same MicropyGPS flow as main.py."""
+    if not gps_serial or gps_parser is None:
+        return None, last_buffer_clear, gps_parser
 
-    try:
-        deg_len = 2 if is_latitude else 3
-        degrees = int(coord[:deg_len])
-        minutes = float(coord[deg_len:])
-        decimal = degrees + minutes / 60.0
-        if direction in ("S", "W"):
-            decimal *= -1
-        return decimal
-    except ValueError:
-        return None
-
-
-def parse_gga_line(line):
-    """Parse a GGA sentence and return a dict when valid."""
-    line = line.strip()
-    if not line.startswith(("$GPGGA", "$GNGGA")):
-        return None
-
-    try:
-        fields = line.split("*", 1)[0].split(",")
-    except Exception:
-        return None
-
-    if len(fields) < 10:
-        return None
-
-    try:
-        gps_qual = int(fields[6] or 0)
-    except ValueError:
-        gps_qual = 0
-
-    if gps_qual <= 0:
-        return None
-
-    latitude = _parse_lat_lon(fields[2], fields[3], is_latitude=True)
-    longitude = _parse_lat_lon(fields[4], fields[5], is_latitude=False)
-
-    if latitude is None or longitude is None:
-        return None
-
-    timestamp = "00:00:00"
-    if fields[1]:
+    now = time.time()
+    if (
+        gps_serial.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
+        and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL
+    ):
         try:
-            hours = int(fields[1][0:2])
-            minutes = int(fields[1][2:4])
-            seconds = int(float(fields[1][4:]))
-            timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            gps_serial.reset_input_buffer()
+            gps_parser = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
+            print("GPS buffer cleared to drop stale data.")
         except Exception:
-            timestamp = "00:00:00"
+            pass
+        last_buffer_clear = now
 
     try:
-        altitude = float(fields[9]) if fields[9] else 0.0
-    except ValueError:
-        altitude = 0.0
+        line = gps_serial.readline().decode("utf-8", errors="ignore")
+    except Exception:
+        print("[GPS] Failed to read line.")
+        return None, last_buffer_clear, gps_parser
 
+    if len(line) > 0 and line[0] == "$":
+        for ch in line:
+            gps_parser.update(ch)
+
+    lat = gps_parser.latitude[0]
+    lng = gps_parser.longitude[0]
+    if lat == 0.0:
+        return None, last_buffer_clear, gps_parser
+
+    altitude = getattr(gps_parser, "altitude", 0.0) or 0.0
+    num_sats = getattr(gps_parser, "satellites_in_use", 0)
+    ts = gps_parser.timestamp
     try:
-        num_sats = int(fields[7]) if fields[7] else 0
-    except ValueError:
-        num_sats = 0
+        timestamp = f"{int(ts[0]):02d}:{int(ts[1]):02d}:{int(ts[2]):02d}"
+    except Exception:
+        timestamp = "00:00:00"
 
     return {
-        "latitude": latitude,
-        "longitude": longitude,
+        "latitude": lat,
+        "longitude": lng,
         "altitude_gps": altitude,
         "num_sats": num_sats,
         "gps_timestamp": timestamp,
-    }
-
-
-def read_gps_fix(gps_serial, timeout=GPS_READ_TIMEOUT):
-    """Read GPS data for up to `timeout` seconds and return the first valid fix."""
-    if not gps_serial:
-        return None
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            line = gps_serial.readline().decode("utf-8", errors="ignore")
-        except Exception:
-            print("[GPS] Failed to read line.")
-            return None
-
-        if not line.startswith(("$GPGGA", "$GNGGA")):
-            continue
-
-        gps_data = parse_gga_line(line)
-        if gps_data:
-            return gps_data
-
-    return None
+    }, last_buffer_clear, gps_parser
 
 
 def ensure_log_file(file_path, header):
@@ -233,6 +192,9 @@ def ensure_log_file(file_path, header):
 
 def main():
     bno, bmp, gps_serial = setup_sensors()
+    gps_parser = MicropyGPS(GPS_TIMEZONE, GPS_COORD_FORMAT)
+    last_buffer_clear = time.time()
+
     if not any([bno, bmp, gps_serial]):
         print("All sensors failed to initialize; exiting.")
         return
@@ -284,7 +246,9 @@ def main():
 
                 inertial = get_inertial_data(bno)
                 environment = get_environment_data(bmp)
-                gps_data = read_gps_fix(gps_serial)
+                gps_data, last_buffer_clear, gps_parser = read_gps_data(
+                    gps_serial, gps_parser, last_buffer_clear
+                )
 
                 if gps_data:
                     last_gps_data = gps_data
