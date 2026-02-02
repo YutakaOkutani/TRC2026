@@ -29,7 +29,7 @@
 * センサー用ライブラリ：bno055.py, bmp180.py
 * カメラフェーズ用：detect_corn.py
 * ゴール画像撮影用：capture_roi_image.py
-* テストコード：gps_test.py, gps_test_new.py, landing_impact.py, led.py, motor_test.py, open_parachute.py（landing_impact.py と open_parachute.py の中身は同じ。出力されるログファイルを区別するために分けてある）
+* テストコード：gps_test.py, landing_impact.py, led.py, motor_test.py, open_parachute.py（landing_impact.py と open_parachute.py の中身は同じ。出力されるログファイルを区別するために分けてある）
 
 ## 1. 環境構築の準備
 
@@ -145,7 +145,7 @@ sudo apt install -y git screen tmux i2c-tools
 # GPIO / シリアル / I2C
 sudo apt install -y python3-gpiozero python3-rpi-lgpio liblgpio1 python3-serial python3-smbus
 
-# pipで追加インストールするためのツール
+# pipでライブラリを追加インストールするためのツール
 sudo apt install -y python3-pip python3-setuptools
 
 # カメラ / 画像処理（Picamera2 + OpenCV + NumPy）
@@ -168,7 +168,7 @@ sudo apt install -y libgl1
 
 ```bash
 # 仮想環境の作成（システムパッケージを引き継ぐ --system-site-packages が重要）
-# これにより、aptで入れた OpenCV や Picamera2 を仮想環境内でも使用可能になる
+# これにより、aptで入れた OpenCV や Picamera2 などがそのまま仮想環境内でも使用可能になる
 python3 -m venv --system-site-packages venv
 
 # 仮想環境の有効化
