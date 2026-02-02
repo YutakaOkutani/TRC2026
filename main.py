@@ -57,6 +57,11 @@ CONE_CENTER_POSITION = 0.5
 # --- Camera Settings ---
 CAMERA_ACTIVE_SLEEP = 0.05
 CAMERA_IDLE_SLEEP = 0.5
+CAMERA_REINIT_INTERVAL = 5.0
+CAMERA_FAIL_LIMIT = 5
+CAMERA_DEAD_TIMEOUT = 30.0
+CAMERA_PHASE4_MAX_ATTEMPTS = 3
+CAMERA_PHASE5_MAX_ATTEMPTS = 3
 # --- File Paths ---
 ROI_PATH_1 = os.path.join(LOG_DIR, "captured_roi_img.png")
 ROI_PATH_2 = os.path.join(LOG_DIR, "captured.png")
@@ -103,9 +108,26 @@ GPS_MAX_HDOP = 5.0
 GPS_MAX_SPEED_MPS = 50.0          # reject if jump implies speed over this (m/s)
 GPS_STABLE_FIX_COUNT = 3          # consecutive good fixes required
 GPS_FIX_LOSS_TIMEOUT = 8.0        # seconds until detect flag drops when no valid fix
+GPS_HEADING_MIN_DIST = 1.5        # meters; minimum movement to trust GPS heading
 # --- Other Constants ---
 BNO_SETUP_RETRY_COUNT = 3
 BNO_SETUP_RETRY_INTERVAL = 0.5
+BNO_FAIL_LIMIT = 10
+BNO_REINIT_COOLDOWN = 3.0
+BNO_ACC_MAX = 200.0
+BNO_GYRO_MAX = 2000.0
+BNO_MAG_MAX = 2000.0
+BNO_ANGLE_JUMP_MAX = 60.0
+BNO_CALIB_MAG_MIN = 2
+BNO_STALE_TIMEOUT = 2.0
+BNO_FREEZE_EPS = 0.001
+
+# --- Phase2 Calibration Motion ---
+PHASE2_STRAIGHT_TIME = 6.0
+PHASE2_FIG8_TIME = 25.0
+PHASE2_TURN_INTERVAL = 3.0
+PHASE2_SPEED = 45
+PHASE2_TURN_BIAS = 20
 
 # --- CanSat State Class ---
 class CanSatState:
@@ -117,11 +139,14 @@ class CanSatState:
         self.mag = [0.0, 0.0, 0.0]
         self.lat = 0.0
         self.lng = 0.0
+        self.gps_heading = 0.0
+        self.gps_heading_valid = False
         self.alt = 0.0
         self.pres = 0.0
         self.distance = 0.0
         self.azimuth = 0.0
         self.angle = 0.0
+        self.angle_valid = False
         self.direction = 0.0
         self.fall = 0.0
         self.cone_direction = CONE_CENTER_POSITION
@@ -132,7 +157,7 @@ class CanSatState:
         self.cone_is_reached = False
 
     # --- Update Methods ---
-    def update_imu(self, acc=None, gyro=None, mag=None, fall=None, angle=None):
+    def update_imu(self, acc=None, gyro=None, mag=None, fall=None, angle=None, angle_valid=None):
         with self.lock:
             if acc is not None:
                 self.acc = acc
@@ -144,7 +169,9 @@ class CanSatState:
                 self.fall = fall
             if angle is not None:
                 self.angle = angle
-    def update_gps(self, lat=None, lng=None, gps_detect=None):
+            if angle_valid is not None:
+                self.angle_valid = angle_valid
+    def update_gps(self, lat=None, lng=None, gps_detect=None, gps_heading=None, gps_heading_valid=None):
         with self.lock:
             if lat is not None:
                 self.lat = lat
@@ -152,6 +179,10 @@ class CanSatState:
                 self.lng = lng
             if gps_detect is not None:
                 self.gps_detect = gps_detect
+            if gps_heading is not None:
+                self.gps_heading = gps_heading
+            if gps_heading_valid is not None:
+                self.gps_heading_valid = gps_heading_valid
     def update_barometer(self, alt=None, pres=None):
         with self.lock:
             if alt is not None:
@@ -189,11 +220,14 @@ class CanSatState:
                 "mag": list(self.mag),
                 "lat": self.lat,
                 "lng": self.lng,
+                "gps_heading": self.gps_heading,
+                "gps_heading_valid": self.gps_heading_valid,
                 "alt": self.alt,
                 "pres": self.pres,
                 "distance": self.distance,
                 "azimuth": self.azimuth,
                 "angle": self.angle,
+                "angle_valid": self.angle_valid,
                 "direction": self.direction,
                 "fall": self.fall,
                 "cone_direction": self.cone_direction,
@@ -228,6 +262,28 @@ class CanSatController:
         self.time_start_searching_cone = 0
         self.time_camera_start = 0
         self.motor_state = {}
+        self.bno_fail_count = 0
+        self.bno_last_reinit_time = 0.0
+        self.bno_last_valid = {
+            "acc": [0.0, 0.0, 0.0],
+            "gyro": [0.0, 0.0, 0.0],
+            "mag": [0.0, 0.0, 0.0],
+            "angle": 0.0,
+        }
+        self.bno_last_valid_time = 0.0
+        self.bno_stale_sec = 0.0
+        self.bno_calib = {"valid": False, "value": (0, 0, 0, 0)}
+        self.phase2_start_time = None
+        self.phase2_stage = "straight"
+        self.phase2_stage_start = None
+        self.roi_img = None
+        self.camera_fail_count = 0
+        self.camera_last_reinit = 0.0
+        self.camera_dead_since = None
+        self.camera_phase4_attempts = 0
+        self.camera_phase5_attempts = 0
+        self.camera_phase4_start = None
+        self.camera_phase5_start = None
 
     # --- Main entry ---
     def run(self):
@@ -252,8 +308,8 @@ class CanSatController:
             self.handle_phase0(st)
         elif phase == 1:
             self.handle_phase1()
-        #elif phase == 2:
-        #    self.handle_phase2()
+        elif phase == 2:
+            self.handle_phase2()
         elif phase == 3:
             self.handle_phase3(st)
         elif phase == 4:
@@ -309,41 +365,54 @@ class CanSatController:
         if elapsed < TIMEOUT_PHASE_1:
             self.state.update_navigation(direction=PARACHUTE_DIRECTION, phase=1)
             return  # Phase1 を継続
-        print("PH1: Parachute Separation TIMEOUT → switching to Phase3")
-        # フェーズ遷移
-        self.state.update_navigation(phase=3)
-        self.time_phase3_start = time.time()
+        print("PH1: Parachute Separation TIMEOUT → switching to Phase2")
+        self.state.update_navigation(phase=2)
+        self.phase2_start_time = time.time()
+        self.phase2_stage = "straight"
+        self.phase2_stage_start = self.phase2_start_time
         self.time_phase1_start = None
 
     def handle_phase2(self):
         led_red = self.devices.get("led_red")
         led_green = self.devices.get("led_green")
-        bno = self.devices.get("bno")
-        print("phase2 : BNO Calibration (Spinning)")
+        print("phase2 : BNO Phase2 Calibration (Straight + Figure-8)")
         if led_red:
             led_red.off()
         if led_green:
             led_green.on()
-        calib_start_time = time.time()
-        while True:
-            self.led_blink_timer += 1
-            self.toggle_led(led_red, self.led_blink_timer, interval=LED_INTERVAL_PHASE2)
-            if time.time() - calib_start_time > TIMEOUT_PHASE_2:
-                print("Phase2 TIMEOUT: Force Phase 3 (Calibration Incomplete)")
-                break
-            if bno is not None:
-                sys_st, gyro_st, accel_st, mag_st = bno.getCalibrationStatus()
-                if self.led_blink_timer % 10 == 0:
-                    print(f"Calib Status: Sys={sys_st} Gyro={gyro_st} Acc={accel_st} Mag={mag_st}")
-                if mag_st >= CALIBRATION_MAG_THRESHOLD:
-                    print("Calibration OK! (Mag >= 2)")
-                    break
-            else:
-                print("BNO None: Skip Calibration")
-                break
-            time.sleep(0.1)
-        self.state.update_navigation(phase=3)
-        self.time_phase3_start = time.time()
+        if self.phase2_start_time is None:
+            self.phase2_start_time = time.time()
+            self.phase2_stage = "straight"
+            self.phase2_stage_start = self.phase2_start_time
+        now = time.time()
+        elapsed = now - self.phase2_start_time
+        self.led_blink_timer += 1
+        self.toggle_led(led_red, self.led_blink_timer, interval=LED_INTERVAL_PHASE2)
+
+        if self.phase2_stage == "straight" and now - self.phase2_stage_start >= PHASE2_STRAIGHT_TIME:
+            self.phase2_stage = "fig8"
+            self.phase2_stage_start = now
+
+        calib = self.bno_calib
+        calib_ok = calib["valid"] and calib["value"][3] >= BNO_CALIB_MAG_MIN
+        if self.led_blink_timer % 10 == 0 and calib["valid"]:
+            sys_st, gyro_st, accel_st, mag_st = calib["value"]
+            print(f"Calib Status: Sys={sys_st} Gyro={gyro_st} Acc={accel_st} Mag={mag_st}")
+
+        if calib_ok:
+            print("Calibration OK: Mag >= threshold")
+            self.state.update_navigation(phase=3)
+            self.time_phase3_start = now
+            return
+        if self.phase2_stage == "fig8" and now - self.phase2_stage_start >= PHASE2_FIG8_TIME:
+            print("Phase2: Figure-8 complete → Phase3")
+            self.state.update_navigation(phase=3)
+            self.time_phase3_start = now
+            return
+        if elapsed > TIMEOUT_PHASE_2:
+            print("Phase2 TIMEOUT: Force Phase 3 (Calibration Incomplete)")
+            self.state.update_navigation(phase=3)
+            self.time_phase3_start = now
 
     def handle_phase3(self, st):
         led_red = self.devices.get("led_red")
@@ -360,7 +429,12 @@ class CanSatController:
             dist, azi = calc_distance_and_azimuth(st["lat"], st["lng"], self.target_lat, self.target_lng)
             self.state.update_navigation(distance=dist, azimuth=azi, direction=azi)
             if self.led_blink_timer % 10 == 0:
-                print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, MyHead={st['angle']:.1f}")
+                if st["gps_heading_valid"]:
+                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, GPSHead={st['gps_heading']:.1f}")
+                elif st["angle_valid"]:
+                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, BNOHead={st['angle']:.1f}")
+                else:
+                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, MyHead=INVALID")
             if dist < GPS_CLOSE_DISTANCE:
                 print(f"Close enough ({dist:.1f}m): Switching to Camera")
                 self.state.update_navigation(phase=4)
@@ -382,12 +456,28 @@ class CanSatController:
         if not self.searching_flag:
             self.searching_flag = True
             self.time_start_searching_cone = time.time()
+            self.camera_phase4_attempts += 1
+            self.camera_phase4_start = self.time_start_searching_cone
         else:
             if time.time() - self.time_start_searching_cone >= TIMEOUT_PHASE_4:
                 print("Camera TIMEOUT: Cone not found or Camera dead")
                 self.searching_flag = False
                 self.state.update_navigation(phase=5)
                 self.time_phase5_start = time.time()
+        camera_dead = (
+            self.camera_dead_since is not None
+            and time.time() - self.camera_dead_since >= CAMERA_DEAD_TIMEOUT
+        )
+        if camera_dead and (
+            self.camera_phase4_attempts >= CAMERA_PHASE4_MAX_ATTEMPTS
+            or (self.camera_phase4_start is not None and time.time() - self.camera_phase4_start >= TIMEOUT_PHASE_4)
+        ):
+            print("Camera DEAD: Fallback to Phase3 (GPS/Straight)")
+            fallback_dir = st["angle"] if st["angle_valid"] else st["direction"]
+            self.state.update_navigation(direction=fallback_dir, phase=3)
+            self.searching_flag = False
+            self.time_phase3_start = time.time()
+            return
         if cone_prob > CONE_PROBABILITY_THRESHOLD:
             self.state.update_navigation(phase=5)
 
@@ -397,6 +487,8 @@ class CanSatController:
         print("phase5 : approaching")
         self.time_camera_start = time.time()
         self.count_cone_lost = 0
+        self.camera_phase5_attempts += 1
+        self.camera_phase5_start = self.time_camera_start
         while True:
             self.led_blink_timer += 1
             if (self.led_blink_timer // LED_INTERVAL_PHASE5) % 2 == 0:
@@ -412,6 +504,18 @@ class CanSatController:
             st = self.state.snapshot()
             is_det = st["cone_probability"] > CONE_PROBABILITY_THRESHOLD
             is_reach = st["cone_is_reached"]
+            camera_dead = (
+                self.camera_dead_since is not None
+                and time.time() - self.camera_dead_since >= CAMERA_DEAD_TIMEOUT
+            )
+            if camera_dead and (
+                self.camera_phase5_attempts >= CAMERA_PHASE5_MAX_ATTEMPTS
+                or (self.camera_phase5_start is not None and time.time() - self.camera_phase5_start >= TIMEOUT_PHASE_5)
+            ):
+                print("Camera DEAD: Fallback to Phase3 (GPS/Straight)")
+                fallback_dir = st["angle"] if st["angle_valid"] else st["direction"]
+                self.state.update_navigation(direction=fallback_dir, phase=3)
+                break
             if not is_det:
                 self.count_cone_lost += 1
             else:
@@ -449,10 +553,10 @@ class CanSatController:
             "detector": None,
             "led_red": None,
             "led_green": None,
-            "motor_a_pwm": None,
-            "motor_a_dir": None,
-            "motor_b_pwm": None,
-            "motor_b_dir": None,
+            "motor_1_pwm": None,
+            "motor_1_dir": None,
+            "motor_2_pwm": None,
+            "motor_2_dir": None,
             "sonar": None,
         }
         try:
@@ -489,6 +593,7 @@ class CanSatController:
                 roi_img = cv2.imread(ROI_PATH_2)
             else:
                 print("WARNING: No ROI image found. Switching to DEFAULT RED detection.")
+            self.roi_img = roi_img
             detector.set_roi_img(roi_img)
             detector.detect_cone()
             self.devices["detector"] = detector
@@ -539,25 +644,171 @@ class CanSatController:
                     "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
                     "LAT", "LNG", "ALT", "Pres",
                     "Distance", "Azimuth", "Angle", "Direction", "Fall",
-                    "ConeDir", "ConeProb", "ObstacleDist"
+                    "ConeDir", "ConeProb", "ObstacleDist",
+                    "AngleValid", "BNOStaleSec"
                 ])
         except Exception:
             print("Log File Init Failed. No logging.")
 
     # --- Sensor readers ---
+    def _vector_within(self, vec, max_abs):
+        try:
+            for v in vec:
+                if not math.isfinite(v) or abs(v) > max_abs:
+                    return False
+        except Exception:
+            return False
+        return True
+
+    def _vector_near_zero(self, vec, eps):
+        try:
+            for v in vec:
+                if not math.isfinite(v) or abs(v) > eps:
+                    return False
+        except Exception:
+            return False
+        return True
+
+    def _angle_jump_ok(self, angle):
+        last = self.bno_last_valid.get("angle", 0.0)
+        diff = abs(((angle - last + 180.0) % 360.0) - 180.0)
+        return diff <= BNO_ANGLE_JUMP_MAX
+
+    def _try_reinit_bno(self):
+        now = time.time()
+        if now - self.bno_last_reinit_time < BNO_REINIT_COOLDOWN:
+            return
+        self.bno_last_reinit_time = now
+        try:
+            bno = bno055.BNO055()
+            if bno.setUp():
+                self.devices["bno"] = bno
+                self.bno_fail_count = 0
+                print("BNO055: Reinitialized after failures.")
+            else:
+                print("BNO055: Reinit failed.")
+        except Exception as e:
+            print(f"BNO055: Reinit error {e}.")
+
+    def _try_reinit_camera(self):
+        now = time.time()
+        if now - self.camera_last_reinit < CAMERA_REINIT_INTERVAL:
+            return
+        self.camera_last_reinit = now
+        try:
+            detector = dc.detector()
+            detector.set_roi_img(self.roi_img)
+            detector.detect_cone()
+            self.devices["detector"] = detector
+            self.camera_fail_count = 0
+            self.camera_dead_since = None
+            print("Camera: Reinitialized.")
+        except Exception as e:
+            print(f"Camera: Reinit error {e}.")
+
     def get_bno_data(self):
         bno_instance = self.devices.get("bno")
         if bno_instance is None:
             return None
         try:
-            acc = bno_instance.getAcc() or [0, 0, 0]
-            gyro = bno_instance.getGyro() or [0, 0, 0]
-            mag = bno_instance.getMag() or [0, 0, 0]
-            fall = math.sqrt(acc[0] ** 2 + acc[1] ** 2 + acc[2] ** 2)
+            acc = bno_instance.getAcc()
+            gyro = bno_instance.getGyro()
+            mag = bno_instance.getMag()
             euler = bno_instance.getEuler()
-            angle = euler[0] if euler else 0.0
-            return {"acc": acc, "gyro": gyro, "mag": mag, "fall": fall, "angle": angle}
+            calib = bno_instance.getCalibrationStatus()
+            sys_status = bno_instance.getSystemStatus()
+            sys_error = bno_instance.getSystemError()
+
+            i2c_ok = acc["valid"] and gyro["valid"] and mag["valid"] and euler["valid"]
+            if not i2c_ok:
+                self.bno_fail_count += 1
+                if self.bno_fail_count >= BNO_FAIL_LIMIT:
+                    self._try_reinit_bno()
+            else:
+                self.bno_fail_count = 0
+
+            freeze = False
+            if i2c_ok:
+                euler_zero = False
+                if euler["valid"] and len(euler["value"]) >= 1:
+                    try:
+                        euler_zero = abs(float(euler["value"][0])) <= BNO_FREEZE_EPS
+                    except Exception:
+                        euler_zero = False
+                freeze = (
+                    self._vector_near_zero(acc["value"], BNO_FREEZE_EPS)
+                    and self._vector_near_zero(gyro["value"], BNO_FREEZE_EPS)
+                    and self._vector_near_zero(mag["value"], BNO_FREEZE_EPS)
+                    and euler_zero
+                )
+                if freeze:
+                    self.bno_fail_count += 1
+                    if self.bno_fail_count >= BNO_FAIL_LIMIT:
+                        self._try_reinit_bno()
+
+            acc_ok = (not freeze) and acc["valid"] and self._vector_within(acc["value"], BNO_ACC_MAX)
+            gyro_ok = (not freeze) and gyro["valid"] and self._vector_within(gyro["value"], BNO_GYRO_MAX)
+            mag_ok = (not freeze) and mag["valid"] and self._vector_within(mag["value"], BNO_MAG_MAX)
+
+            angle_val = 0.0
+            if euler["valid"] and len(euler["value"]) >= 1:
+                angle_val = float(euler["value"][0])
+            angle_ok = (
+                (not freeze)
+                and euler["valid"]
+                and math.isfinite(angle_val)
+                and 0.0 <= angle_val < 360.0
+                and self._angle_jump_ok(angle_val)
+            )
+
+            sys_ok = sys_status["valid"] and sys_error["valid"]
+            sys_error_ok = sys_ok and sys_error["value"] == 0
+            fusion_ok = sys_ok and sys_status["value"] in (5, 6)
+
+            if acc_ok:
+                self.bno_last_valid["acc"] = list(acc["value"])
+            if gyro_ok:
+                self.bno_last_valid["gyro"] = list(gyro["value"])
+            if mag_ok:
+                self.bno_last_valid["mag"] = list(mag["value"])
+            if angle_ok:
+                self.bno_last_valid["angle"] = angle_val
+                self.bno_last_valid_time = time.time()
+
+            acc_val = list(self.bno_last_valid["acc"])
+            gyro_val = list(self.bno_last_valid["gyro"])
+            mag_val = list(self.bno_last_valid["mag"])
+            angle_val = float(self.bno_last_valid["angle"])
+            fall = math.sqrt(acc_val[0] ** 2 + acc_val[1] ** 2 + acc_val[2] ** 2)
+
+            calib_ok = calib["valid"] and calib["value"][3] >= BNO_CALIB_MAG_MIN
+            angle_valid = angle_ok and calib_ok and sys_error_ok and fusion_ok
+            self.bno_calib = calib
+            now = time.time()
+            if self.bno_last_valid_time > 0:
+                self.bno_stale_sec = now - self.bno_last_valid_time
+            else:
+                self.bno_stale_sec = 0.0
+            if self.bno_stale_sec > BNO_STALE_TIMEOUT:
+                angle_valid = False
+
+            return {
+                "acc": acc_val,
+                "gyro": gyro_val,
+                "mag": mag_val,
+                "fall": fall,
+                "angle": angle_val,
+                "valid": acc_ok and gyro_ok and mag_ok,
+                "angle_valid": angle_valid,
+                "calib": calib,
+                "sys_status": sys_status,
+                "sys_error": sys_error,
+                "stale_sec": self.bno_stale_sec,
+            }
         except Exception:
+            self.bno_fail_count += 1
+            if self.bno_fail_count >= BNO_FAIL_LIMIT:
+                self._try_reinit_bno()
             return None
         
     def get_bmp_data(self):
@@ -584,6 +835,9 @@ class CanSatController:
     def cone_detect(self):
         detector = self.devices.get("detector")
         if detector is None:
+            if self.camera_dead_since is None:
+                self.camera_dead_since = time.time()
+            self._try_reinit_camera()
             self.state.update_cone(cone_direction=CONE_CENTER_POSITION, cone_probability=0.0, cone_is_reached=False)
             return
         try:
@@ -593,7 +847,14 @@ class CanSatController:
             if detector.cone_direction is not None:
                 cdir = 1.0 - detector.cone_direction
             self.state.update_cone(cone_direction=cdir, cone_probability=prob, cone_is_reached=detector.is_reached)
+            self.camera_fail_count = 0
+            self.camera_dead_since = None
         except Exception:
+            self.camera_fail_count += 1
+            if self.camera_fail_count >= CAMERA_FAIL_LIMIT:
+                self.devices["detector"] = None
+                if self.camera_dead_since is None:
+                    self.camera_dead_since = time.time()
             self.state.update_cone(cone_direction=CONE_CENTER_POSITION, cone_probability=0.0, cone_is_reached=False)
 
     # --- Thread loops ---
@@ -625,7 +886,7 @@ class CanSatController:
                     continue
                 now = time.time()
                 if last_valid_fix_time > 0 and now - last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
-                    self.state.update_gps(gps_detect=0)
+                    self.state.update_gps(gps_detect=0, gps_heading_valid=False)
                 if (
                     s.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
                     and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL
@@ -697,11 +958,26 @@ class CanSatController:
                 stable_count += 1
                 last_fix_time = now
                 if stable_count >= GPS_STABLE_FIX_COUNT:
-                    self.state.update_gps(lat=lat, lng=lng, gps_detect=1)
+                    gps_heading = None
+                    gps_heading_valid = False
+                    if last_valid_latlng is not None:
+                        dist, course = calc_distance_and_azimuth(
+                            last_valid_latlng[0], last_valid_latlng[1], lat, lng
+                        )
+                        if dist >= GPS_HEADING_MIN_DIST:
+                            gps_heading = course
+                            gps_heading_valid = True
+                    self.state.update_gps(
+                        lat=lat,
+                        lng=lng,
+                        gps_detect=1,
+                        gps_heading=gps_heading,
+                        gps_heading_valid=gps_heading_valid,
+                    )
                     last_valid_fix_time = now
                     last_valid_latlng = (lat, lng)
                 else:
-                    self.state.update_gps(gps_detect=0)
+                    self.state.update_gps(gps_detect=0, gps_heading_valid=False)
             except Exception:
                 try:
                     if s is not None:
@@ -733,7 +1009,16 @@ class CanSatController:
                     mag=bno_data["mag"],
                     fall=bno_data["fall"],
                     angle=bno_data["angle"],
+                    angle_valid=bno_data["angle_valid"],
                 )
+                if bno_data.get("sys_status", {}).get("valid") and bno_data.get("sys_error", {}).get("valid"):
+                    if bno_data["sys_error"]["value"] != 0 or bno_data["sys_status"]["value"] not in (5, 6):
+                        print(
+                            f"BNO status warn: sys={bno_data['sys_status']['value']} "
+                            f"err={bno_data['sys_error']['value']}"
+                        )
+            else:
+                self.state.update_imu(angle_valid=False)
             if bmp_data:
                 self.state.update_barometer(
                     alt=bmp_data["alt"],
@@ -769,6 +1054,8 @@ class CanSatController:
                         f"{current_data['cone_direction']:.2f}",
                         f"{current_data['cone_probability']:.2f}",
                         f"{current_data['obstacle_dist']:.2f}",
+                        int(current_data.get("angle_valid", False)),
+                        f"{self.bno_stale_sec:.2f}",
                     ])
             except Exception as e:
                 print(f"Log Error: {e}")
@@ -790,50 +1077,83 @@ class CanSatController:
                 print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
-                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], OBSTACLE_SPEED, False)
-                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], OBSTACLE_SPEED, False)
+                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), OBSTACLE_SPEED, False)
+                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), OBSTACLE_SPEED, False)
                 time.sleep(OBSTACLE_BACKUP_TIME)
-                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], OBSTACLE_SPEED, False)
-                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], OBSTACLE_SPEED, True)
+                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), OBSTACLE_SPEED, False)
+                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), OBSTACLE_SPEED, True)
                 time.sleep(OBSTACLE_TURN_TIME)
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
                 continue
             if phase == 1 and direction == PARACHUTE_DIRECTION:
-                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
-                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
+                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
+                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
                 time.sleep(PARACHUTE_MOTOR_PULSE)
                 continue
-            #if phase == 2:
-            #    calib_speed = CALIBRATION_TURN_SPEED
-            #    self.set_motor(self.devices["motor_a_pwm"], self.devices["motor_a_dir"], calib_speed, True)
-            #    self.set_motor(self.devices["motor_b_pwm"], self.devices["motor_b_dir"], calib_speed, False)
-            #    time.sleep(MOTOR_LOOP_INTERVAL)
-            #    continue
+            if phase == 2:
+                if self.phase2_stage == "straight":
+                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), PHASE2_SPEED, True)
+                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), PHASE2_SPEED, True)
+                else:
+                    elapsed = 0.0
+                    if self.phase2_stage_start is not None:
+                        elapsed = time.time() - self.phase2_stage_start
+                    left_turn = int(elapsed // PHASE2_TURN_INTERVAL) % 2 == 0
+                    bias = max(0, min(100, PHASE2_TURN_BIAS))
+                    base = max(0, min(100, PHASE2_SPEED))
+                    if left_turn:
+                        speed_l = max(0, min(100, base - bias))
+                        speed_r = max(0, min(100, base + bias))
+                    else:
+                        speed_l = max(0, min(100, base + bias))
+                        speed_r = max(0, min(100, base - bias))
+                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
+                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
+                time.sleep(MOTOR_LOOP_INTERVAL)
+                continue
             if phase == 3:
-                target_heading = direction + GPS_HEADING_OFFSET
-                current_heading = angle
-                diff = target_heading - current_heading
-                if diff > 180:
-                    diff -= 360
-                if diff < -180:
-                    diff += 360
-                turn_val = diff * GPS_TURN_GAIN
-                turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
-                speed_l = max(0, min(100, BASE_SPEED + turn_val))
-                speed_r = max(0, min(100, BASE_SPEED - turn_val))
-                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], speed_r, True)
-                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], speed_l, True)
+                target_heading = direction
+                if st.get("gps_heading_valid", False):
+                    current_heading = st.get("gps_heading", 0.0)
+                    diff = target_heading - current_heading
+                    if diff > 180:
+                        diff -= 360
+                    if diff < -180:
+                        diff += 360
+                    turn_val = diff * GPS_TURN_GAIN
+                    turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
+                    speed_l = max(0, min(100, BASE_SPEED + turn_val))
+                    speed_r = max(0, min(100, BASE_SPEED - turn_val))
+                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
+                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
+                elif st["angle_valid"]:
+                    current_heading = angle
+                    target_heading = direction + GPS_HEADING_OFFSET
+                    diff = target_heading - current_heading
+                    if diff > 180:
+                        diff -= 360
+                    if diff < -180:
+                        diff += 360
+                    turn_val = diff * GPS_TURN_GAIN
+                    turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
+                    speed_l = max(0, min(100, BASE_SPEED + turn_val))
+                    speed_r = max(0, min(100, BASE_SPEED - turn_val))
+                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
+                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
+                else:
+                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), BASE_SPEED, True)
+                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), BASE_SPEED, True)
             elif phase == 4:
-                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], SEARCH_ROTATION_SPEED, True)
-                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], SEARCH_ROTATION_SPEED, False)
+                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), SEARCH_ROTATION_SPEED, True)
+                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), SEARCH_ROTATION_SPEED, False)
             elif phase == 5:
                 err = cone_direction - CONE_CENTER_POSITION
                 turn_cam = err * APPROACH_TURN_GAIN
                 speed_l = max(0, min(100, BASE_SPEED + turn_cam))
                 speed_r = max(0, min(100, BASE_SPEED - turn_cam))
-                self.set_motor(self.devices["motor_1_pwm"], self.devices["motor_1_dir"], speed_r, True)
-                self.set_motor(self.devices["motor_2_pwm"], self.devices["motor_2_dir"], speed_l, True)
+                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
+                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
             time.sleep(MOTOR_LOOP_INTERVAL)
 
     def _ramp_pwm(self, pwm_dev, start_speed, target_speed, ramp_time, step_interval=MOTOR_RAMP_STEP):

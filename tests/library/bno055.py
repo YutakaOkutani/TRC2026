@@ -6,6 +6,7 @@ try:
 except ImportError:
     from smbus import SMBus
 
+
 class BNO055:
     """
     Bosch BNO055 9-DOF Absolute Orientation Sensor library for Raspberry Pi.
@@ -79,7 +80,6 @@ class BNO055:
         """
         self.i2c = SMBus(i2c_bus)
         self.addr = i2c_address
-
         # Initialize internal storage for sensor data
         self._accel = [0.0, 0.0, 0.0]
         self._gyro = [0.0, 0.0, 0.0]
@@ -187,66 +187,69 @@ class BNO055:
     def getAcc(self):
         """
         Reads accelerometer data (X, Y, Z) in m/s^2.
-        :return: A list [x, y, z] of accelerometer values.
+        :return: {"value": [x, y, z], "valid": bool}
         """
         try:
             # Read X, Y, Z data from their respective LSB addresses and scale
             self._accel[0] = self._read_signed_word(self.BNO055_ACCEL_DATA_X_LSB_ADDR) / self.ACCEL_SCALE
             self._accel[1] = self._read_signed_word(self.BNO055_ACCEL_DATA_Y_LSB_ADDR) / self.ACCEL_SCALE
             self._accel[2] = self._read_signed_word(self.BNO055_ACCEL_DATA_Z_LSB_ADDR) / self.ACCEL_SCALE
+            return {"value": list(self._accel), "valid": True}
         except IOError:
             print("Error reading accelerometer data.")
-            # On error, return current (possibly stale) data. Consider raising or returning default.
-        return self._accel
+            return {"value": list(self._accel), "valid": False}
 
     def getGyro(self):
         """
         Reads gyroscope data (X, Y, Z) in degrees per second (dps).
-        :return: A list [x, y, z] of gyroscope values.
+        :return: {"value": [x, y, z], "valid": bool}
         """
         try:
             # Read X, Y, Z data from their respective LSB addresses and scale
             self._gyro[0] = self._read_signed_word(self.BNO055_GYRO_DATA_X_LSB_ADDR) / self.GYRO_SCALE
             self._gyro[1] = self._read_signed_word(self.BNO055_GYRO_DATA_Y_LSB_ADDR) / self.GYRO_SCALE
             self._gyro[2] = self._read_signed_word(self.BNO055_GYRO_DATA_Z_LSB_ADDR) / self.GYRO_SCALE
+            return {"value": list(self._gyro), "valid": True}
         except IOError:
             print("Error reading gyroscope data.")
-        return self._gyro
+            return {"value": list(self._gyro), "valid": False}
 
     def getMag(self):
         """
         Reads magnetometer data (X, Y, Z) in microTesla (uT).
-        :return: A list [x, y, z] of magnetometer values.
+        :return: {"value": [x, y, z], "valid": bool}
         """
         try:
             # Read X, Y, Z data from their respective LSB addresses and scale
             self._mag[0] = self._read_signed_word(self.BNO055_MAG_DATA_X_LSB_ADDR) / self.MAG_SCALE
             self._mag[1] = self._read_signed_word(self.BNO055_MAG_DATA_Y_LSB_ADDR) / self.MAG_SCALE
             self._mag[2] = self._read_signed_word(self.BNO055_MAG_DATA_Z_LSB_ADDR) / self.MAG_SCALE
+            return {"value": list(self._mag), "valid": True}
         except IOError:
             print("Error reading magnetometer data.")
-        return self._mag
+            return {"value": list(self._mag), "valid": False}
 
     def getEuler(self):
         """
         Reads Euler angle data (Heading/Yaw, Roll, Pitch) in degrees.
         This data is fusion-derived in NDOF mode.
-        :return: A list [heading, roll, pitch] of Euler angles.
+        :return: {"value": [heading, roll, pitch], "valid": bool}
         """
         try:
             # Read Heading, Roll, Pitch data from their respective LSB addresses and scale
             self._euler[0] = self._read_signed_word(self.BNO055_EULER_H_LSB_ADDR) / self.EULER_SCALE
             self._euler[1] = self._read_signed_word(self.BNO055_EULER_R_LSB_ADDR) / self.EULER_SCALE
             self._euler[2] = self._read_signed_word(self.BNO055_EULER_P_LSB_ADDR) / self.EULER_SCALE
+            return {"value": list(self._euler), "valid": True}
         except IOError:
             print("Error reading Euler angle data.")
-        return self._euler
+            return {"value": list(self._euler), "valid": False}
     
     def getQuaternion(self):
         """
         Reads quaternion data (w, x, y, z).
         This data is fusion-derived in NDOF mode.
-        :return: A list [w, x, y, z] of quaternion components.
+        :return: {"value": [w, x, y, z], "valid": bool}
         """
         try:
             # Read W, X, Y, Z data from their respective LSB addresses and scale
@@ -254,27 +257,28 @@ class BNO055:
             self._quaternion[1] = self._read_signed_word(self.BNO055_QUATERNION_DATA_X_LSB_ADDR) * self.QUAT_SCALE_FACTOR
             self._quaternion[2] = self._read_signed_word(self.BNO055_QUATERNION_DATA_Y_LSB_ADDR) * self.QUAT_SCALE_FACTOR
             self._quaternion[3] = self._read_signed_word(self.BNO055_QUATERNION_DATA_Z_LSB_ADDR) * self.QUAT_SCALE_FACTOR
+            return {"value": list(self._quaternion), "valid": True}
         except IOError:
             print("Error reading quaternion data.")
-        return self._quaternion
+            return {"value": list(self._quaternion), "valid": False}
 
     def getTemp(self):
         """
         Reads the internal temperature of the BNO055 in Celsius.
-        :return: Temperature in Celsius (°C).
+        :return: {"value": temperature_c, "valid": bool}
         """
         try:
             temp = self._read_byte(self.BNO055_TEMP_ADDR)
-            return temp
+            return {"value": float(temp), "valid": True}
         except IOError:
             print("Error reading temperature data.")
-            return 0.0 # Return a default or raise
+            return {"value": 0.0, "valid": False}
 
     def getCalibrationStatus(self):
         """
         Reads the calibration status of the BNO055.
         Calibration is crucial for accurate fusion data in NDOF mode.
-        :return: A tuple (system, gyro, accel, mag) where each value is 0 (uncalibrated) to 3 (fully calibrated).
+        :return: {"value": (system, gyro, accel, mag), "valid": bool}
         """
         try:
             cal_status = self._read_byte(self.BNO055_CALIB_STAT_ADDR)
@@ -282,37 +286,37 @@ class BNO055:
             gyro_cal = (cal_status >> 4) & 0x03
             accel_cal = (cal_status >> 2) & 0x03
             mag_cal = cal_status & 0x03
-            return (sys_cal, gyro_cal, accel_cal, mag_cal)
+            return {"value": (sys_cal, gyro_cal, accel_cal, mag_cal), "valid": True}
         except IOError:
             print("Error reading calibration status.")
-            return (0, 0, 0, 0)
+            return {"value": (0, 0, 0, 0), "valid": False}
             
     def getSystemStatus(self):
         """
         Reads the general system status code of the BNO055.
-        :return: An integer representing the system status.
+        :return: {"value": status, "valid": bool}
                  (0: Idle, 1: System Error, 2: Initializing Peripherals,
                   3: System Initialization, 4: Self Test,
                   5: Fusion Algorithm Running, 6: Sensor Fusion Running (low power))
         """
         try:
             status = self._read_byte(self.BNO055_SYS_STAT_ADDR)
-            return status
+            return {"value": int(status), "valid": True}
         except IOError:
             print("Error reading system status byte.")
-            return 0xFF # Indicate error
+            return {"value": 0xFF, "valid": False}
             
     def getSystemError(self):
         """
         Reads the system error code.
-        :return: An integer representing the system error (0 = No error, non-zero = error code).
+        :return: {"value": error, "valid": bool}
         """
         try:
             error = self._read_byte(self.BNO055_SYS_ERR_ADDR)
-            return error
+            return {"value": int(error), "valid": True}
         except IOError:
             print("Error reading system error byte.")
-            return 0xFF # Indicate error
+            return {"value": 0xFF, "valid": False}
 
 # --- Usage Example ---
 if __name__ == '__main__':
@@ -341,14 +345,27 @@ if __name__ == '__main__':
             sys_status = sensor.getSystemStatus()
             sys_error = sensor.getSystemError()
 
-            print(f"Accel (m/s^2): X={accel[0]:.2f}, Y={accel[1]:.2f}, Z={accel[2]:.2f}")
-            print(f"Gyro (dps): X={gyro[0]:.2f}, Y={gyro[1]:.2f}, Z={gyro[2]:.2f}")
-            print(f"Mag (uT): X={mag[0]:.2f}, Y={mag[1]:.2f}, Z={mag[2]:.2f}")
-            print(f"Euler (deg): Heading(Yaw)={euler[0]:.2f}, Roll={euler[1]:.2f}, Pitch={euler[2]:.2f}")
-            print(f"Quaternion: W={quat[0]:.4f}, X={quat[1]:.4f}, Y={quat[2]:.4f}, Z={quat[3]:.4f}")
-            print(f"Temperature (C): {temp:.1f}")
-            print(f"Calibration Status (Sys, Gyro, Accel, Mag): {cal_status}")
-            print(f"System Status: {sys_status}, System Error: {sys_error}")
+            if accel["valid"]:
+                ax, ay, az = accel["value"]
+                print(f"Accel (m/s^2): X={ax:.2f}, Y={ay:.2f}, Z={az:.2f}")
+            if gyro["valid"]:
+                gx, gy, gz = gyro["value"]
+                print(f"Gyro (dps): X={gx:.2f}, Y={gy:.2f}, Z={gz:.2f}")
+            if mag["valid"]:
+                mx, my, mz = mag["value"]
+                print(f"Mag (uT): X={mx:.2f}, Y={my:.2f}, Z={mz:.2f}")
+            if euler["valid"]:
+                eh, er, ep = euler["value"]
+                print(f"Euler (deg): Heading(Yaw)={eh:.2f}, Roll={er:.2f}, Pitch={ep:.2f}")
+            if quat["valid"]:
+                qw, qx, qy, qz = quat["value"]
+                print(f"Quaternion: W={qw:.4f}, X={qx:.4f}, Y={qy:.4f}, Z={qz:.4f}")
+            if temp["valid"]:
+                print(f"Temperature (C): {temp['value']:.1f}")
+            if cal_status["valid"]:
+                print(f"Calibration Status (Sys, Gyro, Accel, Mag): {cal_status['value']}")
+            if sys_status["valid"] and sys_error["valid"]:
+                print(f"System Status: {sys_status['value']}, System Error: {sys_error['value']}")
             print("-" * 50)
             
             time.sleep(0.5)

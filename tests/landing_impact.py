@@ -28,6 +28,7 @@ GPS_FIX_LOSS_TIMEOUT = 8.0        # seconds until detect flag drops when no vali
 LOG_DIR = "testlog/landing_impact"
 LOG_PREFIX = "robust_log_"
 DATA_SAMPLING_RATE = 0.06
+BNO_STALE_TIMEOUT = 2.0
 
 
 def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
@@ -196,6 +197,62 @@ class RobustGPSReader:
         return None
 
 
+class RobustBNOReader:
+    """Minimal robust wrapper to provide angle_valid and stale age for logs."""
+
+    def __init__(self, bno_instance):
+        self.bno = bno_instance
+        self.last_valid_time = 0.0
+        self.last_angle = 0.0
+
+    def read(self):
+        if self.bno is None:
+            return None
+        try:
+            acc = self.bno.getAcc()
+            gyro = self.bno.getGyro()
+            mag = self.bno.getMag()
+            euler = self.bno.getEuler()
+            calib = self.bno.getCalibrationStatus()
+            sys_status = self.bno.getSystemStatus()
+            sys_error = self.bno.getSystemError()
+
+            acc_val = acc["value"]
+            gyro_val = gyro["value"]
+            mag_val = mag["value"]
+            angle = euler["value"][0] if euler["valid"] and euler["value"] else 0.0
+            fall = math.sqrt(acc_val[0] ** 2 + acc_val[1] ** 2 + acc_val[2] ** 2)
+
+            calib_ok = calib["valid"] and calib["value"][3] >= 2
+            sys_ok = sys_status["valid"] and sys_error["valid"]
+            sys_error_ok = sys_ok and sys_error["value"] == 0
+            fusion_ok = sys_ok and sys_status["value"] in (5, 6)
+
+            angle_ok = euler["valid"] and math.isfinite(angle) and 0.0 <= angle < 360.0
+            angle_valid = angle_ok and calib_ok and sys_error_ok and fusion_ok
+            if angle_valid:
+                self.last_angle = angle
+                self.last_valid_time = time.time()
+
+            stale_sec = 0.0
+            if self.last_valid_time > 0:
+                stale_sec = time.time() - self.last_valid_time
+            if stale_sec > BNO_STALE_TIMEOUT:
+                angle_valid = False
+
+            return {
+                "acc": acc_val,
+                "gyro": gyro_val,
+                "mag": mag_val,
+                "fall": fall,
+                "angle": self.last_angle,
+                "angle_valid": angle_valid,
+                "stale_sec": stale_sec,
+            }
+        except Exception:
+            return None
+
+
 def setup_sensors():
     """Initialize sensors and GPS serial connection."""
     bno = None
@@ -234,22 +291,6 @@ def setup_sensors():
     return bno, bmp, gps_reader
 
 
-def get_bno_data(bno_instance):
-    """Return the same BNO055 payload as main.py (acc/gyro/mag/fall/angle)."""
-    if bno_instance is None:
-        return None
-    try:
-        acc = bno_instance.getAcc() or [0, 0, 0]
-        gyro = bno_instance.getGyro() or [0, 0, 0]
-        mag = bno_instance.getMag() or [0, 0, 0]
-        fall = math.sqrt(acc[0] ** 2 + acc[1] ** 2 + acc[2] ** 2)
-        euler = bno_instance.getEuler()
-        angle = euler[0] if euler else 0.0
-        return {"acc": acc, "gyro": gyro, "mag": mag, "fall": fall, "angle": angle}
-    except Exception:
-        return None
-
-
 def get_bmp_data(bmp_instance):
     """Return altitude and pressure identical to main.py."""
     if bmp_instance is None:
@@ -270,12 +311,14 @@ def init_log_file(log_path):
             "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
             "LAT", "LNG", "ALT", "Pres",
             "Distance", "Azimuth", "Angle", "Direction", "Fall",
-            "ConeDir", "ConeProb", "ObstacleDist"
+            "ConeDir", "ConeProb", "ObstacleDist",
+            "AngleValid", "BNOStaleSec"
         ])
 
 
 def main():
     bno, bmp, gps_reader = setup_sensors()
+    bno_reader = RobustBNOReader(bno)
 
     if not any([bno, bmp, gps_reader and gps_reader.ser]):
         print("All sensors failed to initialize; exiting.")
@@ -312,9 +355,11 @@ def main():
                     "cone_direction": 0.0,
                     "cone_probability": 0.0,
                     "obstacle_dist": 0.0,
+                    "angle_valid": 0,
+                    "stale_sec": 0.0,
                 }
 
-                bno_data = get_bno_data(bno)
+                bno_data = bno_reader.read()
                 bmp_data = get_bmp_data(bmp)
                 gps_data = gps_reader.read_fix() if gps_reader else None
 
@@ -325,6 +370,8 @@ def main():
                         "mag": bno_data["mag"],
                         "fall": bno_data["fall"],
                         "angle": bno_data["angle"],
+                        "angle_valid": bno_data["angle_valid"],
+                        "stale_sec": bno_data["stale_sec"],
                     })
                 if bmp_data:
                     current_data.update({
@@ -361,6 +408,8 @@ def main():
                     f"{current_data['cone_direction']:.2f}",
                     f"{current_data['cone_probability']:.2f}",
                     f"{current_data['obstacle_dist']:.2f}",
+                    int(current_data["angle_valid"]),
+                    f"{current_data['stale_sec']:.2f}",
                 ])
                 f.flush()
                 time.sleep(DATA_SAMPLING_RATE)
