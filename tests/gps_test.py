@@ -5,6 +5,27 @@ import time
 
 import serial
 
+
+def configure_uart_pins():
+    """Ensure GPIO14/15 are mapped to UART (TX/RX) using gpiozero."""
+    try:
+        from gpiozero.pins.lgpio import LGPIOFactory
+    except Exception:
+        return
+    try:
+        pin_factory = LGPIOFactory()
+        for pin_no in (14, 15):
+            pin = pin_factory.pin(pin_no)
+            try:
+                pin.function = "alt0"  # UART0: TXD0/RXD0
+            finally:
+                try:
+                    pin.close()
+                except Exception:
+                    pass
+    except Exception:
+        return
+
 # --- GPS settings (identical to main.py) ---
 GPS_SERIAL_PORT = "/dev/serial0"
 GPS_BAUDRATE = 115200  # 9600, 38400
@@ -67,6 +88,7 @@ class RobustGPSReader:
         self.stable_count = 0
 
     def open_serial(self):
+        configure_uart_pins()
         try:
             ser = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
             try:
