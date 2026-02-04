@@ -73,6 +73,9 @@ BASE_SPEED = 60
 MOTOR_LOOP_INTERVAL = 0.05
 MOTOR_RAMP_TIME = 0.6
 MOTOR_RAMP_STEP = 0.05
+# Motor direction invert (set True if forward/backward are reversed)
+MOTOR_DIR_INVERT_1 = True
+MOTOR_DIR_INVERT_2 = True
 # --- LED Settings ---
 LED_INTERVAL_PHASE0 = 5
 LED_INTERVAL_PHASE2 = 3
@@ -1267,7 +1270,16 @@ class CanSatController:
             time.sleep(step_duration)
         return target_a, target_b
 
-    def set_motor(self, motor_pwm, motor_dir, speed, forward, ramp_time=MOTOR_RAMP_TIME, step_interval=MOTOR_RAMP_STEP):
+    def set_motor(
+        self,
+        motor_pwm,
+        motor_dir,
+        speed,
+        forward,
+        invert=False,
+        ramp_time=MOTOR_RAMP_TIME,
+        step_interval=MOTOR_RAMP_STEP,
+    ):
         if motor_pwm is None or motor_dir is None:
             return
         state = self.motor_state.setdefault(motor_pwm, {"speed": 0.0, "direction": True})
@@ -1278,7 +1290,7 @@ class CanSatController:
         if current_speed > 0 and forward != current_direction:
             current_speed = self._ramp_pwm(motor_pwm, current_speed, 0, ramp_time / 2, step_interval)
 
-        motor_dir.value = 1 if forward else 0
+        motor_dir.value = 1 if (forward ^ invert) else 0
         target_speed = max(0.0, min(100.0, speed))
         current_speed = self._ramp_pwm(motor_pwm, current_speed, target_speed, ramp_time, step_interval)
         state["speed"] = current_speed
@@ -1315,8 +1327,8 @@ class CanSatController:
                 ramp_time / 2, step_interval
             )
 
-        motor_1_dir.value = 1 if forward_a else 0
-        motor_2_dir.value = 1 if forward_b else 0
+        motor_1_dir.value = 1 if (forward_a ^ MOTOR_DIR_INVERT_1) else 0
+        motor_2_dir.value = 1 if (forward_b ^ MOTOR_DIR_INVERT_2) else 0
 
         target_a = max(0.0, min(100.0, speed_a))
         target_b = max(0.0, min(100.0, speed_b))
