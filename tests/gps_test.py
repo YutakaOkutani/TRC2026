@@ -78,6 +78,56 @@ def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
     return dist, azi
 
 
+def read_raw_nmea(duration_seconds=10.0):
+    """Read any bytes from candidate ports to verify physical connection."""
+    configure_uart_pins()
+    ports = [GPS_SERIAL_PORT] + [p for p in GPS_SERIAL_PORT_CANDIDATES if p != GPS_SERIAL_PORT]
+    bauds = [GPS_BAUDRATE] + [b for b in GPS_BAUDRATE_CANDIDATES if b != GPS_BAUDRATE]
+    print("=== RAW GPS INPUT PROBE ===")
+    print(f"Duration: {duration_seconds}s")
+    print(f"Ports: {ports}")
+    print(f"Bauds: {bauds}")
+    for port in ports:
+        for baud in bauds:
+            print(f"\n[Probe] {port} @ {baud}")
+            try:
+                ser = serial.Serial(port, baud, timeout=0.5)
+            except Exception as e:
+                print(f"  Open failed: {e}")
+                continue
+            try:
+                try:
+                    ser.reset_input_buffer()
+                except Exception:
+                    pass
+                start = time.time()
+                total_bytes = 0
+                lines_seen = 0
+                while time.time() - start < duration_seconds:
+                    chunk = ser.read(256)
+                    if not chunk:
+                        continue
+                    total_bytes += len(chunk)
+                    try:
+                        text = chunk.decode("utf-8", errors="ignore")
+                    except Exception:
+                        text = repr(chunk)
+                    if "$" in text:
+                        lines_seen += text.count("$")
+                    print(text, end="")
+                print("")
+                if total_bytes == 0:
+                    print("  No bytes received.")
+                else:
+                    print(f"  Bytes received: {total_bytes} (approx NMEA lines: {lines_seen})")
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+    print("=== END RAW PROBE ===")
+
+
 class RobustGPSReader:
     """Replicates the GPS handling logic from main.py for standalone scripts."""
 
@@ -263,6 +313,9 @@ class RobustGPSReader:
 
 
 def main():
+    # Raw probe first for physical-connection diagnostics.
+    read_raw_nmea(duration_seconds=10.0)
+
     gps_reader = RobustGPSReader()
     last_print_time = 0.0
     first_fix_printed = False
