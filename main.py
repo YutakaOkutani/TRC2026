@@ -22,9 +22,9 @@ LOG_DIR = "./log"
 LOG_PREFIX = "robust_log_"
 # --- Target Location ---
 # Latitude of target location
-TARGET_LAT = 38.26052 
+TARGET_LAT = 38.261332
 # Longitude of target location
-TARGET_LNG = 140.8544151 
+TARGET_LNG = 140.853800
 # --- Timeouts ---
 TIMEOUT_PHASE_0 = 5 * 60
 TIMEOUT_PHASE_1 = 30
@@ -289,7 +289,10 @@ class CanSatController:
     def run(self):
         self.setup_hardware()
         self.signal_led(3)
-        self.state.update_navigation(phase=0)
+        # TEST OVERRIDE (GPS logic test): comment out to restore normal phase-0 start.
+        # self.state.update_navigation(phase=0)
+        self.state.update_navigation(phase=3)
+        self.time_phase3_start = time.time()
         try:
             while True:
                 self.loop_once()
@@ -421,9 +424,11 @@ class CanSatController:
             led_red.off()
         self.toggle_led(led_green, self.led_blink_timer, interval=LED_INTERVAL_PHASE3)
         if time.time() - self.time_phase3_start > TIMEOUT_PHASE_3:
-            print("Phase3 TIMEOUT: Give up GPS, switching to Camera")
-            self.state.update_navigation(phase=4)
-            self.time_phase4_start = time.time()
+            print("Phase3 TIMEOUT: GPS test -> force Goal (skip Camera)")
+            # Original behavior (commented for GPS test):
+            # self.state.update_navigation(phase=4)
+            # self.time_phase4_start = time.time()
+            self.state.update_navigation(phase=6)
             return
         if st["gps_detect"] == 1:
             dist, azi = calc_distance_and_azimuth(st["lat"], st["lng"], self.target_lat, self.target_lng)
@@ -436,14 +441,19 @@ class CanSatController:
                 else:
                     print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, MyHead=INVALID")
             if dist < GPS_CLOSE_DISTANCE:
-                print(f"Close enough ({dist:.1f}m): Switching to Camera")
-                self.state.update_navigation(phase=4)
+                print(f"Close enough ({dist:.1f}m): GPS test -> Goal (skip Camera)")
+                # Original behavior (commented for GPS test):
+                # self.state.update_navigation(phase=4)
+                self.state.update_navigation(phase=6)
             self.toggle_led(led_green, self.led_blink_timer, interval=LED_INTERVAL_PHASE3_NEAR)
         else:
             if self.led_blink_timer % 20 == 0:
                 print("GPS Lost: Keep going...")
 
     def handle_phase4(self):
+        # TEST OVERRIDE (GPS logic test): comment out to restore camera phase.
+        self.state.update_navigation(phase=6)
+        return
         led_red = self.devices.get("led_red")
         led_green = self.devices.get("led_green")
         st = self.state.snapshot()
@@ -482,6 +492,9 @@ class CanSatController:
             self.state.update_navigation(phase=5)
 
     def handle_phase5(self):
+        # TEST OVERRIDE (GPS logic test): comment out to restore camera phase.
+        self.state.update_navigation(phase=6)
+        return
         led_red = self.devices.get("led_red")
         led_green = self.devices.get("led_green")
         print("phase5 : approaching")
