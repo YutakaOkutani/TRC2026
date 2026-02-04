@@ -1077,24 +1077,24 @@ class CanSatController:
                 print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
-                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), OBSTACLE_SPEED, False)
-                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), OBSTACLE_SPEED, False)
+                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, False)
                 time.sleep(OBSTACLE_BACKUP_TIME)
-                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), OBSTACLE_SPEED, False)
-                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), OBSTACLE_SPEED, True)
+                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, True)
                 time.sleep(OBSTACLE_TURN_TIME)
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
                 continue
             if phase == 1 and direction == PARACHUTE_DIRECTION:
-                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
-                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), PARACHUTE_SEPARATION_SPEED, True, ramp_time=0)
+                self.set_motors(
+                    PARACHUTE_SEPARATION_SPEED, True,
+                    PARACHUTE_SEPARATION_SPEED, True,
+                    ramp_time=0,
+                )
                 time.sleep(PARACHUTE_MOTOR_PULSE)
                 continue
             if phase == 2:
                 if self.phase2_stage == "straight":
-                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), PHASE2_SPEED, True)
-                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), PHASE2_SPEED, True)
+                    self.set_motors(PHASE2_SPEED, True, PHASE2_SPEED, True)
                 else:
                     elapsed = 0.0
                     if self.phase2_stage_start is not None:
@@ -1108,8 +1108,7 @@ class CanSatController:
                     else:
                         speed_l = max(0, min(100, base + bias))
                         speed_r = max(0, min(100, base - bias))
-                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
-                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
+                    self.set_motors(speed_r, True, speed_l, True)
                 time.sleep(MOTOR_LOOP_INTERVAL)
                 continue
             if phase == 3:
@@ -1125,8 +1124,7 @@ class CanSatController:
                     turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
                     speed_l = max(0, min(100, BASE_SPEED + turn_val))
                     speed_r = max(0, min(100, BASE_SPEED - turn_val))
-                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
-                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
+                    self.set_motors(speed_r, True, speed_l, True)
                 elif st["angle_valid"]:
                     current_heading = angle
                     target_heading = direction + GPS_HEADING_OFFSET
@@ -1139,21 +1137,17 @@ class CanSatController:
                     turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
                     speed_l = max(0, min(100, BASE_SPEED + turn_val))
                     speed_r = max(0, min(100, BASE_SPEED - turn_val))
-                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
-                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
+                    self.set_motors(speed_r, True, speed_l, True)
                 else:
-                    self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), BASE_SPEED, True)
-                    self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), BASE_SPEED, True)
+                    self.set_motors(BASE_SPEED, True, BASE_SPEED, True)
             elif phase == 4:
-                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), SEARCH_ROTATION_SPEED, True)
-                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), SEARCH_ROTATION_SPEED, False)
+                self.set_motors(SEARCH_ROTATION_SPEED, True, SEARCH_ROTATION_SPEED, False)
             elif phase == 5:
                 err = cone_direction - CONE_CENTER_POSITION
                 turn_cam = err * APPROACH_TURN_GAIN
                 speed_l = max(0, min(100, BASE_SPEED + turn_cam))
                 speed_r = max(0, min(100, BASE_SPEED - turn_cam))
-                self.set_motor(self.devices.get("motor_1_pwm"), self.devices.get("motor_1_dir"), speed_r, True)
-                self.set_motor(self.devices.get("motor_2_pwm"), self.devices.get("motor_2_dir"), speed_l, True)
+                self.set_motors(speed_r, True, speed_l, True)
             time.sleep(MOTOR_LOOP_INTERVAL)
 
     def _ramp_pwm(self, pwm_dev, start_speed, target_speed, ramp_time, step_interval=MOTOR_RAMP_STEP):
@@ -1171,6 +1165,38 @@ class CanSatController:
             time.sleep(step_duration)
         return target_speed
 
+    def _ramp_pwm_dual(
+        self,
+        pwm_a,
+        start_a,
+        target_a,
+        pwm_b,
+        start_b,
+        target_b,
+        ramp_time,
+        step_interval=MOTOR_RAMP_STEP,
+    ):
+        """Ramp two PWM devices together so both motors start/stop in sync."""
+        if pwm_a is None and pwm_b is None:
+            return start_a, start_b
+        if ramp_time <= 0 or step_interval <= 0:
+            if pwm_a is not None:
+                pwm_a.value = max(0.0, min(1.0, target_a / 100.0))
+            if pwm_b is not None:
+                pwm_b.value = max(0.0, min(1.0, target_b / 100.0))
+            return target_a, target_b
+        steps = max(1, int(ramp_time / step_interval))
+        step_duration = ramp_time / steps
+        for step in range(1, steps + 1):
+            duty_a = start_a + (target_a - start_a) * (step / steps)
+            duty_b = start_b + (target_b - start_b) * (step / steps)
+            if pwm_a is not None:
+                pwm_a.value = max(0.0, min(1.0, duty_a / 100.0))
+            if pwm_b is not None:
+                pwm_b.value = max(0.0, min(1.0, duty_b / 100.0))
+            time.sleep(step_duration)
+        return target_a, target_b
+
     def set_motor(self, motor_pwm, motor_dir, speed, forward, ramp_time=MOTOR_RAMP_TIME, step_interval=MOTOR_RAMP_STEP):
         if motor_pwm is None or motor_dir is None:
             return
@@ -1187,6 +1213,53 @@ class CanSatController:
         current_speed = self._ramp_pwm(motor_pwm, current_speed, target_speed, ramp_time, step_interval)
         state["speed"] = current_speed
         state["direction"] = forward
+
+    def set_motors(
+        self,
+        speed_a,
+        forward_a,
+        speed_b,
+        forward_b,
+        ramp_time=MOTOR_RAMP_TIME,
+        step_interval=MOTOR_RAMP_STEP,
+    ):
+        motor_1_pwm = self.devices.get("motor_1_pwm")
+        motor_1_dir = self.devices.get("motor_1_dir")
+        motor_2_pwm = self.devices.get("motor_2_pwm")
+        motor_2_dir = self.devices.get("motor_2_dir")
+        if motor_1_pwm is None or motor_1_dir is None or motor_2_pwm is None or motor_2_dir is None:
+            return
+
+        state_a = self.motor_state.setdefault(motor_1_pwm, {"speed": 0.0, "direction": True})
+        state_b = self.motor_state.setdefault(motor_2_pwm, {"speed": 0.0, "direction": True})
+        current_a = state_a["speed"]
+        current_b = state_b["speed"]
+
+        # If either direction changes, ramp both to zero first to reduce stress and keep sync.
+        if (current_a > 0 and forward_a != state_a["direction"]) or (
+            current_b > 0 and forward_b != state_b["direction"]
+        ):
+            current_a, current_b = self._ramp_pwm_dual(
+                motor_1_pwm, current_a, 0,
+                motor_2_pwm, current_b, 0,
+                ramp_time / 2, step_interval
+            )
+
+        motor_1_dir.value = 1 if forward_a else 0
+        motor_2_dir.value = 1 if forward_b else 0
+
+        target_a = max(0.0, min(100.0, speed_a))
+        target_b = max(0.0, min(100.0, speed_b))
+        current_a, current_b = self._ramp_pwm_dual(
+            motor_1_pwm, current_a, target_a,
+            motor_2_pwm, current_b, target_b,
+            ramp_time, step_interval
+        )
+
+        state_a["speed"] = current_a
+        state_a["direction"] = forward_a
+        state_b["speed"] = current_b
+        state_b["direction"] = forward_b
 
     def stop_motors(self):
         motor_1_pwm = self.devices.get("motor_1_pwm")
