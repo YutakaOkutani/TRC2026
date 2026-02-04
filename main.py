@@ -48,6 +48,7 @@ CALIBRATION_TURN_SPEED = 50
 CALIBRATION_MAG_THRESHOLD = 2
 # --- Obstacle Avoidance ---
 OBSTACLE_AVOID_DIST = 30.0
+OBSTACLE_CONFIRM_COUNT = 3
 OBSTACLE_SPEED = 60
 OBSTACLE_BACKUP_TIME = 1.0
 OBSTACLE_TURN_TIME = 0.5
@@ -70,6 +71,9 @@ ROI_PATH_2 = os.path.join(LOG_DIR, "captured.png")
 SEARCH_ROTATION_SPEED = 40
 APPROACH_TURN_GAIN = 80
 BASE_SPEED = 60
+PHASE3_NO_HEADING_SPEED = 50
+PHASE3_NO_HEADING_TURN_BIAS = 12
+PHASE3_NO_HEADING_TURN_INTERVAL = 2.5
 MOTOR_LOOP_INTERVAL = 0.05
 MOTOR_RAMP_TIME = 0.6
 MOTOR_RAMP_STEP = 0.05
@@ -110,7 +114,7 @@ GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
 GPS_MIN_FIX_QUAL = 1              # 1: GPS fix, 2: DGPS, 4/5: RTK
 GPS_MIN_SATELLITES = 4
 GPS_MAX_HDOP = 5.0
-GPS_MAX_SPEED_MPS = 50.0          # reject if jump implies speed over this (m/s)
+GPS_MAX_SPEED_MPS = 10.0          # reject if jump implies speed over this (m/s)
 GPS_STABLE_FIX_COUNT = 3          # consecutive good fixes required
 GPS_FIX_LOSS_TIMEOUT = 8.0        # seconds until detect flag drops when no valid fix
 GPS_HEADING_MIN_DIST = 0.5        # meters; minimum movement to trust GPS heading
@@ -289,6 +293,8 @@ class CanSatController:
         self.camera_phase5_attempts = 0
         self.camera_phase4_start = None
         self.camera_phase5_start = None
+        self.obstacle_detect_count = 0
+        self.phase3_no_heading_start = None
 
     # --- Main entry ---
     def run(self):
@@ -296,8 +302,10 @@ class CanSatController:
         self.signal_led(3)
         # TEST OVERRIDE (GPS logic test): comment out to restore normal phase-0 start.
         # self.state.update_navigation(phase=0)
-        self.state.update_navigation(phase=3)
-        self.time_phase3_start = time.time()
+        self.state.update_navigation(phase=2)
+        self.phase2_start_time = time.time()
+        self.phase2_stage = "straight"
+        self.phase2_stage_start = self.phase2_start_time
         try:
             while True:
                 self.loop_once()
@@ -326,6 +334,57 @@ class CanSatController:
             self.handle_phase5()
         elif phase == 6:
             self.handle_phase6()
+
+    def _angle_diff_deg(self, target_deg, current_deg):
+        diff = target_deg - current_deg
+        if diff > 180.0:
+            diff -= 360.0
+        if diff < -180.0:
+            diff += 360.0
+        return diff
+
+    def _weighted_heading(self, st):
+        weights = []
+        headings = []
+        source_parts = []
+
+        if st.get("gps_heading_valid", False):
+            weights.append(0.65)
+            headings.append(st.get("gps_heading", 0.0))
+            source_parts.append("GPS")
+
+        if st.get("angle_valid", False):
+            bno_weight = 0.35
+            calib = self.bno_calib
+            if calib.get("valid") and len(calib.get("value", ())) >= 4:
+                try:
+                    mag_cal = int(calib["value"][3])
+                    bno_weight += 0.1 * max(0, min(3, mag_cal))
+                except Exception:
+                    pass
+            bno_weight = max(0.25, min(0.7, bno_weight))
+            weights.append(bno_weight)
+            headings.append((st.get("angle", 0.0) + GPS_HEADING_OFFSET) % 360.0)
+            source_parts.append("BNO")
+
+        if not headings:
+            return None, "INVALID", 0.0
+
+        sx = 0.0
+        sy = 0.0
+        total_w = 0.0
+        for heading, w in zip(headings, weights):
+            rad = math.radians(heading)
+            sx += math.cos(rad) * w
+            sy += math.sin(rad) * w
+            total_w += w
+        if total_w <= 0.0:
+            return None, "INVALID", 0.0
+        fused = math.degrees(math.atan2(sy, sx))
+        if fused < 0.0:
+            fused += 360.0
+        source = "+".join(source_parts)
+        return fused, source, total_w
 
     # --- Phase handlers ---
     def handle_phase0(self, st):
@@ -438,11 +497,16 @@ class CanSatController:
         if st["gps_detect"] == 1:
             dist, azi = calc_distance_and_azimuth(st["lat"], st["lng"], self.target_lat, self.target_lng)
             self.state.update_navigation(distance=dist, azimuth=azi, direction=azi)
+            fused_heading, heading_source, _ = self._weighted_heading(st)
+            heading_diff = None
+            if fused_heading is not None:
+                heading_diff = self._angle_diff_deg(azi, fused_heading)
             if self.led_blink_timer % 10 == 0:
-                if st["gps_heading_valid"]:
-                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, GPSHead={st['gps_heading']:.1f}")
-                elif st["angle_valid"]:
-                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, BNOHead={st['angle']:.1f}")
+                if fused_heading is not None and heading_diff is not None:
+                    print(
+                        f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, "
+                        f"Head({heading_source})={fused_heading:.1f}, Diff={heading_diff:+.1f}"
+                    )
                 else:
                     print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azi:.1f}, MyHead=INVALID")
             if dist < GPS_CLOSE_DISTANCE:
@@ -1125,7 +1189,16 @@ class CanSatController:
                 self.stop_motors()
                 time.sleep(0.1)
                 continue
-            if phase not in [0, 1, 5, 6] and obstacle_dist < OBSTACLE_AVOID_DIST:
+            obstacle_detected = (
+                phase not in [0, 1, 5, 6]
+                and obstacle_dist is not None
+                and 0 < obstacle_dist < OBSTACLE_AVOID_DIST
+            )
+            if obstacle_detected:
+                self.obstacle_detect_count += 1
+            else:
+                self.obstacle_detect_count = 0
+            if self.obstacle_detect_count >= OBSTACLE_CONFIRM_COUNT:
                 print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
@@ -1135,6 +1208,7 @@ class CanSatController:
                 time.sleep(OBSTACLE_TURN_TIME)
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
+                self.obstacle_detect_count = 0
                 continue
             if phase == 1 and direction == PARACHUTE_DIRECTION:
                 self.set_motors(
@@ -1165,33 +1239,31 @@ class CanSatController:
                 continue
             if phase == 3:
                 target_heading = direction
-                if st.get("gps_heading_valid", False):
-                    current_heading = st.get("gps_heading", 0.0)
-                    diff = target_heading - current_heading
-                    if diff > 180:
-                        diff -= 360
-                    if diff < -180:
-                        diff += 360
-                    turn_val = diff * GPS_TURN_GAIN
-                    turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
-                    speed_l = max(0, min(100, BASE_SPEED + turn_val))
-                    speed_r = max(0, min(100, BASE_SPEED - turn_val))
-                    self.set_motors(speed_r, True, speed_l, True)
-                elif st["angle_valid"]:
-                    current_heading = angle
-                    target_heading = direction + GPS_HEADING_OFFSET
-                    diff = target_heading - current_heading
-                    if diff > 180:
-                        diff -= 360
-                    if diff < -180:
-                        diff += 360
-                    turn_val = diff * GPS_TURN_GAIN
+                fused_heading, _, total_weight = self._weighted_heading(st)
+                if fused_heading is not None:
+                    self.phase3_no_heading_start = None
+                    diff = self._angle_diff_deg(target_heading, fused_heading)
+                    gain_scale = max(0.5, min(1.0, total_weight))
+                    turn_val = diff * GPS_TURN_GAIN * gain_scale
                     turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
                     speed_l = max(0, min(100, BASE_SPEED + turn_val))
                     speed_r = max(0, min(100, BASE_SPEED - turn_val))
                     self.set_motors(speed_r, True, speed_l, True)
                 else:
-                    self.set_motors(BASE_SPEED, True, BASE_SPEED, True)
+                    # If heading is invalid, avoid persistent circle by alternating gentle left/right bias.
+                    if self.phase3_no_heading_start is None:
+                        self.phase3_no_heading_start = time.time()
+                    elapsed = time.time() - self.phase3_no_heading_start
+                    left_turn = int(elapsed // PHASE3_NO_HEADING_TURN_INTERVAL) % 2 == 0
+                    base = max(0, min(100, PHASE3_NO_HEADING_SPEED))
+                    bias = max(0, min(100, PHASE3_NO_HEADING_TURN_BIAS))
+                    if left_turn:
+                        speed_l = max(0, min(100, base - bias))
+                        speed_r = max(0, min(100, base + bias))
+                    else:
+                        speed_l = max(0, min(100, base + bias))
+                        speed_r = max(0, min(100, base - bias))
+                    self.set_motors(speed_r, True, speed_l, True)
             elif phase == 4:
                 self.set_motors(SEARCH_ROTATION_SPEED, True, SEARCH_ROTATION_SPEED, False)
             elif phase == 5:
