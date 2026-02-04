@@ -94,7 +94,9 @@ PIN_ECHO = 24
 SONAR_MAX_DISTANCE = 4.0
 # GPS Settings ---
 GPS_SERIAL_PORT = "/dev/serial0"
-GPS_BAUDRATE = 115200 # 9600, 38400
+GPS_SERIAL_PORT_CANDIDATES = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyS0"]
+GPS_BAUDRATE = 9600
+GPS_BAUDRATE_CANDIDATES = [9600]
 GPS_SERIAL_TIMEOUT = 1
 GPS_HEADING_OFFSET = 5.43 # 種子島の磁気偏角（西偏）# Adjust if necessary
 GPS_TURN_GAIN = 0.5
@@ -241,6 +243,26 @@ class CanSatState:
 # --- Utility Functions ---      
 def current_milli_time():
     return round(time.time() * 1000)
+
+def configure_uart_pins():
+    """Ensure GPIO14/15 are mapped to UART (TX/RX) using gpiozero."""
+    try:
+        from gpiozero.pins.lgpio import LGPIOFactory
+    except Exception:
+        return
+    try:
+        pin_factory = LGPIOFactory()
+        for pin_no in (14, 15):
+            pin = pin_factory.pin(pin_no)
+            try:
+                pin.function = "alt0"  # UART0: TXD0/RXD0
+            finally:
+                try:
+                    pin.close()
+                except Exception:
+                    pass
+    except Exception:
+        return
 
 # --- CanSat Controller Class ---
 class CanSatController:
@@ -872,18 +894,51 @@ class CanSatController:
 
     # --- Thread loops ---
     def gps_thread(self):
-        def open_serial():
-            try:
-                ser = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
+        def _probe_nmea(ser, probe_seconds=2.0):
+            start = time.time()
+            last_line = ""
+            while time.time() - start < probe_seconds:
                 try:
-                    ser.reset_input_buffer()
+                    line_bytes = ser.readline()
                 except Exception:
-                    pass
-                print("GPS serial opened.")
-                return ser
-            except Exception as e:
-                print(f"GPS Serial Open Failed: {e}")
-                return None
+                    return False, last_line
+                if not line_bytes:
+                    continue
+                line = line_bytes.decode("utf-8", errors="ignore").strip()
+                if line:
+                    last_line = line
+                if line.startswith("$"):
+                    return True, last_line
+            return False, last_line
+
+        def open_serial():
+            configure_uart_pins()
+            ports = [GPS_SERIAL_PORT] + [p for p in GPS_SERIAL_PORT_CANDIDATES if p != GPS_SERIAL_PORT]
+            bauds = [GPS_BAUDRATE] + [b for b in GPS_BAUDRATE_CANDIDATES if b != GPS_BAUDRATE]
+            for port in ports:
+                for baud in bauds:
+                    try:
+                        ser = serial.Serial(port, baud, timeout=0.2)
+                        try:
+                            ser.reset_input_buffer()
+                        except Exception:
+                            pass
+                        ok, last_line = _probe_nmea(ser)
+                        if ok:
+                            ser.timeout = GPS_SERIAL_TIMEOUT
+                            print(f"GPS serial opened: {port} @ {baud}")
+                            return ser
+                        try:
+                            ser.close()
+                        except Exception:
+                            pass
+                        if last_line:
+                            print(f"No NMEA at {port} @ {baud} (last: {last_line})")
+                        else:
+                            print(f"No NMEA at {port} @ {baud}")
+                    except Exception as e:
+                        print(f"GPS Serial Open Failed: {port} @ {baud}: {e}")
+            return None
 
         s = open_serial()
         last_buffer_clear = time.time()
@@ -899,6 +954,7 @@ class CanSatController:
                     continue
                 now = time.time()
                 if last_valid_fix_time > 0 and now - last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
+                    stable_count = 0
                     self.state.update_gps(gps_detect=0, gps_heading_valid=False)
                 if (
                     s.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD
@@ -910,6 +966,7 @@ class CanSatController:
                     except Exception:
                         pass
                     last_buffer_clear = now
+                    stable_count = 0
                 line_bytes = s.readline()
                 if not line_bytes:
                     continue
