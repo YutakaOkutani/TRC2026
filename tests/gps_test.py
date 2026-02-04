@@ -29,8 +29,8 @@ def configure_uart_pins():
 # --- GPS settings (identical to main.py) ---
 GPS_SERIAL_PORT = "/dev/serial0"
 GPS_SERIAL_PORT_CANDIDATES = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyS0"]
-GPS_BAUDRATE = 115200  # 9600, 38400
-GPS_BAUDRATE_CANDIDATES = [115200, 9600, 38400]
+GPS_BAUDRATE = 9600  # determined from probe results
+GPS_BAUDRATE_CANDIDATES = [9600]
 GPS_SERIAL_TIMEOUT = 1
 GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
 GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
@@ -133,6 +133,8 @@ class RobustGPSReader:
 
     def __init__(self):
         self.ser = None
+        self.selected_port = None
+        self.selected_baud = None
         self.last_buffer_clear = time.time()
         self.last_fix_time = 0.0
         self.last_valid_fix_time = 0.0
@@ -172,6 +174,8 @@ class RobustGPSReader:
                     if ok:
                         ser.timeout = GPS_SERIAL_TIMEOUT
                         print(f"GPS serial opened: {port} @ {baud}")
+                        self.selected_port = port
+                        self.selected_baud = baud
                         return ser
                     try:
                         ser.close()
@@ -307,6 +311,8 @@ class RobustGPSReader:
                 "altitude": altitude,
                 "timestamp": timestamp,
                 "raw": line,
+                "port": self.selected_port,
+                "baud": self.selected_baud,
             }
 
         return None
@@ -338,6 +344,7 @@ def main():
 
             print("=" * 40)
             print("✅ Stable GPS Fix Acquired")
+            print(f"  Serial          : {fix.get('port')} @ {fix.get('baud')}")
             print(f"  Timestamp       : {fix.get('timestamp', '')}")
             print(f"  Latitude        : {fix['lat']:.6f}")
             print(f"  Longitude       : {fix['lng']:.6f}")
