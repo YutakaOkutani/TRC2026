@@ -5,27 +5,6 @@ import time
 
 import serial
 
-
-def configure_uart_pins():
-    """Ensure GPIO14/15 are mapped to UART (TX/RX) using gpiozero."""
-    try:
-        from gpiozero.pins.lgpio import LGPIOFactory
-    except Exception:
-        return
-    try:
-        pin_factory = LGPIOFactory()
-        for pin_no in (14, 15):
-            pin = pin_factory.pin(pin_no)
-            try:
-                pin.function = "alt0"  # UART0: TXD0/RXD0
-            finally:
-                try:
-                    pin.close()
-                except Exception:
-                    pass
-    except Exception:
-        return
-
 # --- GPS settings (identical to main.py) ---
 GPS_SERIAL_PORT = "/dev/serial0"
 GPS_SERIAL_PORT_CANDIDATES = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyS0"]
@@ -80,7 +59,6 @@ def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
 
 def read_raw_nmea(duration_seconds=10.0):
     """Read any bytes from candidate ports to verify physical connection."""
-    configure_uart_pins()
     ports = [GPS_SERIAL_PORT] + [p for p in GPS_SERIAL_PORT_CANDIDATES if p != GPS_SERIAL_PORT]
     bauds = [GPS_BAUDRATE] + [b for b in GPS_BAUDRATE_CANDIDATES if b != GPS_BAUDRATE]
     print("=== RAW GPS INPUT PROBE ===")
@@ -159,7 +137,6 @@ class RobustGPSReader:
         return False, last_line
 
     def open_serial(self):
-        configure_uart_pins()
         ports = [GPS_SERIAL_PORT] + [p for p in GPS_SERIAL_PORT_CANDIDATES if p != GPS_SERIAL_PORT]
         bauds = [GPS_BAUDRATE] + [b for b in GPS_BAUDRATE_CANDIDATES if b != GPS_BAUDRATE]
         for port in ports:

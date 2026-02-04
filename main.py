@@ -247,26 +247,6 @@ class CanSatState:
 def current_milli_time():
     return round(time.time() * 1000)
 
-def configure_uart_pins():
-    """Ensure GPIO14/15 are mapped to UART (TX/RX) using gpiozero."""
-    try:
-        from gpiozero.pins.lgpio import LGPIOFactory
-    except Exception:
-        return
-    try:
-        pin_factory = LGPIOFactory()
-        for pin_no in (14, 15):
-            pin = pin_factory.pin(pin_no)
-            try:
-                pin.function = "alt0"  # UART0: TXD0/RXD0
-            finally:
-                try:
-                    pin.close()
-                except Exception:
-                    pass
-    except Exception:
-        return
-
 # --- CanSat Controller Class ---
 class CanSatController:
 
@@ -915,7 +895,6 @@ class CanSatController:
             return False, last_line
 
         def open_serial():
-            configure_uart_pins()
             ports = [GPS_SERIAL_PORT] + [p for p in GPS_SERIAL_PORT_CANDIDATES if p != GPS_SERIAL_PORT]
             bauds = [GPS_BAUDRATE] + [b for b in GPS_BAUDRATE_CANDIDATES if b != GPS_BAUDRATE]
             for port in ports:
