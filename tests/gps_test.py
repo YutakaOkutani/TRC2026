@@ -28,7 +28,9 @@ def configure_uart_pins():
 
 # --- GPS settings (identical to main.py) ---
 GPS_SERIAL_PORT = "/dev/serial0"
+GPS_SERIAL_PORT_CANDIDATES = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyS0"]
 GPS_BAUDRATE = 115200  # 9600, 38400
+GPS_BAUDRATE_CANDIDATES = [115200, 9600, 38400]
 GPS_SERIAL_TIMEOUT = 1
 GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
 GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
@@ -87,19 +89,51 @@ class RobustGPSReader:
         self.last_valid_latlng = None
         self.stable_count = 0
 
+    def _probe_nmea(self, ser, probe_seconds=2.0):
+        start = time.time()
+        last_line = ""
+        while time.time() - start < probe_seconds:
+            try:
+                line_bytes = ser.readline()
+            except Exception:
+                return False, last_line
+            if not line_bytes:
+                continue
+            line = line_bytes.decode("utf-8", errors="ignore").strip()
+            if line:
+                last_line = line
+            if line.startswith("$"):
+                return True, last_line
+        return False, last_line
+
     def open_serial(self):
         configure_uart_pins()
-        try:
-            ser = serial.Serial(GPS_SERIAL_PORT, GPS_BAUDRATE, timeout=GPS_SERIAL_TIMEOUT)
-            try:
-                ser.reset_input_buffer()
-            except Exception:
-                pass
-            print("GPS serial opened.")
-            return ser
-        except Exception as e:
-            print(f"GPS Serial Open Failed: {e}")
-            return None
+        ports = [GPS_SERIAL_PORT] + [p for p in GPS_SERIAL_PORT_CANDIDATES if p != GPS_SERIAL_PORT]
+        bauds = [GPS_BAUDRATE] + [b for b in GPS_BAUDRATE_CANDIDATES if b != GPS_BAUDRATE]
+        for port in ports:
+            for baud in bauds:
+                try:
+                    ser = serial.Serial(port, baud, timeout=0.2)
+                    try:
+                        ser.reset_input_buffer()
+                    except Exception:
+                        pass
+                    ok, last_line = self._probe_nmea(ser)
+                    if ok:
+                        ser.timeout = GPS_SERIAL_TIMEOUT
+                        print(f"GPS serial opened: {port} @ {baud}")
+                        return ser
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+                    if last_line:
+                        print(f"No NMEA at {port} @ {baud} (last: {last_line})")
+                    else:
+                        print(f"No NMEA at {port} @ {baud}")
+                except Exception as e:
+                    print(f"GPS Serial Open Failed: {port} @ {baud}: {e}")
+        return None
 
     def ensure_serial(self):
         if self.ser is None or not self.ser.is_open:
