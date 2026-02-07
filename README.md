@@ -713,7 +713,7 @@ nano ~/discord_ip.sh
 
 #### 2. 以下のコードを貼り付け
 
-```shell script
+```bash
 #!/bin/bash
 
 WEBHOOK_URL="ここにコピーしたURLを貼り付ける"
