@@ -1,0 +1,63 @@
+import time
+
+from cansat_mission.constants import (
+    DEVICE_LED_GREEN,
+    DEVICE_LED_RED,
+    GPS_ACTIVE_DETECT,
+    GPS_CLOSE_DISTANCE,
+    GPS_LOST_LOG_INTERVAL,
+    LED_INTERVAL_PHASE3,
+    LED_INTERVAL_PHASE3_NEAR,
+    PHASE_LOG_INTERVAL,
+    Phase,
+    TIMEOUT_PHASE_3,
+)
+from cansat_mission.navigation import calc_distance_and_azimuth
+from cansat_mission.phases.base import BasePhaseHandler
+
+
+class Phase3Handler(BasePhaseHandler):
+    def execute(self, controller, snapshot):
+        led_red = controller.devices.get(DEVICE_LED_RED)
+        led_green = controller.devices.get(DEVICE_LED_GREEN)
+        if led_red:
+            led_red.off()
+        controller.toggle_led(led_green, controller.led_blink_timer, interval=LED_INTERVAL_PHASE3)
+        if time.time() - controller.time_phase3_start > TIMEOUT_PHASE_3:
+            print("Phase3 TIMEOUT: switching to Phase4")
+            controller.state.update_navigation(phase=int(Phase.PHASE4))
+            controller.time_phase4_start = time.time()
+            return
+        if snapshot["gps_detect"] == GPS_ACTIVE_DETECT:
+            dist, azimuth = calc_distance_and_azimuth(snapshot["lat"], snapshot["lng"], controller.target_lat, controller.target_lng)
+            controller.state.update_navigation(distance=dist, azimuth=azimuth, direction=azimuth)
+            fused_heading, heading_source, _ = controller._weighted_heading(snapshot)
+            heading_diff = None
+            if fused_heading is not None:
+                heading_diff = controller._angle_diff_deg(azimuth, fused_heading)
+            if controller.led_blink_timer % PHASE_LOG_INTERVAL == 0:
+                if fused_heading is not None and heading_diff is not None:
+                    print(
+                        f"GPS Nav: Dist={dist:.1f}m, TargetDir={azimuth:.1f}, "
+                        f"Head({heading_source})={fused_heading:.1f}, Diff={heading_diff:+.1f}"
+                    )
+                else:
+                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azimuth:.1f}, MyHead=INVALID")
+            if dist < GPS_CLOSE_DISTANCE:
+                print(f"Close enough ({dist:.1f}m): switching to Phase4")
+                controller.state.update_navigation(phase=int(Phase.PHASE4))
+                controller.time_phase4_start = time.time()
+            controller.toggle_led(led_green, controller.led_blink_timer, interval=LED_INTERVAL_PHASE3_NEAR)
+        else:
+            if controller.led_blink_timer % GPS_LOST_LOG_INTERVAL == 0:
+                print("GPS Lost: Keep going...")
+
+
+def run_standalone():
+    from cansat_mission.runners import run_single_phase
+
+    run_single_phase(Phase.PHASE3)
+
+
+if __name__ == "__main__":
+    run_standalone()

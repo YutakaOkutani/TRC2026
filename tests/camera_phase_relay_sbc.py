@@ -1,7 +1,16 @@
-import argparse, base64, json, math, os, socket, struct, threading, time
+import argparse, base64, json, math, os, socket, struct, threading, time, sys
 import cv2, pynmea2, serial
 from gpiozero import DigitalOutputDevice, LED, PWMOutputDevice
 from gpiozero.pins.lgpio import LGPIOFactory
+
+# Ensure this test script resolves imports from the same library hierarchy as main.py.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MAIN_PY_LIBRARY_DIR = PROJECT_ROOT / "library"
+if not MAIN_PY_LIBRARY_DIR.exists():
+    raise FileNotFoundError(f"main.py library directory not found: {MAIN_PY_LIBRARY_DIR}")
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from library import bno055
 from library import detect_corn as dc
 
