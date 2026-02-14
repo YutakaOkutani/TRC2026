@@ -6,7 +6,7 @@
 
 - `main.py`: 本番用の最小司令塔エントリ。`run_full_mission()` を呼ぶだけ。
 - `cansat_mission/`: 実ロジック本体（定数・状態・司令塔・フェーズ・I/O管理）。
-- `tests/orchestrator_*.py`: フェーズ限定デバッグ用の司令塔（2→3 / 4→6）。
+- `tests/orchestrator_*.py`: フェーズ限定デバッグ用の司令塔（1→6 / 2→3 / 4→6）。
 
 ## ディレクトリごとの役割
 

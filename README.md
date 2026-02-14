@@ -4,24 +4,48 @@
 
 ```plaintext
 ├── main.py
-├── cansat_mission
-├── venv
+├── cansat_mission/
+│   ├── managers/
+│       ├── __init__.py
+│       ├── hardware_manager.py
+│       ├── led_manager.py
+│       ├── motor_manager.py
+│       ├── sensor_manager.py
+│   ├── phases/
+│       ├── __init__.py
+│       ├── base.py
+│       ├── phase0.py
+│       ├── phase1.py
+│       ├── phase2.py
+│       ├── phase3.py
+│       ├── phase4.py
+│       ├── phase5.py
+│       ├── phase6.py
+│   ├── __init__.py
+│   ├── ARCHITECTURE_SUMMARY.md
+│   ├── constants.py
+│   ├── controller.py
+│   ├── navigation.py
+│   ├── runners.py
+│   ├── state.py
 ├── library/
 │   ├── __init__.py
 │   ├── bno055.py
 │   ├── bmp180.py
-│   ├── detect_corn.py
 │   ├── capture_roi_img.py
+│   ├── detect_corn.py
 ├── tests/
-│   ├── venv
+│   ├── camera_phase_monitor_pc.py
 │   ├── camera_phase_relay_README.md
 │   ├── camera_phase_relay_sbc.py
-│   ├── camera_phase_monitor_pc.py
 │   ├── gps_test.py
 │   ├── landing_impact.py
 │   ├── led.py
 │   ├── motor_test.py
 │   ├── open_parachute.py
+│   ├── orchestrator_phase1_to_phase6.py
+│   ├── orchestrator_phase2_to_phase3.py
+│   ├── orchestrator_phase4_to_phase6.py
 └── README.md
 ```
 
