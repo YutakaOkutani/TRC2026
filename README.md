@@ -4,6 +4,7 @@
 
 ```plaintext
 ├── main.py
+├── cansat_mission
 ├── venv
 ├── library/
 │   ├── __init__.py
