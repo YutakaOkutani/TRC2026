@@ -14,8 +14,8 @@ from cansat_mission.runners import run_phase_sequence
 
 def main():
     run_phase_sequence(
-        start_phase=Phase.PHASE4,
-        allowed_phases=(Phase.PHASE4, Phase.PHASE5, Phase.PHASE6),
+        start_phase=Phase.PHASE1,
+        allowed_phases=(Phase.PHASE1, Phase.PHASE2, Phase.PHASE3, Phase.PHASE4, Phase.PHASE5, Phase.PHASE6),
     )
 
 

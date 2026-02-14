@@ -3,9 +3,9 @@
 ## Overview
 
 - SBC side (`camera_phase_relay_sbc.py`):
-  - Runs camera detection with the same logic path as `main.py` (`library/detect_corn.py` -> `detector.detect_cone()`).
-  - Includes phase4-6 control loop and the same motor/LED behavior as `main.py` (camera searching -> approaching -> goal).
-  - Reads BNO055 and GPS in parallel and relays them.
+  - Calls `cansat_mission/phases/phase4.py`, `phase5.py`, `phase6.py` handlers directly for phase behavior.
+  - Uses shared managers (`SensorManager`, `MotorManager`, `LedManager`) instead of duplicating phase logic.
+  - Keeps only SBC-specific realtime debug relay (overlay + telemetry transport).
   - Adds camera debug overlay (bbox, centroid, phase, GOAL sign).
   - Sends telemetry and compressed camera frames to PC.
 - PC side (`camera_phase_monitor_pc.py`):
