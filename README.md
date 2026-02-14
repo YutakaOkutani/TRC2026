@@ -2,7 +2,7 @@
 
 ## ファイル構成
 
-```
+```plaintext
 ├── main.py
 ├── venv
 ├── library/
@@ -12,12 +12,11 @@
 │   ├── detect_corn.py
 │   ├── capture_roi_img.py
 ├── tests/
-│   ├── library/
-│       ├── __init__.py
-│       ├── bno055.py
-│       ├── bmp180.py
+│   ├── venv
+│   ├── camera_phase_relay_README.md
+│   ├── camera_phase_relay_sbc.py
+│   ├── camera_phase_monitor_pc.py
 │   ├── gps_test.py
-│   ├── gps_test_new.py
 │   ├── landing_impact.py
 │   ├── led.py
 │   ├── motor_test.py
@@ -30,6 +29,8 @@
 * カメラフェーズ用：detect_corn.py
 * ゴール画像撮影用：capture_roi_image.py
 * テストコード：gps_test.py, landing_impact.py, led.py, motor_test.py, open_parachute.py（landing_impact.py と open_parachute.py の中身は同じ。出力されるログファイルを区別するために分けてある）
+* カメラフェーズのリレーコード：camera_phase_relay_sbc.py, camera_phase_monitor_pc.py
+* カメラフェーズのリレーコードの説明：camera_phase_relay_README.md
 
 ## 1. 環境構築の準備
 
@@ -260,7 +261,7 @@ rpicam-hello *--info-text*
 
 ```bash
 # ライブプレビュー
-rpicam-hello -t 0
+rpicam-hello -t 0 # モニターに繋げば映像が見えるはず
 # 静止画撮影
 rpicam-still -o test.jpg
 # 動画撮影
