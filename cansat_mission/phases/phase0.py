@@ -48,3 +48,12 @@ class Phase0Handler(BasePhaseHandler):
             time.sleep(SHORT_SLEEP)
         controller.state.update_navigation(phase=int(Phase.PHASE1))
         controller.time_phase1_start = time.time()
+
+
+def _print_direct_run_help():
+    print("phase0.py is a phase handler module and does not run mission logic by itself.")
+    print("Run mission from project root with: python3 main.py")
+
+
+if __name__ == "__main__":
+    _print_direct_run_help()
