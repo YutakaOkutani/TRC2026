@@ -83,7 +83,6 @@ class HardwareManager:
                 print("WARNING: No ROI image found. Switching to DEFAULT RED detection.")
             self.roi_img = roi_img
             detector.set_roi_img(roi_img)
-            detector.detect_cone()
             self.devices[DEVICE_DETECTOR] = detector
             print("Camera: OK (Initialized)")
         except Exception as exc:

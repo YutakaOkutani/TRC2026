@@ -28,6 +28,9 @@ class detector:
         self.picam2 = None
         self.camera_width = 640
         self.camera_height = 480
+        self.camera_warmup_sec = 0.8
+        self.capture_retry_count = 3
+        self.capture_retry_sleep = 0.2
         
         # ROIヒストグラム (Noneならデフォルト色を使用)
         self.__roi_hist = None
@@ -66,8 +69,14 @@ class detector:
         """カメラの初期化（失敗したらFalseを返す）"""
         try:
             if self.picam2 is not None:
-                self.picam2.stop()
-                self.picam2.close()
+                try:
+                    self.picam2.stop()
+                except Exception:
+                    pass
+                try:
+                    self.picam2.close()
+                except Exception:
+                    pass
             
             self.picam2 = Picamera2()
             # 処理負荷軽減のため解像度を固定 (640x480)
@@ -76,6 +85,8 @@ class detector:
             )
             self.picam2.configure(config)
             self.picam2.start()
+            # 起動直後は取得失敗しやすいので少し待つ
+            time.sleep(self.camera_warmup_sec)
             print("[Detector] Camera Initialized.")
             return True
         except Exception as e:
@@ -85,22 +96,22 @@ class detector:
 
     def __get_camera_img(self):
         """画像取得（失敗時は再接続を試みる）"""
-        try:
-            if self.picam2 is None:
-                if not self.__init_camera():
-                    return False
-            
-            # 画像取得
-            raw_img = self.picam2.capture_array()
-            # ノイズ除去
-            self.input_img = cv2.blur(raw_img, (5, 5)) 
-            return True
-            
-        except Exception as e:
-            print(f"[Detector] Capture Error: {e}")
-            # エラーが出たらカメラをリセットしてみる
-            self.__init_camera()
-            return False
+        if self.picam2 is None:
+            if not self.__init_camera():
+                return False
+
+        for attempt in range(self.capture_retry_count):
+            try:
+                raw_img = self.picam2.capture_array()
+                self.input_img = cv2.blur(raw_img, (5, 5))
+                return True
+            except Exception as e:
+                print(f"[Detector] Capture Error (attempt {attempt + 1}/{self.capture_retry_count}): {e}")
+                time.sleep(self.capture_retry_sleep)
+
+        # 連続失敗時はカメラをリセット
+        self.__init_camera()
+        return False
 
     def detect_cone(self):
         """メイン検出ループ"""
@@ -111,7 +122,7 @@ class detector:
         
         # 画像取得
         if not self.__get_camera_img():
-            return # カメラダメなら終了
+            return False # カメラダメなら終了
 
         # 検出処理
         try:
@@ -126,6 +137,9 @@ class detector:
         except Exception as e:
             print(f"[Detector] Process Error: {e}")
             self.is_detected = False
+            return False
+
+        return True
 
     def __back_projection(self):
         """逆投影法: ヒストグラムに近い色を抽出"""

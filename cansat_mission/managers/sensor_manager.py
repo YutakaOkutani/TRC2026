@@ -106,7 +106,6 @@ class SensorManager:
         try:
             detector = dc.detector()
             detector.set_roi_img(self.roi_img)
-            detector.detect_cone()
             self.devices[DEVICE_DETECTOR] = detector
             self.camera_fail_count = 0
             self.camera_dead_since = None
@@ -249,7 +248,9 @@ class SensorManager:
             self.state.update_cone(cone_direction=CONE_CENTER_POSITION, cone_probability=0.0, cone_is_reached=False)
             return
         try:
-            detector.detect_cone()
+            captured = detector.detect_cone()
+            if not captured:
+                raise RuntimeError("camera capture failed")
             prob = detector.probability if detector.probability else 0.0
             cdir = CONE_CENTER_POSITION
             if detector.cone_direction is not None:
