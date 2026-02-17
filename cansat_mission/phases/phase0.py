@@ -1,4 +1,9 @@
+import os
+import sys
 import time
+
+if __package__ is None or __package__ == "":
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from cansat_mission.constants import (
     DEVICE_LED_GREEN,
