@@ -99,6 +99,8 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.phase_entry_time = None
         self.last_phase_observed = None
         self.phase_elapsed_totals = {phase: 0.0 for phase in Phase}
+        self.mission_end_reason = "RUNNING"
+        self.mission_total_timeout_triggered = False
 
         self.phase_handlers = {
             Phase.PHASE0: Phase0Handler(),
@@ -165,6 +167,8 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         if mission_elapsed >= MISSION_TIMEOUT_TOTAL:
             print(f"MISSION TIMEOUT ({mission_elapsed:.1f}s): forcing Phase6")
             self._commit_active_phase_elapsed(current_phase, now)
+            self.mission_end_reason = "MISSION_TOTAL_TIMEOUT"
+            self.mission_total_timeout_triggered = True
             self.initialize_phase(Phase.PHASE6)
             return True
 
@@ -181,6 +185,8 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
             f"forcing {next_phase.name}"
         )
         self._commit_active_phase_elapsed(current_phase, now)
+        if next_phase == Phase.PHASE6 and self.mission_end_reason == "RUNNING":
+            self.mission_end_reason = f"{current_phase.name}_CUM_TIMEOUT_TO_PHASE6"
         self.initialize_phase(next_phase)
         return True
 

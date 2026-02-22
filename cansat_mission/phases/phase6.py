@@ -16,12 +16,20 @@ class Phase6Handler(BasePhaseHandler):
     def execute(self, controller, snapshot):
         led_red = controller.devices.get(DEVICE_LED_RED)
         led_green = controller.devices.get(DEVICE_LED_GREEN)
-        print("phase6 : Goal!!")
-        if led_red:
-            led_red.on()
-        if led_green:
-            led_green.on()
         controller.stop_motors()
+        if getattr(controller, "mission_total_timeout_triggered", False):
+            if getattr(controller, "mission_end_reason", "RUNNING") == "RUNNING":
+                controller.mission_end_reason = "MISSION_TOTAL_TIMEOUT"
+            print("phase6 : Mission End (TOTAL TIMEOUT)")
+            controller.signal_total_timeout_alert()
+        else:
+            if getattr(controller, "mission_end_reason", "RUNNING") == "RUNNING":
+                controller.mission_end_reason = "PHASE6_EXIT"
+            print("phase6 : Goal!!")
+            if led_red:
+                led_red.on()
+            if led_green:
+                led_green.on()
         sys.exit()
 
 

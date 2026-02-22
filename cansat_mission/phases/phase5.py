@@ -69,10 +69,12 @@ class Phase5Handler(BasePhaseHandler):
                 break
             if time.time() - controller.time_camera_start >= TIMEOUT_PHASE_5:
                 print("Phase5 TIMEOUT: Giving up, forcing Goal")
+                controller.mission_end_reason = "PHASE5_TIMEOUT_FORCED_GOAL"
                 controller.state.update_navigation(phase=int(Phase.PHASE6))
                 break
             if is_reach:
                 print("Reached Cone! (Visual confirmation)")
+                controller.mission_end_reason = "GOAL_REACHED"
                 controller.state.update_navigation(phase=int(Phase.PHASE6))
                 break
             time.sleep(SHORT_SLEEP)

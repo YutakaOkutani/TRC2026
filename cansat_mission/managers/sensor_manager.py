@@ -480,6 +480,10 @@ class SensorManager:
                 self.state.update_obstacle(obstacle_dist=sonar_dist)
             current_data = self.state.snapshot()
             motor_cmd = getattr(self, "last_motor_command", {})
+            mission_start = getattr(self, "mission_start_time", None)
+            mission_elapsed_sec = 0.0
+            if mission_start:
+                mission_elapsed_sec = max(0.0, time.time() - mission_start)
             try:
                 with open(self.log_path, "a", newline="") as file_obj:
                     writer = csv.writer(file_obj)
@@ -521,6 +525,9 @@ class SensorManager:
                             int(bool(motor_cmd.get("motor1_forward", 1))),
                             f"{float(motor_cmd.get('motor2_speed', 0.0)):.2f}",
                             int(bool(motor_cmd.get("motor2_forward", 1))),
+                            getattr(self, "mission_end_reason", "RUNNING"),
+                            int(bool(getattr(self, "mission_total_timeout_triggered", False))),
+                            f"{mission_elapsed_sec:.2f}",
                         ]
                     )
             except Exception as exc:

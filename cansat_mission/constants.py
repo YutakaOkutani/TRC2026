@@ -23,7 +23,7 @@ TARGET_LAT = 38.261332
 TARGET_LNG = 140.853800
 
 # タイムアウトと動作関連定数
-MISSION_TIMEOUT_TOTAL = 20 * 60
+MISSION_TIMEOUT_TOTAL = 18 * 60
 TIMEOUT_PHASE_0 = 5 * 60
 TIMEOUT_PHASE_1 = 30
 TIMEOUT_PHASE_2 = 2 * 60
@@ -32,14 +32,14 @@ TIMEOUT_PHASE_4 = 60
 TIMEOUT_PHASE_5 = 45
 DATA_SAMPLING_RATE = 0.06
 
-# ミッション全体(20分)を超えないためのフェーズ累積予算
+# ミッション全体(18分)を超えないためのフェーズ累積予算
 # Phase3-5 は再入を考慮して、個別タイムアウトより大きい累積値を持たせる
 MISSION_PHASE_TIME_BUDGETS = {
     Phase.PHASE0: TIMEOUT_PHASE_0,  # 降下待機
     Phase.PHASE1: TIMEOUT_PHASE_1,  # パラ分離
     Phase.PHASE2: TIMEOUT_PHASE_2,  # キャリブレーション
-    Phase.PHASE3: 9 * 60,           # GPS航行
-    Phase.PHASE4: 2 * 60,           # カメラ探索(複数回)
+    Phase.PHASE3: 7 * 60,           # GPS航行
+    Phase.PHASE4: 90,               # カメラ探索(複数回)
     Phase.PHASE5: 90,               # 接近(複数回)
 }
 
@@ -113,6 +113,8 @@ LED_INTERVAL_PHASE3_NEAR = 2
 LED_INTERVAL_PHASE5 = 2
 LED_SIGNAL_SLEEP = 0.2
 LED_SIGNAL_COUNT = 3
+LED_TIMEOUT_ALERT_FLASH_COUNT = 24
+LED_TIMEOUT_ALERT_FAST_SLEEP = 0.08
 
 # モーター・センサーのGPIO関連定数
 PIN_EN1 = 12
@@ -283,4 +285,7 @@ LOG_HEADER = [
     "Motor1CmdForward",
     "Motor2CmdSpeed",
     "Motor2CmdForward",
+    "MissionEndReason",
+    "MissionTotalTimeout",
+    "MissionElapsedSec",
 ]
