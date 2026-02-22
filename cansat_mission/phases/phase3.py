@@ -16,7 +16,6 @@ from cansat_mission.constants import (
     GPS_CLOSE_DISTANCE,
     GPS_LOST_LOG_INTERVAL,
     LED_INTERVAL_PHASE3,
-    LED_INTERVAL_PHASE3_NEAR,
     PHASE_LOG_INTERVAL,
     Phase,
     TIMEOUT_PHASE_3,
@@ -56,7 +55,6 @@ class Phase3Handler(BasePhaseHandler):
                 print(f"Close enough ({dist:.1f}m): switching to Phase4")
                 controller.state.update_navigation(phase=int(Phase.PHASE4))
                 controller.time_phase4_start = time.time()
-            controller.toggle_led(led_green, controller.led_blink_timer, interval=LED_INTERVAL_PHASE3_NEAR)
         else:
             if controller.led_blink_timer % GPS_LOST_LOG_INTERVAL == 0:
                 print("GPS Lost: Keep going...")

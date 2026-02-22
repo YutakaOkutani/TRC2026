@@ -57,6 +57,8 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.searching_flag = False
         self.count_cone_lost = 0
         self.time_phase1_start = None
+        self.phase0_entry_marker = None
+        self.phase0_initial_alt = None
         self.time_phase3_start = 0.0
         self.time_phase4_start = 0.0
         self.time_phase5_start = 0.0
@@ -93,6 +95,7 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.camera_phase5_attempts = 0
         self.camera_phase4_start = None
         self.camera_phase5_start = None
+        self.phase5_entry_marker = None
         self.obstacle_detect_count = 0
         self.phase3_no_heading_start = None
         self.mission_start_time = None
