@@ -50,6 +50,16 @@ class MotorManager:
     def _clamp_percent(self, value):
         return max(PWM_PERCENT_MIN, min(PWM_PERCENT_MAX, value))
 
+    def _record_motor_command(self, cmd_type, motor1_speed, motor1_forward, motor2_speed, motor2_forward):
+        self.last_motor_command = {
+            "type": cmd_type,
+            "updated_ms": int(time.time() * 1000),
+            "motor1_speed": float(motor1_speed),
+            "motor1_forward": int(bool(motor1_forward)),
+            "motor2_speed": float(motor2_speed),
+            "motor2_forward": int(bool(motor2_forward)),
+        }
+
     def move_motor_thread(self):
         while True:
             snapshot = self.state.snapshot()
@@ -77,9 +87,9 @@ class MotorManager:
                 print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
-                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, False)
+                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, False, cmd_type="obstacle_backup")
                 time.sleep(OBSTACLE_BACKUP_TIME)
-                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, True)
+                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, True, cmd_type="obstacle_turn")
                 time.sleep(OBSTACLE_TURN_TIME)
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
@@ -93,13 +103,14 @@ class MotorManager:
                     PARACHUTE_SEPARATION_SPEED,
                     True,
                     ramp_time=0.0,
+                    cmd_type="phase1_parachute_separation",
                 )
                 time.sleep(PARACHUTE_MOTOR_PULSE)
                 continue
 
             if phase == Phase.PHASE2:
                 if self.phase2_stage == PHASE2_STAGE_STRAIGHT:
-                    self.set_motors(PHASE2_SPEED, True, PHASE2_SPEED, True)
+                    self.set_motors(PHASE2_SPEED, True, PHASE2_SPEED, True, cmd_type="phase2_straight")
                 else:
                     elapsed = 0.0
                     if self.phase2_stage_start is not None:
@@ -113,7 +124,7 @@ class MotorManager:
                     else:
                         speed_l = self._clamp_percent(base + bias)
                         speed_r = self._clamp_percent(base - bias)
-                    self.set_motors(speed_r, True, speed_l, True)
+                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase2_fig8")
                 time.sleep(MOTOR_LOOP_INTERVAL)
                 continue
 
@@ -128,7 +139,7 @@ class MotorManager:
                     turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
                     speed_l = self._clamp_percent(BASE_SPEED + turn_val)
                     speed_r = self._clamp_percent(BASE_SPEED - turn_val)
-                    self.set_motors(speed_r, True, speed_l, True)
+                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_heading_follow")
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
@@ -142,15 +153,15 @@ class MotorManager:
                     else:
                         speed_l = self._clamp_percent(base + bias)
                         speed_r = self._clamp_percent(base - bias)
-                    self.set_motors(speed_r, True, speed_l, True)
+                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_no_heading_search")
             elif phase == Phase.PHASE4:
-                self.set_motors(SEARCH_ROTATION_SPEED, True, SEARCH_ROTATION_SPEED, False)
+                self.set_motors(SEARCH_ROTATION_SPEED, True, SEARCH_ROTATION_SPEED, False, cmd_type="phase4_search")
             elif phase == Phase.PHASE5:
                 err = cone_direction - CONE_CENTER_POSITION
                 turn_cam = err * APPROACH_TURN_GAIN
                 speed_l = self._clamp_percent(BASE_SPEED + turn_cam)
                 speed_r = self._clamp_percent(BASE_SPEED - turn_cam)
-                self.set_motors(speed_r, True, speed_l, True)
+                self.set_motors(speed_r, True, speed_l, True, cmd_type="phase5_approach")
 
             time.sleep(MOTOR_LOOP_INTERVAL)
 
@@ -238,6 +249,7 @@ class MotorManager:
         forward_b,
         ramp_time=MOTOR_RAMP_TIME,
         step_interval=MOTOR_RAMP_STEP,
+        cmd_type="set_motors",
     ):
         motor_1_pwm = self.devices.get(DEVICE_MOTOR_1_PWM)
         motor_1_dir = self.devices.get(DEVICE_MOTOR_1_DIR)
@@ -283,6 +295,7 @@ class MotorManager:
         state_a["direction"] = forward_a
         state_b["speed"] = current_b
         state_b["direction"] = forward_b
+        self._record_motor_command(cmd_type, current_a, forward_a, current_b, forward_b)
 
     def stop_motors(self):
         motor_1_pwm = self.devices.get(DEVICE_MOTOR_1_PWM)
@@ -293,3 +306,4 @@ class MotorManager:
             motor_2_pwm.value = 0
         for state in self.motor_state.values():
             state["speed"] = 0.0
+        self._record_motor_command("stop", 0.0, True, 0.0, True)

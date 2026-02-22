@@ -372,6 +372,24 @@ class SensorManager:
                 except (TypeError, ValueError):
                     hdop_ok = True
 
+                try:
+                    gps_fix_qual_val = int(gps_qual) if gps_qual is not None else 0
+                except (TypeError, ValueError):
+                    gps_fix_qual_val = 0
+                try:
+                    gps_sats_val = int(num_sats) if num_sats is not None else 0
+                except (TypeError, ValueError):
+                    gps_sats_val = 0
+                try:
+                    gps_hdop_val = float(hdop) if hdop is not None else 0.0
+                except (TypeError, ValueError):
+                    gps_hdop_val = 0.0
+                self.state.update_gps(
+                    gps_fix_qual=gps_fix_qual_val,
+                    gps_sats=gps_sats_val,
+                    gps_hdop=gps_hdop_val,
+                )
+
                 if not (qual_ok and sats_ok and hdop_ok and (lat != 0.0 or lng != 0.0)):
                     stable_count = 0
                     continue
@@ -404,6 +422,9 @@ class SensorManager:
                         gps_detect=GPS_ACTIVE_DETECT,
                         gps_heading=gps_heading,
                         gps_heading_valid=gps_heading_valid,
+                        gps_fix_qual=gps_fix_qual_val,
+                        gps_sats=gps_sats_val,
+                        gps_hdop=gps_hdop_val,
                     )
                     last_valid_fix_time = now
                     last_valid_latlng = (lat, lng)
@@ -458,6 +479,7 @@ class SensorManager:
             if sonar_dist is not None:
                 self.state.update_obstacle(obstacle_dist=sonar_dist)
             current_data = self.state.snapshot()
+            motor_cmd = getattr(self, "last_motor_command", {})
             try:
                 with open(self.log_path, "a", newline="") as file_obj:
                     writer = csv.writer(file_obj)
@@ -476,10 +498,15 @@ class SensorManager:
                             f"{current_data['mag'][2]:.2f}",
                             f"{current_data['lat']:.6f}",
                             f"{current_data['lng']:.6f}",
+                            int(current_data.get("gps_fix_qual", 0)),
+                            int(current_data.get("gps_sats", 0)),
+                            f"{current_data.get('gps_hdop', 0.0):.2f}",
                             f"{current_data['alt']:.2f}",
                             f"{current_data['pres']:.2f}",
                             f"{current_data['distance']:.2f}",
                             f"{current_data['azimuth']:.2f}",
+                            f"{self.target_lat:.6f}",
+                            f"{self.target_lng:.6f}",
                             f"{current_data['angle']:.2f}",
                             f"{current_data['direction']:.2f}",
                             f"{current_data['fall']:.2f}",
@@ -488,6 +515,12 @@ class SensorManager:
                             f"{current_data['obstacle_dist']:.2f}",
                             int(current_data.get("angle_valid", False)),
                             f"{self.bno_stale_sec:.2f}",
+                            motor_cmd.get("type", ""),
+                            int(motor_cmd.get("updated_ms", 0)),
+                            f"{float(motor_cmd.get('motor1_speed', 0.0)):.2f}",
+                            int(bool(motor_cmd.get("motor1_forward", 1))),
+                            f"{float(motor_cmd.get('motor2_speed', 0.0)):.2f}",
+                            int(bool(motor_cmd.get("motor2_forward", 1))),
                         ]
                     )
             except Exception as exc:

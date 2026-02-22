@@ -19,6 +19,9 @@ class CanSatState:
         self.lng = DEFAULT_FLOAT_VALUE
         self.gps_heading = DEFAULT_FLOAT_VALUE
         self.gps_heading_valid = False
+        self.gps_fix_qual = 0
+        self.gps_sats = 0
+        self.gps_hdop = DEFAULT_FLOAT_VALUE
         self.alt = DEFAULT_FLOAT_VALUE
         self.pres = DEFAULT_FLOAT_VALUE
         self.distance = DEFAULT_FLOAT_VALUE
@@ -49,7 +52,17 @@ class CanSatState:
             if angle_valid is not None:
                 self.angle_valid = angle_valid
 
-    def update_gps(self, lat=None, lng=None, gps_detect=None, gps_heading=None, gps_heading_valid=None):
+    def update_gps(
+        self,
+        lat=None,
+        lng=None,
+        gps_detect=None,
+        gps_heading=None,
+        gps_heading_valid=None,
+        gps_fix_qual=None,
+        gps_sats=None,
+        gps_hdop=None,
+    ):
         with self.lock:
             if lat is not None:
                 self.lat = lat
@@ -61,6 +74,12 @@ class CanSatState:
                 self.gps_heading = gps_heading
             if gps_heading_valid is not None:
                 self.gps_heading_valid = gps_heading_valid
+            if gps_fix_qual is not None:
+                self.gps_fix_qual = gps_fix_qual
+            if gps_sats is not None:
+                self.gps_sats = gps_sats
+            if gps_hdop is not None:
+                self.gps_hdop = gps_hdop
 
     def update_barometer(self, alt=None, pres=None):
         with self.lock:
@@ -104,6 +123,9 @@ class CanSatState:
                 "lng": self.lng,
                 "gps_heading": self.gps_heading,
                 "gps_heading_valid": self.gps_heading_valid,
+                "gps_fix_qual": self.gps_fix_qual,
+                "gps_sats": self.gps_sats,
+                "gps_hdop": self.gps_hdop,
                 "alt": self.alt,
                 "pres": self.pres,
                 "distance": self.distance,

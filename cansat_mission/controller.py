@@ -24,6 +24,9 @@ from cansat_mission.constants import (
     LOG_FILE_DATETIME_FORMAT,
     LOG_PREFIX,
     MAIN_LOOP_INTERVAL,
+    MISSION_PHASE_TIME_BUDGETS,
+    MISSION_PHASE_TIMEOUT_TRANSITIONS,
+    MISSION_TIMEOUT_TOTAL,
     PHASE2_STAGE_STRAIGHT,
     Phase,
 )
@@ -60,6 +63,14 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.time_start_searching_cone = 0.0
         self.time_camera_start = 0.0
         self.motor_state = {}
+        self.last_motor_command = {
+            "type": "init",
+            "updated_ms": 0,
+            "motor1_speed": 0.0,
+            "motor1_forward": 1,
+            "motor2_speed": 0.0,
+            "motor2_forward": 1,
+        }
         self.bno_fail_count = 0
         self.bno_last_reinit_time = 0.0
         self.bno_last_valid = {
@@ -84,6 +95,10 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.camera_phase5_start = None
         self.obstacle_detect_count = 0
         self.phase3_no_heading_start = None
+        self.mission_start_time = None
+        self.phase_entry_time = None
+        self.last_phase_observed = None
+        self.phase_elapsed_totals = {phase: 0.0 for phase in Phase}
 
         self.phase_handlers = {
             Phase.PHASE0: Phase0Handler(),
@@ -98,6 +113,10 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
     def initialize_phase(self, phase):
         phase_enum = Phase(phase)
         now = time.time()
+        if self.mission_start_time is None:
+            self.mission_start_time = now
+        self.last_phase_observed = phase_enum
+        self.phase_entry_time = now
         self.state.update_navigation(phase=int(phase_enum))
         if phase_enum == Phase.PHASE1:
             self.time_phase1_start = now
@@ -112,6 +131,58 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
             self.searching_flag = False
         elif phase_enum == Phase.PHASE5:
             self.time_phase5_start = now
+
+    def _sync_phase_time_tracking(self, current_phase):
+        now = time.time()
+        if self.mission_start_time is None:
+            self.mission_start_time = now
+        if self.last_phase_observed is None:
+            self.last_phase_observed = current_phase
+            self.phase_entry_time = now
+            return
+        if current_phase != self.last_phase_observed:
+            if self.phase_entry_time is not None:
+                self.phase_elapsed_totals[self.last_phase_observed] += max(0.0, now - self.phase_entry_time)
+            self.last_phase_observed = current_phase
+            self.phase_entry_time = now
+
+    def _current_phase_elapsed(self, phase, now):
+        elapsed = self.phase_elapsed_totals.get(phase, 0.0)
+        if self.last_phase_observed == phase and self.phase_entry_time is not None:
+            elapsed += max(0.0, now - self.phase_entry_time)
+        return elapsed
+
+    def _commit_active_phase_elapsed(self, phase, now):
+        if self.last_phase_observed != phase or self.phase_entry_time is None:
+            return
+        self.phase_elapsed_totals[phase] += max(0.0, now - self.phase_entry_time)
+
+    def _handle_timeout_transitions(self, current_phase):
+        now = time.time()
+        if self.mission_start_time is None:
+            self.mission_start_time = now
+        mission_elapsed = now - self.mission_start_time
+        if mission_elapsed >= MISSION_TIMEOUT_TOTAL:
+            print(f"MISSION TIMEOUT ({mission_elapsed:.1f}s): forcing Phase6")
+            self._commit_active_phase_elapsed(current_phase, now)
+            self.initialize_phase(Phase.PHASE6)
+            return True
+
+        phase_budget = MISSION_PHASE_TIME_BUDGETS.get(current_phase)
+        if phase_budget is None:
+            return False
+        phase_elapsed = self._current_phase_elapsed(current_phase, now)
+        if phase_elapsed < phase_budget:
+            return False
+
+        next_phase = MISSION_PHASE_TIMEOUT_TRANSITIONS.get(current_phase, Phase.PHASE6)
+        print(
+            f"{current_phase.name} cumulative timeout ({phase_elapsed:.1f}s / {phase_budget:.1f}s): "
+            f"forcing {next_phase.name}"
+        )
+        self._commit_active_phase_elapsed(current_phase, now)
+        self.initialize_phase(next_phase)
+        return True
 
     def run(self, start_phase=Phase.PHASE0, allowed_phases=None):
         self.setup_hardware()
@@ -138,10 +209,15 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
     def loop_once(self):
         snapshot = self.state.snapshot()
         phase = Phase(snapshot["phase"])
+        self._sync_phase_time_tracking(phase)
+        if self._handle_timeout_transitions(phase):
+            return
         self.led_blink_timer += 1
         handler = self.phase_handlers.get(phase)
         if handler is not None:
             handler.execute(self, snapshot)
+            post_phase = Phase(self.state.snapshot()["phase"])
+            self._sync_phase_time_tracking(post_phase)
 
     def _angle_diff_deg(self, target_deg, current_deg):
         diff = target_deg - current_deg

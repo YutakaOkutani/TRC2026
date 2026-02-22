@@ -23,6 +23,7 @@ TARGET_LAT = 38.261332
 TARGET_LNG = 140.853800
 
 # タイムアウトと動作関連定数
+MISSION_TIMEOUT_TOTAL = 20 * 60
 TIMEOUT_PHASE_0 = 5 * 60
 TIMEOUT_PHASE_1 = 30
 TIMEOUT_PHASE_2 = 2 * 60
@@ -30,6 +31,26 @@ TIMEOUT_PHASE_3 = 5 * 60
 TIMEOUT_PHASE_4 = 60
 TIMEOUT_PHASE_5 = 45
 DATA_SAMPLING_RATE = 0.06
+
+# ミッション全体(20分)を超えないためのフェーズ累積予算
+# Phase3-5 は再入を考慮して、個別タイムアウトより大きい累積値を持たせる
+MISSION_PHASE_TIME_BUDGETS = {
+    Phase.PHASE0: TIMEOUT_PHASE_0,  # 降下待機
+    Phase.PHASE1: TIMEOUT_PHASE_1,  # パラ分離
+    Phase.PHASE2: TIMEOUT_PHASE_2,  # キャリブレーション
+    Phase.PHASE3: 9 * 60,           # GPS航行
+    Phase.PHASE4: 2 * 60,           # カメラ探索(複数回)
+    Phase.PHASE5: 90,               # 接近(複数回)
+}
+
+MISSION_PHASE_TIMEOUT_TRANSITIONS = {
+    Phase.PHASE0: Phase.PHASE1,
+    Phase.PHASE1: Phase.PHASE2,
+    Phase.PHASE2: Phase.PHASE3,
+    Phase.PHASE3: Phase.PHASE4,
+    Phase.PHASE4: Phase.PHASE5,
+    Phase.PHASE5: Phase.PHASE6,
+}
 
 # センサーと動作の閾値
 IMPACT_FALL_THRESHOLD = 30.0
@@ -239,10 +260,15 @@ LOG_HEADER = [
     "MagZ",
     "LAT",
     "LNG",
+    "GPSFixQual",
+    "GPSSats",
+    "GPSHdop",
     "ALT",
     "Pres",
     "Distance",
     "Azimuth",
+    "TargetLat",
+    "TargetLng",
     "Angle",
     "Direction",
     "Fall",
@@ -251,4 +277,10 @@ LOG_HEADER = [
     "ObstacleDist",
     "AngleValid",
     "BNOStaleSec",
+    "MotorCmdType",
+    "MotorCmdUpdatedMs",
+    "Motor1CmdSpeed",
+    "Motor1CmdForward",
+    "Motor2CmdSpeed",
+    "Motor2CmdForward",
 ]
