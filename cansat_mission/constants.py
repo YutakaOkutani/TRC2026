@@ -279,6 +279,7 @@ LOG_HEADER = [
     "Fall",
     "ConeDir",
     "ConeProb",
+    "ConeMethod",
     "ObstacleDist",
     "AngleValid",
     "BNOStaleSec",

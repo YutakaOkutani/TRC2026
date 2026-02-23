@@ -245,7 +245,12 @@ class SensorManager:
             if self.camera_dead_since is None:
                 self.camera_dead_since = time.time()
             self._try_reinit_camera()
-            self.state.update_cone(cone_direction=CONE_CENTER_POSITION, cone_probability=0.0, cone_is_reached=False)
+            self.state.update_cone(
+                cone_direction=CONE_CENTER_POSITION,
+                cone_probability=0.0,
+                cone_is_reached=False,
+                cone_method="detector_unavailable",
+            )
             return
         try:
             captured = detector.detect_cone()
@@ -255,7 +260,17 @@ class SensorManager:
             cdir = CONE_CENTER_POSITION
             if detector.cone_direction is not None:
                 cdir = 1.0 - detector.cone_direction
-            self.state.update_cone(cone_direction=cdir, cone_probability=prob, cone_is_reached=detector.is_reached)
+            cone_method = str(getattr(detector, "debug_method", "unknown"))
+            self.state.update_cone(
+                cone_direction=cdir,
+                cone_probability=prob,
+                cone_is_reached=detector.is_reached,
+                cone_method=cone_method,
+            )
+            last_method = getattr(self, "_last_logged_cone_method", None)
+            if cone_method != last_method:
+                print(f"Cone detector method: {cone_method}")
+                self._last_logged_cone_method = cone_method
             self.camera_fail_count = 0
             self.camera_dead_since = None
         except Exception:
@@ -264,7 +279,12 @@ class SensorManager:
                 self.devices[DEVICE_DETECTOR] = None
                 if self.camera_dead_since is None:
                     self.camera_dead_since = time.time()
-            self.state.update_cone(cone_direction=CONE_CENTER_POSITION, cone_probability=0.0, cone_is_reached=False)
+            self.state.update_cone(
+                cone_direction=CONE_CENTER_POSITION,
+                cone_probability=0.0,
+                cone_is_reached=False,
+                cone_method="camera_error",
+            )
 
     def gps_thread(self):
         def _probe_nmea(serial_obj, probe_seconds=GPS_PROBE_SECONDS):
@@ -516,6 +536,7 @@ class SensorManager:
                             f"{current_data['fall']:.2f}",
                             f"{current_data['cone_direction']:.2f}",
                             f"{current_data['cone_probability']:.2f}",
+                            current_data.get("cone_method", ""),
                             f"{current_data['obstacle_dist']:.2f}",
                             int(current_data.get("angle_valid", False)),
                             f"{self.bno_stale_sec:.2f}",

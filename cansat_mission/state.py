@@ -32,6 +32,7 @@ class CanSatState:
         self.fall = DEFAULT_FLOAT_VALUE
         self.cone_direction = CONE_CENTER_POSITION
         self.cone_probability = DEFAULT_FLOAT_VALUE
+        self.cone_method = ""
         self.obstacle_dist = DEFAULT_OBSTACLE_DIST_CM
         self.phase = DEFAULT_PHASE
         self.gps_detect = 0
@@ -99,7 +100,7 @@ class CanSatState:
             if phase is not None:
                 self.phase = phase
 
-    def update_cone(self, cone_direction=None, cone_probability=None, cone_is_reached=None):
+    def update_cone(self, cone_direction=None, cone_probability=None, cone_is_reached=None, cone_method=None):
         with self.lock:
             if cone_direction is not None:
                 self.cone_direction = cone_direction
@@ -107,6 +108,8 @@ class CanSatState:
                 self.cone_probability = cone_probability
             if cone_is_reached is not None:
                 self.cone_is_reached = cone_is_reached
+            if cone_method is not None:
+                self.cone_method = cone_method
 
     def update_obstacle(self, obstacle_dist=None):
         with self.lock:
@@ -136,6 +139,7 @@ class CanSatState:
                 "fall": self.fall,
                 "cone_direction": self.cone_direction,
                 "cone_probability": self.cone_probability,
+                "cone_method": self.cone_method,
                 "obstacle_dist": self.obstacle_dist,
                 "phase": self.phase,
                 "gps_detect": self.gps_detect,

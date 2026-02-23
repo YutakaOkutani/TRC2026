@@ -90,6 +90,7 @@ class RelayController(MotorManager, SensorManager, LedManager):
         self.shutdown_reason = None
         self._shutdown_packet_sent = False
         self.phase6_exit_started_at = None
+        self._last_logged_cone_method = None
 
         self.devices = {
             DEVICE_BNO: None,
@@ -330,6 +331,10 @@ class RelayController(MotorManager, SensorManager, LedManager):
                 detector = self.devices.get(DEVICE_DETECTOR)
                 bbox, centroid = self._extract_detector_box(detector)
                 msg = "ok" if detector is not None else "detector_unavailable"
+                detector_method = str(getattr(detector, "debug_method", "unknown")) if detector is not None else "detector_unavailable"
+                if detector_method != self._last_logged_cone_method:
+                    print(f"Cone detector method: {detector_method}")
+                    self._last_logged_cone_method = detector_method
                 frame_b64 = None
                 if detector is not None and getattr(detector, "input_img", None) is not None:
                     frame = detector.input_img.copy()
@@ -350,6 +355,7 @@ class RelayController(MotorManager, SensorManager, LedManager):
                         "bbox_px": bbox,
                         "goal_sign": bool(snapshot.get("cone_is_reached", False) or phase == Phase.PHASE6),
                         "message": msg,
+                        "method": detector_method,
                     }
                     if frame_b64 is not None:
                         self.frame_b64 = frame_b64

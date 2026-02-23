@@ -98,6 +98,7 @@ class MonitorState:
                 "cone_direction": packet.get("camera", {}).get("cone_direction", 0.5),
                 "cone_is_reached": packet.get("camera", {}).get("cone_is_reached", False),
                 "camera_debug": packet.get("camera", {}).get("debug", {}),
+                "camera_method": packet.get("camera", {}).get("debug", {}).get("method", ""),
                 "angle_valid": bno.get("angle_valid", False),
                 "gps_detect": gps.get("gps_detect", 0),
                 "gps_heading_valid": gps.get("gps_heading_valid", False),
@@ -272,6 +273,7 @@ def start_ui(state, history_sec):
             f"link_age={age:.2f}s phase={summary.get('phase', -1)} | "
             f"cone_prob={summary.get('cone_probability', 0.0):.2f} cone_dir={summary.get('cone_direction', 0.5):.2f} "
             f"reached={summary.get('cone_is_reached', False)} goal_sign={dbg.get('goal_sign', False)} "
+            f"method={summary.get('camera_method', '')} "
             f"bbox={dbg.get('bbox_px', None)} centroid={dbg.get('centroid_px', None)} "
             f"angle_valid={summary.get('angle_valid', False)} gps_detect={summary.get('gps_detect', 0)} "
             f"gps_heading_valid={summary.get('gps_heading_valid', False)} "
