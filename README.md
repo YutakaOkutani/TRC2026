@@ -21,6 +21,7 @@
 │       ├── phase4.py
 │       ├── phase5.py
 │       ├── phase6.py
+│       ├── phase7.py
 │   ├── __init__.py
 │   ├── ARCHITECTURE_SUMMARY.md
 │   ├── constants.py
@@ -348,7 +349,7 @@ sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600や38400�
 
 ---
 
-## 9. その他
+## 9. 本番向けの設定
 
 ### 本番運用（systemd）: 電源投入で自動起動し、SSH切断後も継続実行する手順
 
@@ -497,6 +498,8 @@ sudo journalctl -u cansat.service -b
 本番中に一時的に手動デバッグしたい場合は、先に `sudo systemctl stop cansat.service` してから `tmux` で起動する（同時起動を避ける）。
 
 ---
+
+## 10. 便利なコマンドや設定
 
 ### 基本的なgit操作コマンド
 
@@ -699,6 +702,103 @@ ssh ユーザー名@IPアドレス
 
 ---
 
+### Raspberry Pi Zero 2 W の起動時にIPアドレスを任意のDiscordサーバーに送信させるようにする方法（シェルスクリプトの方法）
+
+#### 0. Discordでウェブフックのリンクを取得
+
+* Discordにログインし、ウェブフックを作成したいサーバーを選択
+
+* チャンネルの"Server Settings"を開き、"Integrations"タブを選択し、"Webhooks"をクリック
+
+* "New Webhook"をクリックし、ウェブフックの名前やアイコンを設定。
+
+* ウェブフックURLをコピー
+
+#### 1. スクリプトファイルを作成
+
+```bash
+nano ~/discord_ip.sh
+```
+
+#### 2. 以下のコードを貼り付け
+
+```bash
+#!/bin/bash
+
+WEBHOOK_URL="ここにコピーしたURLを貼り付ける"
+
+# IPアドレス取得関数 (Google DNSへのルート情報から取得)
+get_ip() {
+    ip route get 8.8.8.8 | grep -oP 'src \K\S+'
+}
+
+# 最大10回リトライ
+for i in {1..10}; do
+    IP_ADDR=$(get_ip)
+    
+    if [ -n "$IP_ADDR" ]; then
+        # JSONペイロードの作成
+        PAYLOAD="{\"content\": \"🚀 起動成功！\\nIPアドレス: \`$IP_ADDR\`\"}"
+        
+        # Discordへ送信 (-s: 静かに, -o: 出力なし, -w: ステータスコード表示)
+        STATUS=$(curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" -s -o /dev/null -w "%{http_code}" "$WEBHOOK_URL")
+        
+        if [ "$STATUS" -eq 204 ]; then
+            echo "Successfully sent to Discord"
+            exit 0
+        else
+            echo "Post failed with status: $STATUS"
+        fi
+    fi
+    
+    echo "Retry $i..."
+    sleep 30
+done
+```
+
+#### 3. スクリプトに実行権限を付与
+
+```bash
+chmod +x ~/discord_ip.sh
+```
+
+#### 4. 試しに実行してみる
+
+```bash
+./discord_ip.sh
+```
+
+#### 5. 自動起動の設定をする
+
+ラズパイが電源ONになったとき、このスクリプトを自動で実行するように設定。ここでは crontab を使う。
+
+##### 1. ラズパイのターミナルで以下を実行
+
+```bash
+crontab -e
+```
+
+（初めて使う場合は、1番の nano を選択）
+
+##### 2. 一番下の行に、以下の内容を追記（起動時と5分おきに実行するように設定）
+
+```plaintext
+@reboot ~/discord_ip.sh
+*/5 * * * * ~/discord_ip.sh
+```
+
+ファイルパスは適応書き換え
+
+##### 3. 保存して終了
+
+##### 4. 再起動
+
+```bash
+sudo reboot
+```
+
+---
+
 ### Raspberry Pi Zero 2 W の起動時にIPアドレスを任意のDiscordサーバーに送信させるようにする方法（Pythonファイルの方法）
 
 #### 0. Discordでウェブフックのリンクを取得
@@ -831,104 +931,7 @@ sudo reboot
 
 ---
 
-### Raspberry Pi Zero 2 W の起動時にIPアドレスを任意のDiscordサーバーに送信させるようにする方法（シェルスクリプトの方法）
-
-#### 0. Discordでウェブフックのリンクを取得
-
-* Discordにログインし、ウェブフックを作成したいサーバーを選択
-
-* チャンネルの"Server Settings"を開き、"Integrations"タブを選択し、"Webhooks"をクリック
-
-* "New Webhook"をクリックし、ウェブフックの名前やアイコンを設定。
-
-* ウェブフックURLをコピー
-
-#### 1. スクリプトファイルを作成
-
-```bash
-nano ~/discord_ip.sh
-```
-
-#### 2. 以下のコードを貼り付け
-
-```bash
-#!/bin/bash
-
-WEBHOOK_URL="ここにコピーしたURLを貼り付ける"
-
-# IPアドレス取得関数 (Google DNSへのルート情報から取得)
-get_ip() {
-    ip route get 8.8.8.8 | grep -oP 'src \K\S+'
-}
-
-# 最大10回リトライ
-for i in {1..10}; do
-    IP_ADDR=$(get_ip)
-    
-    if [ -n "$IP_ADDR" ]; then
-        # JSONペイロードの作成
-        PAYLOAD="{\"content\": \"🚀 起動成功！\\nIPアドレス: \`$IP_ADDR\`\"}"
-        
-        # Discordへ送信 (-s: 静かに, -o: 出力なし, -w: ステータスコード表示)
-        STATUS=$(curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" -s -o /dev/null -w "%{http_code}" "$WEBHOOK_URL")
-        
-        if [ "$STATUS" -eq 204 ]; then
-            echo "Successfully sent to Discord"
-            exit 0
-        else
-            echo "Post failed with status: $STATUS"
-        fi
-    fi
-    
-    echo "Retry $i..."
-    sleep 30
-done
-```
-
-#### 3. スクリプトに実行権限を付与
-
-```bash
-chmod +x ~/discord_ip.sh
-```
-
-#### 4. 試しに実行してみる
-
-```bash
-./discord_ip.sh
-```
-
-#### 5. 自動起動の設定をする
-
-ラズパイが電源ONになったとき、このスクリプトを自動で実行するように設定。ここでは crontab を使う。
-
-##### 1. ラズパイのターミナルで以下を実行
-
-```bash
-crontab -e
-```
-
-（初めて使う場合は、1番の nano を選択）
-
-##### 2. 一番下の行に、以下の内容を追記（起動時と5分おきに実行するように設定）
-
-```plaintext
-@reboot ~/discord_ip.sh
-*/5 * * * * ~/discord_ip.sh
-```
-
-ファイルパスは適応書き換え
-
-##### 3. 保存して終了
-
-##### 4. 再起動
-
-```bash
-sudo reboot
-```
-
----
-
-## 10. 参考資料
+## 11. 参考資料
 
 * Raspberry Pi公式ドキュメント: <https://www.raspberrypi.com/documentation/>
 * Tailscale公式サイト: <https://tailscale.com/>
