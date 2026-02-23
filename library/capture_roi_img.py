@@ -7,7 +7,9 @@ from picamera2 import Picamera2
 
 
 print("Capture ROI Start")
-os.makedirs("./log", exist_ok=True) # フォルダ作成
+roi_dir = os.path.expanduser("~/library/log")
+roi_path = os.path.join(roi_dir, "captured_roi_img.png")
+os.makedirs(roi_dir, exist_ok=True) # フォルダ作成
 
 try:
     picam2 = Picamera2()
@@ -21,8 +23,8 @@ try:
 
     print("Capturing...")
     # 保存名は main.py で探す名前と一致させる
-    picam2.capture_file("./log/captured_roi_img.png")
-    print("Saved to ./log/captured_roi_img.png")
+    picam2.capture_file(roi_path)
+    print(f"Saved to {roi_path}")
     
     picam2.stop()
     picam2.close()

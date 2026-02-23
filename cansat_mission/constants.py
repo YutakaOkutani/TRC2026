@@ -88,8 +88,11 @@ CAMERA_PHASE4_MAX_ATTEMPTS = 3
 CAMERA_PHASE5_MAX_ATTEMPTS = 3
 
 # ロゴ保存パス
-ROI_PATH_1 = os.path.join(LOG_DIR, "captured_roi_img.png")
-ROI_PATH_2 = os.path.join(LOG_DIR, "captured.png")
+# ROI画像はホーム配下の固定パスを常に参照する
+ROI_CAPTURE_DIR = os.path.expanduser("~/library/log")
+ROI_PATH_1 = os.path.join(ROI_CAPTURE_DIR, "captured_roi_img.png")
+# 後方互換のため残すが、実体は同一ファイルを指す
+ROI_PATH_2 = ROI_PATH_1
 
 # モーター制御関連定数
 SEARCH_ROTATION_SPEED = 40

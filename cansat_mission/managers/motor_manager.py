@@ -155,7 +155,21 @@ class MotorManager:
                         speed_r = self._clamp_percent(base - bias)
                     self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_no_heading_search")
             elif phase == Phase.PHASE4:
-                self.set_motors(SEARCH_ROTATION_SPEED, True, SEARCH_ROTATION_SPEED, False, cmd_type="phase4_search")
+                # Phase4でもカメラ正面姿勢を保ちつつ、既存の目標方位(direction)への誘導を維持する
+                target_heading = direction
+                fused_heading, _, total_weight = self._weighted_heading(snapshot)
+                if fused_heading is not None:
+                    self.phase3_no_heading_start = None
+                    diff = self._angle_diff_deg(target_heading, fused_heading)
+                    gain_scale = max(TURN_GAIN_SCALE_MIN, min(TURN_GAIN_SCALE_MAX, total_weight))
+                    turn_val = diff * GPS_TURN_GAIN * gain_scale
+                    turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
+                    speed_l = self._clamp_percent(BASE_SPEED + turn_val)
+                    speed_r = self._clamp_percent(BASE_SPEED - turn_val)
+                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase4_heading_follow")
+                else:
+                    # 方位が取れない時だけ探索回頭にフォールバック
+                    self.set_motors(SEARCH_ROTATION_SPEED, True, SEARCH_ROTATION_SPEED, False, cmd_type="phase4_search_fallback")
             elif phase == Phase.PHASE5:
                 err = cone_direction - CONE_CENTER_POSITION
                 turn_cam = err * APPROACH_TURN_GAIN

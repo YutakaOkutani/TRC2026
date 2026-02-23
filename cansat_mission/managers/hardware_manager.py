@@ -76,11 +76,9 @@ class HardwareManager:
             if os.path.exists(ROI_PATH_1):
                 print(f"Loading ROI from {ROI_PATH_1}")
                 roi_img = cv2.imread(ROI_PATH_1)
-            elif os.path.exists(ROI_PATH_2):
-                print(f"Loading ROI from {ROI_PATH_2}")
-                roi_img = cv2.imread(ROI_PATH_2)
             else:
-                print("WARNING: No ROI image found. Switching to DEFAULT RED detection.")
+                print(f"WARNING: ROI image not found at fixed path: {ROI_PATH_1}")
+                print("Switching to DEFAULT RED detection.")
             self.roi_img = roi_img
             detector.set_roi_img(roi_img)
             self.devices[DEVICE_DETECTOR] = detector

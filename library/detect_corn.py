@@ -10,7 +10,8 @@ class detector:
         # パラメータ設定
         self.cone_ratio = 33 / 70  # コーンの縦横比
         self.ratio_thresh = 0.1    # 許容誤差
-        self.reached_occupancy_thresh = 0.8 # 到達判定の面積閾値
+        # 0.8 (=画面の80%) は実運用では厳しすぎて到達判定に入りにくい。
+        self.reached_occupancy_thresh = 0.2 # 到達判定の面積閾値
 
         # 状態変数
         self.input_img = None

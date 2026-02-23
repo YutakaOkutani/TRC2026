@@ -205,8 +205,6 @@ class RelayController(MotorManager, SensorManager, LedManager):
             roi_img = None
             if os.path.exists(ROI_PATH_1):
                 roi_img = cv2.imread(ROI_PATH_1)
-            elif os.path.exists(ROI_PATH_2):
-                roi_img = cv2.imread(ROI_PATH_2)
             self.roi_img = roi_img
             detector.set_roi_img(roi_img)
             detector.detect_cone()
