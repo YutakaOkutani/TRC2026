@@ -22,6 +22,8 @@ from cansat_mission.constants import (
 )
 from cansat_mission.phases.base import BasePhaseHandler
 
+PHASE5_REACH_CONFIRM_FRAMES = 4
+
 
 class Phase5Handler(BasePhaseHandler):
     def execute(self, controller, snapshot):
@@ -38,6 +40,7 @@ class Phase5Handler(BasePhaseHandler):
             controller.phase5_entry_marker = entry_marker
             controller.time_camera_start = time.time()
             controller.count_cone_lost = 0
+            controller.phase5_reach_confirm_count = 0
             controller.camera_phase5_attempts += 1
             controller.camera_phase5_start = controller.time_camera_start
 
@@ -73,6 +76,7 @@ class Phase5Handler(BasePhaseHandler):
 
         if not is_det:
             controller.count_cone_lost += 1
+            controller.phase5_reach_confirm_count = 0
         else:
             controller.count_cone_lost = 0
 
@@ -82,10 +86,17 @@ class Phase5Handler(BasePhaseHandler):
             return
 
         if is_reach:
-            print("Reached Cone! (Visual confirmation)")
+            controller.phase5_reach_confirm_count = getattr(controller, "phase5_reach_confirm_count", 0) + 1
+            if controller.phase5_reach_confirm_count < PHASE5_REACH_CONFIRM_FRAMES:
+                return
+            print(
+                f"Reached Cone! (Visual confirmation x{controller.phase5_reach_confirm_count})"
+            )
             controller.mission_end_reason = "GOAL_REACHED"
             controller.state.update_navigation(phase=int(Phase.PHASE6))
             return
+        else:
+            controller.phase5_reach_confirm_count = 0
 
         if now - controller.time_camera_start >= TIMEOUT_PHASE_5:
             elapsed = now - controller.time_camera_start
