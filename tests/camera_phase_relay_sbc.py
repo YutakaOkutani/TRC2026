@@ -254,27 +254,22 @@ class RelayController(MotorManager, SensorManager, LedManager):
             return bbox, centroid
         except Exception:
             return None, None
+
+    def _prepare_preview_frame(self, frame):
+        if frame is None:
+            return None
+        # This relay is used on a vehicle build where the camera output is
+        # channel-swapped and mounted upside down relative to the usual setup.
+        if getattr(self.args, "preview_swap_rb", True):
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        if getattr(self.args, "preview_rotate_180", True):
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+        return frame
+
     def _annotate_frame(self, frame, snapshot, bbox, centroid):
-        h, w = frame.shape[:2]
-        cv2.line(frame, (w // 2, 0), (w // 2, h - 1), (255, 255, 0), 1)
         if bbox is not None:
             x, y, bw, bh = bbox
-            cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
-        if centroid is not None:
-            cv2.circle(frame, (centroid[0], centroid[1]), 5, (0, 255, 255), -1)
-            cv2.putText(frame, f"centroid=({centroid[0]},{centroid[1]})", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
-        cv2.putText(
-            frame,
-            f"phase={snapshot['phase']} prob={snapshot['cone_probability']:.2f} dir={snapshot['cone_direction']:.2f}",
-            (10, h - 28),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            2,
-        )
-        if snapshot.get("cone_is_reached", False) or snapshot["phase"] == int(Phase.PHASE6):
-            cv2.rectangle(frame, (0, 0), (w - 1, 40), (0, 140, 0), -1)
-            cv2.putText(frame, "GOAL REACHED", (10, 28), cv2.FONT_HERSHEY_DUPLEX, 0.9, (255, 255, 255), 2)
+            cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 255), 2)
         return frame
 
     def phase_loop(self):
@@ -305,6 +300,7 @@ class RelayController(MotorManager, SensorManager, LedManager):
                 if detector is not None and getattr(detector, "input_img", None) is not None:
                     frame = detector.input_img.copy()
                     frame = self._annotate_frame(frame, snapshot, bbox, centroid)
+                    frame = self._prepare_preview_frame(frame)
                     frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_LINEAR)
                     ok, enc = cv2.imencode(
                         ".jpg",
@@ -440,6 +436,8 @@ def parse_args():
     parser.add_argument("--video-every", type=int, default=2)
     parser.add_argument("--start-phase", type=int, default=4, choices=[4, 5, 6])
     parser.add_argument("--exit-on-goal", action="store_true")
+    parser.add_argument("--preview-rotate-180", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--preview-swap-rb", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
