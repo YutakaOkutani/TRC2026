@@ -49,8 +49,9 @@ class Phase5Handler(BasePhaseHandler):
                 led_green.on()
 
         current_snapshot = controller.state.snapshot()
-        is_det = current_snapshot["cone_probability"] > CONE_PROBABILITY_THRESHOLD
         is_reach = current_snapshot["cone_is_reached"]
+        # 近距離時はprobabilityが落ちても、到達判定が立っていれば見失い扱いにしない
+        is_det = (current_snapshot["cone_probability"] > CONE_PROBABILITY_THRESHOLD) or is_reach
         now = time.time()
         camera_dead = (
             controller.camera_dead_since is not None

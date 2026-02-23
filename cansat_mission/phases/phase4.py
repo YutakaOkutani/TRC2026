@@ -27,6 +27,7 @@ class Phase4Handler(BasePhaseHandler):
         led_green = controller.devices.get(DEVICE_LED_GREEN)
         current_snapshot = controller.state.snapshot()
         cone_prob = current_snapshot["cone_probability"]
+        cone_reached = current_snapshot.get("cone_is_reached", False)
         print("phase4 : camera searching")
         if led_red:
             led_red.off()
@@ -57,7 +58,9 @@ class Phase4Handler(BasePhaseHandler):
             controller.searching_flag = False
             controller.time_phase3_start = time.time()
             return
-        if cone_prob > CONE_PROBABILITY_THRESHOLD:
+        # 近距離ではコーンが画面からはみ出してアスペクト比スコア(prob)が落ちることがある。
+        # その場合でも到達判定が立っていれば Phase5 へ進める。
+        if cone_prob > CONE_PROBABILITY_THRESHOLD or cone_reached:
             controller.state.update_navigation(phase=int(Phase.PHASE5))
 
 

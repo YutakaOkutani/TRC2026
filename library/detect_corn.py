@@ -10,8 +10,9 @@ class detector:
         # パラメータ設定
         self.cone_ratio = 33 / 70  # コーンの縦横比
         self.ratio_thresh = 0.1    # 許容誤差
-        # 0.8 (=画面の80%) は実運用では厳しすぎて到達判定に入りにくい。
-        self.reached_occupancy_thresh = 0.2 # 到達判定の面積閾値
+        # ゴール判定は「ほぼ密着して画面いっぱいに赤が見える」前提で判定する
+        self.reached_occupancy_thresh = 0.60 # 画面全体に対する赤占有率
+        self.reached_edge_touch_min = 2      # 少なくともこの数の画面端に赤領域が接触
 
         # 状態変数
         self.input_img = None
@@ -22,6 +23,7 @@ class detector:
         self.centroids = None
         self.cone_direction = None # None or 0.0-1.0
         self.occupancy = 0.0
+        self.frame_red_occupancy = 0.0
         self.is_detected = False
         self.is_reached = False
         
@@ -179,6 +181,19 @@ class detector:
 
         # 画像全体の面積
         imgSize = self.camera_width * self.camera_height
+        mask_u8 = self.binarized_img.astype(np.uint8)
+        self.frame_red_occupancy = float(np.count_nonzero(mask_u8)) / float(imgSize)
+
+        # 画面端への接触数を確認（密着してはみ出すケースの救済）
+        edge_touch_count = 0
+        if np.any(mask_u8[0, :] > 0):
+            edge_touch_count += 1
+        if np.any(mask_u8[-1, :] > 0):
+            edge_touch_count += 1
+        if np.any(mask_u8[:, 0] > 0):
+            edge_touch_count += 1
+        if np.any(mask_u8[:, -1] > 0):
+            edge_touch_count += 1
         
         # ラベリング
         nlabels, labels_img, stats, centroids = cv2.connectedComponentsWithStats(
@@ -187,6 +202,13 @@ class detector:
 
         if nlabels <= 1: # 背景のみ
             self.is_detected = False
+            self.is_reached = (
+                self.frame_red_occupancy > self.reached_occupancy_thresh
+                and edge_touch_count >= self.reached_edge_touch_min
+            )
+            if self.is_reached:
+                self.is_detected = True
+                self.probability = 1.0
             return
 
         # 背景(index 0)を除外
@@ -209,6 +231,13 @@ class detector:
         
         if len(valid_indices) == 0:
             self.is_detected = False
+            self.is_reached = (
+                self.frame_red_occupancy > self.reached_occupancy_thresh
+                and edge_touch_count >= self.reached_edge_touch_min
+            )
+            if self.is_reached:
+                self.is_detected = True
+                self.probability = 1.0
             return
 
         # 有効な候補の中で、最も面積が大きいものを選ぶ（またはアスペクト比が良いもの）
@@ -224,9 +253,14 @@ class detector:
         # 方向 (0.0:左端, 1.0:右端, 0.5:中央)
         self.cone_direction = self.centroids[0] / self.camera_width
 
-        #   reached_occupancy_thresh を超えたら「密着（到達）」とみなす
-        if  self.occupancy > self.reached_occupancy_thresh:
+        # ゴール判定は「画面全体に赤が大きく広がる」ことを重視する
+        if (
+            self.frame_red_occupancy > self.reached_occupancy_thresh
+            and edge_touch_count >= self.reached_edge_touch_min
+        ):
             self.is_reached = True
+            # 近距離で画角からはみ出すとアスペクト比スコアが崩れるため、到達時は高確率として扱う
+            self.probability = max(self.probability, 1.0)
         # 到達時の記念撮影（エラーで落ちないようにtry）
             try:
                 self.picam2.capture_file("./log/capture_reached.png")
