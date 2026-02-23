@@ -83,6 +83,9 @@ class RelayController(MotorManager, SensorManager, LedManager):
         self.args = args
         self.state = CanSatState()
         self.state.update_navigation(phase=int(args.start_phase))
+        self.phase_entry_time = time.time()
+        self.last_phase_observed = Phase(int(args.start_phase))
+        self.phase5_entry_marker = None
 
         self.devices = {
             DEVICE_BNO: None,
@@ -288,6 +291,11 @@ class RelayController(MotorManager, SensorManager, LedManager):
         while not self.stop_event.is_set():
             snapshot = self.state.snapshot()
             phase = Phase(snapshot["phase"])
+            if phase != getattr(self, "last_phase_observed", None):
+                self.last_phase_observed = phase
+                self.phase_entry_time = time.time()
+                if phase != Phase.PHASE4:
+                    self.searching_flag = False
             handler = self.phase_handlers.get(phase)
             if handler is None:
                 time.sleep(0.1)

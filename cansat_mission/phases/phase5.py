@@ -28,7 +28,12 @@ class Phase5Handler(BasePhaseHandler):
         led_red = controller.devices.get(DEVICE_LED_RED)
         led_green = controller.devices.get(DEVICE_LED_GREEN)
         entry_marker = getattr(controller, "phase_entry_time", None)
-        if getattr(controller, "phase5_entry_marker", None) != entry_marker:
+        need_phase5_init = False
+        if entry_marker is not None:
+            need_phase5_init = getattr(controller, "phase5_entry_marker", None) != entry_marker
+        else:
+            need_phase5_init = getattr(controller, "time_camera_start", 0.0) <= 0.0
+        if need_phase5_init:
             print("phase5 : approaching")
             controller.phase5_entry_marker = entry_marker
             controller.time_camera_start = time.time()
@@ -72,18 +77,20 @@ class Phase5Handler(BasePhaseHandler):
             controller.count_cone_lost = 0
 
         if controller.count_cone_lost >= CONE_LOST_COUNT_LIMIT:
+            print("Phase5 -> Phase4: cone lost")
             controller.state.update_navigation(phase=int(Phase.PHASE4))
-            return
-
-        if now - controller.time_camera_start >= TIMEOUT_PHASE_5:
-            print("Phase5 TIMEOUT: Giving up, forcing Goal")
-            controller.mission_end_reason = "PHASE5_TIMEOUT_FORCED_GOAL"
-            controller.state.update_navigation(phase=int(Phase.PHASE6))
             return
 
         if is_reach:
             print("Reached Cone! (Visual confirmation)")
             controller.mission_end_reason = "GOAL_REACHED"
+            controller.state.update_navigation(phase=int(Phase.PHASE6))
+            return
+
+        if now - controller.time_camera_start >= TIMEOUT_PHASE_5:
+            elapsed = now - controller.time_camera_start
+            print(f"Phase5 TIMEOUT ({elapsed:.1f}s): Giving up, forcing Goal")
+            controller.mission_end_reason = "PHASE5_TIMEOUT_FORCED_GOAL"
             controller.state.update_navigation(phase=int(Phase.PHASE6))
             return
 

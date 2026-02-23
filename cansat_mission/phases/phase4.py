@@ -44,6 +44,7 @@ class Phase4Handler(BasePhaseHandler):
                 controller.searching_flag = False
                 controller.state.update_navigation(phase=int(Phase.PHASE5))
                 controller.time_phase5_start = time.time()
+                return
         camera_dead = (
             controller.camera_dead_since is not None
             and time.time() - controller.camera_dead_since >= CAMERA_DEAD_TIMEOUT
@@ -61,6 +62,11 @@ class Phase4Handler(BasePhaseHandler):
         # 近距離ではコーンが画面からはみ出してアスペクト比スコア(prob)が落ちることがある。
         # その場合でも到達判定が立っていれば Phase5 へ進める。
         if cone_prob > CONE_PROBABILITY_THRESHOLD or cone_reached:
+            if cone_reached:
+                print("Phase4 -> Phase5: close-range visual reached detected")
+            else:
+                print(f"Phase4 -> Phase5: cone detected (prob={cone_prob:.2f})")
+            controller.searching_flag = False
             controller.state.update_navigation(phase=int(Phase.PHASE5))
 
 
