@@ -86,6 +86,10 @@ class RelayController(MotorManager, SensorManager, LedManager):
         self.phase_entry_time = time.time()
         self.last_phase_observed = Phase(int(args.start_phase))
         self.phase5_entry_marker = None
+        self.mission_end_reason = "RUNNING"
+        self.shutdown_reason = None
+        self._shutdown_packet_sent = False
+        self.phase6_exit_started_at = None
 
         self.devices = {
             DEVICE_BNO: None,
@@ -303,7 +307,17 @@ class RelayController(MotorManager, SensorManager, LedManager):
             try:
                 handler.execute(self, snapshot)
             except SystemExit:
-                if self.args.exit_on_goal:
+                current_phase = Phase(self.state.snapshot()["phase"])
+                if current_phase == Phase.PHASE6:
+                    if self.phase6_exit_started_at is None:
+                        self.phase6_exit_started_at = time.time()
+                        if self.shutdown_reason is None:
+                            self.shutdown_reason = self.mission_end_reason if self.mission_end_reason != "RUNNING" else "PHASE6_REACHED"
+                        print(f"Phase6 reached. Auto exit in {self.args.phase6_hold_sec:.1f}s")
+                    elif time.time() - self.phase6_exit_started_at >= self.args.phase6_hold_sec:
+                        self.stop_event.set()
+                elif self.args.exit_on_goal:
+                    self.shutdown_reason = self.shutdown_reason or "EXIT_ON_GOAL"
                     self.stop_event.set()
                 time.sleep(0.1)
 
@@ -365,6 +379,21 @@ class RelayController(MotorManager, SensorManager, LedManager):
         sock.sendall(struct.pack(">I", len(body)))
         sock.sendall(body)
 
+    def _send_shutdown_packet(self, sock):
+        if sock is None or self._shutdown_packet_sent:
+            return
+        reason = self.shutdown_reason or self.mission_end_reason or "SBC_STOP"
+        self._send_packet(
+            sock,
+            {
+                "type": "shutdown",
+                "timestamp": time.time(),
+                "reason": str(reason),
+            },
+        )
+        self._shutdown_packet_sent = True
+        print(f"Sent shutdown packet to PC monitor (reason={reason})")
+
     def tx_loop(self):
         sent = 0
         tx_interval = 1.0 / max(1.0, self.args.tx_hz)
@@ -416,6 +445,11 @@ class RelayController(MotorManager, SensorManager, LedManager):
                     self._send_packet(sock, payload)
                     sent += 1
                     time.sleep(tx_interval)
+                if self.stop_event.is_set():
+                    try:
+                        self._send_shutdown_packet(sock)
+                    except Exception as exc:
+                        print(f"Shutdown packet send failed: {exc}")
             except Exception as exc:
                 print(f"TX reconnect: {exc}")
                 time.sleep(1.0)
@@ -442,6 +476,7 @@ class RelayController(MotorManager, SensorManager, LedManager):
             while not self.stop_event.is_set():
                 time.sleep(1.0)
         except KeyboardInterrupt:
+            self.shutdown_reason = "CTRL_C"
             self.stop_event.set()
         finally:
             self.stop_motors()
@@ -456,6 +491,7 @@ def parse_args():
     parser.add_argument("--video-every", type=int, default=DEFAULT_VIDEO_EVERY)
     parser.add_argument("--start-phase", type=int, default=DEFAULT_START_PHASE, choices=[4, 5, 6])
     parser.add_argument("--exit-on-goal", action="store_true")
+    parser.add_argument("--phase6-hold-sec", type=float, default=5.0)
     parser.add_argument("--preview-rotate-180", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--preview-swap-rb", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
@@ -466,6 +502,7 @@ def main():
     args.jpeg_quality = max(1, min(95, args.jpeg_quality))
     args.tx_hz = max(1.0, args.tx_hz)
     args.video_every = max(1, args.video_every)
+    args.phase6_hold_sec = max(0.0, float(args.phase6_hold_sec))
     RelayController(args).run()
 
 

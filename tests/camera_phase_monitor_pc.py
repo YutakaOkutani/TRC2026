@@ -49,6 +49,8 @@ class MonitorState:
         self.last_frame = None
         self.last_packet_time = 0.0
         self.last_summary = {}
+        self.shutdown_requested = False
+        self.shutdown_reason = None
 
     def update(self, packet):
         ts = packet.get("timestamp", time.time())
@@ -102,6 +104,11 @@ class MonitorState:
                 "gps_lat": gps.get("lat", 0.0),
                 "gps_lng": gps.get("lng", 0.0),
             }
+
+    def request_shutdown(self, reason):
+        with self.lock:
+            self.shutdown_requested = True
+            self.shutdown_reason = reason or "SBC_SHUTDOWN"
 
 
 class RelayServer:
@@ -172,6 +179,12 @@ class RelayServer:
                                 continue
                             if packet.get("type") == "telemetry":
                                 self.state.update(packet)
+                            elif packet.get("type") == "shutdown":
+                                reason = packet.get("reason", "SBC_SHUTDOWN")
+                                print(f"Received shutdown packet from SBC (reason={reason})")
+                                self.state.request_shutdown(reason)
+                                self.stop_event.set()
+                                break
                     except (socket.timeout, TimeoutError) as exc:
                         print(f"Connection timeout: {exc}")
                     finally:
@@ -189,6 +202,7 @@ class RelayServer:
 def start_ui(state, history_sec):
     fig, axes = plt.subplots(2, 2, figsize=(10, 6))
     fig.suptitle("CanSat Camera/BNO055/GPS Realtime Monitor")
+    ui_state = {"window_closed": False}
 
     line_acc, = axes[0, 0].plot([], [], label="|acc|")
     line_gyro, = axes[0, 0].plot([], [], label="|gyro|")
@@ -212,9 +226,18 @@ def start_ui(state, history_sec):
 
     status_text = fig.text(0.01, 0.01, "waiting...", fontsize=9)
 
+    def _on_close(_event):
+        ui_state["window_closed"] = True
+
+    fig.canvas.mpl_connect("close_event", _on_close)
+
     def update(_):
         with state.lock:
+            shutdown_requested = state.shutdown_requested
+            shutdown_reason = state.shutdown_reason
             if len(state.t) == 0:
+                if shutdown_requested:
+                    status_text.set_text(f"shutdown requested: {shutdown_reason}")
                 return line_acc, line_gyro, line_mag, line_ang, line_sats, line_hdop, line_detect, status_text
             t0 = state.t[0]
             x = [v - t0 for v in state.t]
@@ -256,6 +279,9 @@ def start_ui(state, history_sec):
         )
         status_text.set_text(status)
 
+        if shutdown_requested:
+            status_text.set_text(f"{status} | shutdown requested: {shutdown_reason}")
+
         if frame is not None:
             cv2.imshow("Camera Stream (SBC -> PC)", frame)
             cv2.waitKey(1)
@@ -268,8 +294,22 @@ def start_ui(state, history_sec):
 
     try:
         while plt.fignum_exists(fig.number):
+            with state.lock:
+                if state.shutdown_requested:
+                    print(f"PC monitor exiting (SBC reason={state.shutdown_reason})")
+                    break
             plt.pause(0.05)
     finally:
+        try:
+            if getattr(ani, "event_source", None) is not None:
+                ani.event_source.stop()
+        except Exception:
+            pass
+        if not ui_state["window_closed"] and plt.fignum_exists(fig.number):
+            try:
+                plt.close(fig)
+            except Exception:
+                pass
         _ = ani
 
 
@@ -295,7 +335,6 @@ def main():
         print("Interrupted by Ctrl+C")
     finally:
         server.shutdown()
-        plt.close("all")
         cv2.destroyAllWindows()
         th.join(timeout=1.0)
 
