@@ -21,57 +21,38 @@ if str(PROJECT_ROOT) not in sys.path:
 from library import bno055
 from library import bmp180
 
-# --- GPS settings (identical to main.py) ---
-GPS_SERIAL_PORT = "/dev/serial0"
-GPS_BAUDRATE = 115200  # 9600, 38400
-GPS_SERIAL_TIMEOUT = 1.0
-GPS_BUFFER_CLEAR_THRESHOLD = 2048  # bytes; flush when backlog grows too large
-GPS_BUFFER_CLEAR_INTERVAL = 5.0    # seconds between flush attempts
-GPS_MIN_FIX_QUAL = 1              # 1: GPS fix, 2: DGPS, 4/5: RTK
-GPS_MIN_SATELLITES = 4
-GPS_MAX_HDOP = 5.0
-GPS_MAX_SPEED_MPS = 50.0          # reject if jump implies speed over this (m/s)
-GPS_STABLE_FIX_COUNT = 3          # consecutive good fixes required
-GPS_FIX_LOSS_TIMEOUT = 8.0        # seconds until detect flag drops when no valid fix
+from cansat_mission.constants import (
+    BNO_CALIB_MAG_MIN,
+    BNO_FUSION_OK_STATES,
+    BNO_STALE_TIMEOUT,
+    DATA_SAMPLING_RATE,
+    GPS_BAUDRATE,
+    GPS_BUFFER_CLEAR_INTERVAL,
+    GPS_BUFFER_CLEAR_THRESHOLD,
+    GPS_FIX_LOSS_TIMEOUT,
+    GPS_MAX_HDOP,
+    GPS_MAX_SPEED_MPS,
+    GPS_MIN_FIX_QUAL,
+    GPS_MIN_SATELLITES,
+    GPS_SERIAL_PORT,
+    GPS_SERIAL_TIMEOUT,
+    GPS_STABLE_FIX_COUNT,
+    LOG_FILE_DATETIME_FORMAT,
+    LOG_HEADER,
+    LOG_PREFIX,
+    NMEA_GGA_PREFIXES,
+    NMEA_SENTENCE_GGA,
+    TARGET_LAT,
+    TARGET_LNG,
+)
+from cansat_mission.navigation import calc_distance_and_azimuth, current_milli_time
 
-# --- Logging settings (mirrors main.py) ---
+# --- Logging settings (test-only override) ---
 LOG_DIR = "testlog/open_parachute"
-LOG_PREFIX = "robust_log_" 
-DATA_SAMPLING_RATE = 0.06
-BNO_STALE_TIMEOUT = 2.0
-
-
-def calc_distance_and_azimuth(lat1, lng1, lat2, lng2):
-    """Great-circle distance (m) and azimuth (deg) identical to main.py."""
-    R = 6378137.0
-    rad_lat1 = math.radians(lat1)
-    rad_lng1 = math.radians(lng1)
-    rad_lat2 = math.radians(lat2)
-    rad_lng2 = math.radians(lng2)
-    d_lng = rad_lng2 - rad_lng1
-    sin_lat1 = math.sin(rad_lat1)
-    cos_lat1 = math.cos(rad_lat1)
-    sin_lat2 = math.sin(rad_lat2)
-    cos_lat2 = math.cos(rad_lat2)
-    cos_d_lng = math.cos(d_lng)
-    val = sin_lat1 * sin_lat2 + cos_lat1 * cos_lat2 * cos_d_lng
-    val = max(-1.0, min(1.0, val))
-    central_angle = math.acos(val)
-    dist = R * central_angle
-    y = math.sin(d_lng) * cos_lat2
-    x = cos_lat1 * sin_lat2 - sin_lat1 * cos_lat2 * cos_d_lng
-    azi = math.degrees(math.atan2(y, x))
-    if azi < 0:
-        azi += 360.0
-    return dist, azi
-
-
-def current_milli_time():
-    return round(time.time() * 1000)
 
 
 class RobustGPSReader:
-    """GPS reader that mirrors main.py's parsing, gating, and stability checks."""
+    """GPS reader that mirrors production parsing, gating, and stability checks."""
 
     def __init__(self):
         self.ser = None
@@ -80,6 +61,9 @@ class RobustGPSReader:
         self.last_valid_fix_time = 0.0
         self.last_valid_latlng = None
         self.stable_count = 0
+        self.last_fix_qual = 0
+        self.last_sats = 0
+        self.last_hdop = 0.0
 
     def open_serial(self):
         try:
@@ -88,7 +72,7 @@ class RobustGPSReader:
                 ser.reset_input_buffer()
             except Exception:
                 pass
-            print("GPS serial ready.")
+            print(f"GPS serial ready: {GPS_SERIAL_PORT} @ {GPS_BAUDRATE}")
             return ser
         except Exception as exc:
             print(f"Could not open GPS serial port {GPS_SERIAL_PORT}: {exc}")
@@ -99,7 +83,7 @@ class RobustGPSReader:
             self.ser = self.open_serial()
 
     def read_fix(self):
-        """Return a stable fix dict or None using the same logic as main.py."""
+        """Return a stable fix dict or None using production-equivalent gating."""
         self.ensure_serial()
         if self.ser is None:
             time.sleep(1)
@@ -138,7 +122,7 @@ class RobustGPSReader:
             return None
 
         line = line_bytes.decode("utf-8", errors="ignore").strip()
-        if not (line.startswith("$GPGGA") or line.startswith("$GNGGA")):
+        if not line.startswith(NMEA_GGA_PREFIXES):
             return None
 
         try:
@@ -146,7 +130,7 @@ class RobustGPSReader:
         except Exception:
             return None
 
-        if getattr(msg, "sentence_type", "") != "GGA":
+        if getattr(msg, "sentence_type", "") != NMEA_SENTENCE_GGA:
             return None
 
         lat_val = getattr(msg, "latitude", None)
@@ -162,17 +146,21 @@ class RobustGPSReader:
         hdop = getattr(msg, "horizontal_dil", None)
 
         try:
-            qual_ok = gps_qual is not None and int(gps_qual) >= GPS_MIN_FIX_QUAL
+            self.last_fix_qual = int(gps_qual) if gps_qual is not None else 0
         except (TypeError, ValueError):
-            qual_ok = False
+            self.last_fix_qual = 0
         try:
-            sats_ok = num_sats is not None and int(num_sats) >= GPS_MIN_SATELLITES
+            self.last_sats = int(num_sats) if num_sats is not None else 0
         except (TypeError, ValueError):
-            sats_ok = False
+            self.last_sats = 0
         try:
-            hdop_ok = hdop is not None and float(hdop) <= GPS_MAX_HDOP
+            self.last_hdop = float(hdop) if hdop is not None else 0.0
         except (TypeError, ValueError):
-            hdop_ok = True
+            self.last_hdop = 0.0
+
+        qual_ok = self.last_fix_qual >= GPS_MIN_FIX_QUAL
+        sats_ok = self.last_sats >= GPS_MIN_SATELLITES
+        hdop_ok = self.last_hdop <= GPS_MAX_HDOP if hdop is not None else True
 
         if not (qual_ok and sats_ok and hdop_ok and (lat != 0.0 or lng != 0.0)):
             self.stable_count = 0
@@ -202,6 +190,9 @@ class RobustGPSReader:
             return {
                 "lat": lat,
                 "lng": lng,
+                "gps_fix_qual": self.last_fix_qual,
+                "gps_sats": self.last_sats,
+                "gps_hdop": self.last_hdop,
             }
 
         return None
@@ -233,10 +224,10 @@ class RobustBNOReader:
             angle = euler["value"][0] if euler["valid"] and euler["value"] else 0.0
             fall = math.sqrt(acc_val[0] ** 2 + acc_val[1] ** 2 + acc_val[2] ** 2)
 
-            calib_ok = calib["valid"] and calib["value"][3] >= 2
+            calib_ok = calib["valid"] and calib["value"][3] >= BNO_CALIB_MAG_MIN
             sys_ok = sys_status["valid"] and sys_error["valid"]
             sys_error_ok = sys_ok and sys_error["value"] == 0
-            fusion_ok = sys_ok and sys_status["value"] in (5, 6)
+            fusion_ok = sys_ok and sys_status["value"] in BNO_FUSION_OK_STATES
 
             angle_ok = euler["valid"] and math.isfinite(angle) and 0.0 <= angle < 360.0
             angle_valid = angle_ok and calib_ok and sys_error_ok and fusion_ok
@@ -302,7 +293,7 @@ def setup_sensors():
 
 
 def get_bmp_data(bmp_instance):
-    """Return altitude and pressure identical to main.py."""
+    """Return altitude and pressure identical to production."""
     if bmp_instance is None:
         return None
     try:
@@ -312,18 +303,62 @@ def get_bmp_data(bmp_instance):
 
 
 def init_log_file(log_path):
-    """Write the identical CSV header main.py uses."""
+    """Write the production CSV header, only changing the destination directory."""
     os.makedirs(LOG_DIR, exist_ok=True)
-    with open(log_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "MilliTime", "Phase",
-            "AccX", "AccY", "AccZ", "GyroX", "GyroY", "GyroZ", "MagX", "MagY", "MagZ",
-            "LAT", "LNG", "ALT", "Pres",
-            "Distance", "Azimuth", "Angle", "Direction", "Fall",
-            "ConeDir", "ConeProb", "ObstacleDist",
-            "AngleValid", "BNOStaleSec"
-        ])
+    with open(log_path, "w", newline="") as file_obj:
+        writer = csv.writer(file_obj)
+        writer.writerow(LOG_HEADER)
+        file_obj.flush()
+        os.fsync(file_obj.fileno())
+
+
+def build_log_row(current_data, bno_reader, mission_start_time=None):
+    mission_elapsed_sec = 0.0
+    if mission_start_time:
+        mission_elapsed_sec = max(0.0, time.time() - mission_start_time)
+
+    return [
+        current_milli_time(),
+        current_data["phase"],
+        f"{current_data['acc'][0]:.2f}",
+        f"{current_data['acc'][1]:.2f}",
+        f"{current_data['acc'][2]:.2f}",
+        f"{current_data['gyro'][0]:.2f}",
+        f"{current_data['gyro'][1]:.2f}",
+        f"{current_data['gyro'][2]:.2f}",
+        f"{current_data['mag'][0]:.2f}",
+        f"{current_data['mag'][1]:.2f}",
+        f"{current_data['mag'][2]:.2f}",
+        f"{current_data['lat']:.6f}",
+        f"{current_data['lng']:.6f}",
+        int(current_data.get("gps_fix_qual", 0)),
+        int(current_data.get("gps_sats", 0)),
+        f"{current_data.get('gps_hdop', 0.0):.2f}",
+        f"{current_data['alt']:.2f}",
+        f"{current_data['pres']:.2f}",
+        f"{current_data['distance']:.2f}",
+        f"{current_data['azimuth']:.2f}",
+        f"{TARGET_LAT:.6f}",
+        f"{TARGET_LNG:.6f}",
+        f"{current_data['angle']:.2f}",
+        f"{current_data['direction']:.2f}",
+        f"{current_data['fall']:.2f}",
+        f"{current_data['cone_direction']:.2f}",
+        f"{current_data['cone_probability']:.2f}",
+        current_data.get("cone_method", ""),
+        f"{current_data['obstacle_dist']:.2f}",
+        int(current_data.get("angle_valid", False)),
+        f"{bno_reader.last_valid_time and current_data['stale_sec'] or 0.0:.2f}",
+        current_data.get("motor_cmd_type", ""),
+        int(current_data.get("motor_cmd_updated_ms", 0)),
+        f"{float(current_data.get('motor1_cmd_speed', 0.0)):.2f}",
+        int(bool(current_data.get("motor1_cmd_forward", 1))),
+        f"{float(current_data.get('motor2_cmd_speed', 0.0)):.2f}",
+        int(bool(current_data.get("motor2_cmd_forward", 1))),
+        current_data.get("mission_end_reason", "RUNNING"),
+        int(bool(current_data.get("mission_total_timeout", False))),
+        f"{mission_elapsed_sec:.2f}",
+    ]
 
 
 def main():
@@ -335,18 +370,20 @@ def main():
         return
 
     now_time = datetime.datetime.now()
-    log_path = os.path.join(LOG_DIR, LOG_PREFIX + now_time.strftime("%Y-%m%d-%H%M%S") + ".csv")
+    log_stem = LOG_PREFIX + now_time.strftime(LOG_FILE_DATETIME_FORMAT) + f"-{now_time.microsecond:06d}"
+    log_path = os.path.join(LOG_DIR, log_stem + ".csv")
     try:
         init_log_file(log_path)
     except IOError as exc:
         print(f"Failed to create log file: {exc}")
         return
 
+    mission_start_time = time.time()
     last_lat = 0.0
     last_lng = 0.0
     try:
-        with open(log_path, "a", newline="") as f:
-            writer = csv.writer(f)
+        with open(log_path, "a", newline="") as file_obj:
+            writer = csv.writer(file_obj)
             while True:
                 current_data = {
                     "phase": 0,
@@ -355,6 +392,9 @@ def main():
                     "mag": [0.0, 0.0, 0.0],
                     "lat": last_lat,
                     "lng": last_lng,
+                    "gps_fix_qual": gps_reader.last_fix_qual if gps_reader else 0,
+                    "gps_sats": gps_reader.last_sats if gps_reader else 0,
+                    "gps_hdop": gps_reader.last_hdop if gps_reader else 0.0,
                     "alt": 0.0,
                     "pres": 0.0,
                     "distance": 0.0,
@@ -364,9 +404,18 @@ def main():
                     "fall": 0.0,
                     "cone_direction": 0.0,
                     "cone_probability": 0.0,
+                    "cone_method": "",
                     "obstacle_dist": 0.0,
                     "angle_valid": 0,
                     "stale_sec": 0.0,
+                    "motor_cmd_type": "",
+                    "motor_cmd_updated_ms": 0,
+                    "motor1_cmd_speed": 0.0,
+                    "motor1_cmd_forward": 1,
+                    "motor2_cmd_speed": 0.0,
+                    "motor2_cmd_forward": 1,
+                    "mission_end_reason": "RUNNING",
+                    "mission_total_timeout": False,
                 }
 
                 bno_data = bno_reader.read()
@@ -393,35 +442,13 @@ def main():
                     last_lng = gps_data["lng"]
                     current_data["lat"] = last_lat
                     current_data["lng"] = last_lng
+                    current_data["gps_fix_qual"] = gps_data.get("gps_fix_qual", current_data["gps_fix_qual"])
+                    current_data["gps_sats"] = gps_data.get("gps_sats", current_data["gps_sats"])
+                    current_data["gps_hdop"] = gps_data.get("gps_hdop", current_data["gps_hdop"])
 
-                writer.writerow([
-                    current_milli_time(),
-                    current_data["phase"],
-                    f"{current_data['acc'][0]:.2f}",
-                    f"{current_data['acc'][1]:.2f}",
-                    f"{current_data['acc'][2]:.2f}",
-                    f"{current_data['gyro'][0]:.2f}",
-                    f"{current_data['gyro'][1]:.2f}",
-                    f"{current_data['gyro'][2]:.2f}",
-                    f"{current_data['mag'][0]:.2f}",
-                    f"{current_data['mag'][1]:.2f}",
-                    f"{current_data['mag'][2]:.2f}",
-                    f"{current_data['lat']:.6f}",
-                    f"{current_data['lng']:.6f}",
-                    f"{current_data['alt']:.2f}",
-                    f"{current_data['pres']:.2f}",
-                    f"{current_data['distance']:.2f}",
-                    f"{current_data['azimuth']:.2f}",
-                    f"{current_data['angle']:.2f}",
-                    f"{current_data['direction']:.2f}",
-                    f"{current_data['fall']:.2f}",
-                    f"{current_data['cone_direction']:.2f}",
-                    f"{current_data['cone_probability']:.2f}",
-                    f"{current_data['obstacle_dist']:.2f}",
-                    int(current_data["angle_valid"]),
-                    f"{current_data['stale_sec']:.2f}",
-                ])
-                f.flush()
+                writer.writerow(build_log_row(current_data, bno_reader, mission_start_time))
+                file_obj.flush()
+                os.fsync(file_obj.fileno())
                 time.sleep(DATA_SAMPLING_RATE)
     except KeyboardInterrupt:
         print("\nMeasurement stopped by user.")
