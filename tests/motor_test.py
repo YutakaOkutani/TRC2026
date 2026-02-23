@@ -4,6 +4,8 @@ import time
 from gpiozero import PWMOutputDevice, DigitalOutputDevice
 from gpiozero.pins.lgpio import LGPIOFactory
 
+from cansat_mission.managers.motor_manager import get_manual_drive_pattern
+
 # --- GPIO Pin Definition ---
 # DRV8256E: Phase/Enable Mode
 # EN (Enable) -> PWM (Speed)
@@ -194,24 +196,39 @@ def stop():
     motor_state['B']['speed'] = 0.0
 
 
+
+def _apply_manual_drive_pattern(cmd, speed=DEFAULT_SPEED):
+    """Apply the production manual drive mapping through the local test motor driver."""
+    pattern = get_manual_drive_pattern(cmd, speed)
+    if pattern is None:
+        return False
+    set_motors(
+        pattern["speed_a"],
+        int(pattern["forward_a"]),
+        pattern["speed_b"],
+        int(pattern["forward_b"]),
+    )
+    return True
+
+
 def drive_forward(speed=DEFAULT_SPEED):
     """Drive both motors forward."""
-    set_motors(speed, 1, speed, 1)
+    _apply_manual_drive_pattern("w", speed)
 
 
 def drive_backward(speed=DEFAULT_SPEED):
     """Drive both motors backward."""
-    set_motors(speed, 0, speed, 0)
+    _apply_manual_drive_pattern("s", speed)
 
 
 def turn_left(speed=DEFAULT_SPEED):
     """Pivot left: right motor forward, left motor reverse."""
-    set_motors(speed, 1, speed, 0)
+    _apply_manual_drive_pattern("a", speed)
 
 
 def turn_right(speed=DEFAULT_SPEED):
     """Pivot right: right motor reverse, left motor forward."""
-    set_motors(speed, 0, speed, 1)
+    _apply_manual_drive_pattern("d", speed)
 
 
 def _read_key():

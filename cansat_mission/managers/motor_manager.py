@@ -46,6 +46,29 @@ from cansat_mission.constants import (
 )
 
 
+MANUAL_DRIVE_PATTERNS = {
+    "w": ("Forward", True, True),
+    "s": ("Backward", False, False),
+    "a": ("Left", True, False),
+    "d": ("Right", False, True),
+}
+
+
+def get_manual_drive_pattern(cmd, speed):
+    """Return a normalized two-motor command for manual WASD control."""
+    pattern = MANUAL_DRIVE_PATTERNS.get((cmd or "").lower())
+    if pattern is None:
+        return None
+    label, forward_a, forward_b = pattern
+    return {
+        "label": label,
+        "speed_a": float(speed),
+        "forward_a": bool(forward_a),
+        "speed_b": float(speed),
+        "forward_b": bool(forward_b),
+    }
+
+
 class MotorManager:
     def _clamp_percent(self, value):
         return max(PWM_PERCENT_MIN, min(PWM_PERCENT_MAX, value))
