@@ -2,6 +2,7 @@ import csv
 import math
 import os
 import time
+import traceback
 
 import pynmea2
 import serial
@@ -472,40 +473,14 @@ class SensorManager:
 
     def data_thread(self):
         while True:
-            bno_data = self.get_bno_data()
-            bmp_data = self.get_bmp_data()
-            sonar_dist = self.get_sonar_data()
-            if bno_data:
-                self.state.update_imu(
-                    acc=bno_data["acc"],
-                    gyro=bno_data["gyro"],
-                    mag=bno_data["mag"],
-                    fall=bno_data["fall"],
-                    angle=bno_data["angle"],
-                    angle_valid=bno_data["angle_valid"],
-                )
-                if bno_data.get("sys_status", {}).get("valid") and bno_data.get("sys_error", {}).get("valid"):
-                    if bno_data["sys_error"]["value"] != 0 or bno_data["sys_status"]["value"] not in BNO_FUSION_OK_STATES:
-                        print(
-                            f"BNO status warn: sys={bno_data['sys_status']['value']} "
-                            f"err={bno_data['sys_error']['value']}"
-                        )
-            else:
-                self.state.update_imu(angle_valid=False)
-            if bmp_data:
-                self.state.update_barometer(
-                    alt=bmp_data["alt"],
-                    pres=bmp_data["pres"],
-                )
-            if sonar_dist is not None:
-                self.state.update_obstacle(obstacle_dist=sonar_dist)
-            current_data = self.state.snapshot()
-            motor_cmd = getattr(self, "last_motor_command", {})
-            mission_start = getattr(self, "mission_start_time", None)
-            mission_elapsed_sec = 0.0
-            if mission_start:
-                mission_elapsed_sec = max(0.0, time.time() - mission_start)
             try:
+                # Log the latest available snapshot first so abrupt termination leaves a row.
+                current_data = self.state.snapshot()
+                motor_cmd = getattr(self, "last_motor_command", {})
+                mission_start = getattr(self, "mission_start_time", None)
+                mission_elapsed_sec = 0.0
+                if mission_start:
+                    mission_elapsed_sec = max(0.0, time.time() - mission_start)
                 with open(self.log_path, "a", newline="") as file_obj:
                     writer = csv.writer(file_obj)
                     writer.writerow(
@@ -556,4 +531,39 @@ class SensorManager:
                     os.fsync(file_obj.fileno())
             except Exception as exc:
                 print(f"Log Error: {exc}")
+
+            try:
+                bno_data = self.get_bno_data()
+                bmp_data = self.get_bmp_data()
+                sonar_dist = self.get_sonar_data()
+                if bno_data:
+                    self.state.update_imu(
+                        acc=bno_data["acc"],
+                        gyro=bno_data["gyro"],
+                        mag=bno_data["mag"],
+                        fall=bno_data["fall"],
+                        angle=bno_data["angle"],
+                        angle_valid=bno_data["angle_valid"],
+                    )
+                    if bno_data.get("sys_status", {}).get("valid") and bno_data.get("sys_error", {}).get("valid"):
+                        if (
+                            bno_data["sys_error"]["value"] != 0
+                            or bno_data["sys_status"]["value"] not in BNO_FUSION_OK_STATES
+                        ):
+                            print(
+                                f"BNO status warn: sys={bno_data['sys_status']['value']} "
+                                f"err={bno_data['sys_error']['value']}"
+                            )
+                else:
+                    self.state.update_imu(angle_valid=False)
+                if bmp_data:
+                    self.state.update_barometer(
+                        alt=bmp_data["alt"],
+                        pres=bmp_data["pres"],
+                    )
+                if sonar_dist is not None:
+                    self.state.update_obstacle(obstacle_dist=sonar_dist)
+            except Exception as exc:
+                print(f"Data Thread Error: {exc}")
+                traceback.print_exc()
             time.sleep(DATA_SAMPLING_RATE)

@@ -51,7 +51,9 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.target_lng = target_lng
         now_time = datetime.datetime.now()
         os.makedirs(LOG_DIR, exist_ok=True)
-        self.log_path = os.path.join(LOG_DIR, LOG_PREFIX + now_time.strftime(LOG_FILE_DATETIME_FORMAT) + ".csv")
+        # Add microseconds to avoid overwriting logs when restarting within the same second.
+        log_stem = LOG_PREFIX + now_time.strftime(LOG_FILE_DATETIME_FORMAT) + f"-{now_time.microsecond:06d}"
+        self.log_path = os.path.join(LOG_DIR, log_stem + ".csv")
 
         self.devices = {key: None for key in DEVICE_KEYS}
         self.led_blink_timer = 0
