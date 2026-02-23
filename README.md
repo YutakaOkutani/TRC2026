@@ -300,10 +300,35 @@ rpicam-still --width 2592 --height 1944 -o maxres.jpg
 ### 本番用コード
 
 ```bash
-tmux 
+# ===== 推奨: 最初からデタッチ状態で起動する方法 =====
+# このコマンドで tmux セッション内に main.py を起動する。SSH が切れても tmux セッションが残るので実行継続できる
+# ※ 重要: `python3 main.py` を tmux の外で起動すると、SSH切断時に一緒に止まる可能性がある
+# ※ 重要: これは「SSH切断対策」。ラズパイの再起動/電源断まで含めて継続したい場合は、下の systemd 設定を使う
+cd ~/TRC2026
+tmux new-session -d -s cansat 'bash -lc "source venv/bin/activate && exec python3 main.py"'
+
+# ログ/画面を確認したいときに接続（アタッチ）
+tmux attach -t cansat
+
+# 画面を閉じずに離脱（デタッチ）する操作
+# キー操作: Ctrl+b を押してから d
+# ※ `exit` / Ctrl+C は tmux セッション内のシェル/プログラムを終了させるので注意
+
+# セッション一覧を確認（起動確認に使える）
+tmux ls
+
+# すでに cansat セッションが存在する場合は、新規作成せず接続して再利用
+# tmux attach -t cansat
+```
+
+```bash
+# ===== 対話的に起動する方法（手動操作したい場合） =====
+cd ~/TRC2026
+tmux new -s cansat
 source venv/bin/activate
 python3 main.py
-tmux attach
+# 離脱時は Ctrl+b → d
+# 再接続後は `tmux attach -t cansat`
 ```
 
 ### GPSからの生データ取得（テストコードのほうが見やすいが一応）
@@ -325,64 +350,151 @@ sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600や38400�
 
 ## 9. その他
 
-### SSH接続が切れてもプログラムが実行され続けるように設定する手順
+### 本番運用（systemd）: 電源投入で自動起動し、SSH切断後も継続実行する手順
 
-#### 1. サービスファイルの作成
+`tmux` は「手動起動して画面を見ながらデバッグ/運用する」ために便利。  
+本番運用（電源投入で自動起動・SSH切断の影響を受けない・異常終了時に自動復帰）には `systemd` を使う。
+
+#### 1. 前提確認（パスを固定する）
+
+`systemd` は相対パスに弱いので、先に **実際の絶対パス** を確認する。
+
+```bash
+cd ~/TRC2026
+pwd
+which python3
+ls venv/bin/python
+```
+
+想定例（環境に合わせて読み替える）
+
+* リポジトリ: `/home/pi/TRC2026`
+* venv の Python: `/home/pi/TRC2026/venv/bin/python`
+
+#### 2. サービスファイルの作成
 
 ```bash
 sudo nano /etc/systemd/system/cansat.service
 ```
 
-#### 2.設定内容の書き込み
+#### 3. 設定内容の書き込み（推奨例）
 
-```
+```ini
 [Unit]
 Description=CanSat Main Mission Script
-After=multi-user.target
+# ネットワークを使う処理（通知・通信など）がある場合に備えて、ネットワーク起動後に開始する
+Wants=network-online.target
+After=network-online.target
 
 [Service]
-# プログラムがあるディレクトリを指定
-# パスは適応書き換え 
-WorkingDirectory=/home/pi/cansat
-# 実行コマンド（pythonのフルパスとスクリプトのフルパスを書く）
-ExecStart=/usr/bin/python3 /home/pi/TRC2026/main.py
-# venvを使う場合はこちらに置き換え
-# ExecStart=/home/pi/cansat/venv/bin/python /home/pi/cansat/main.py
-# 落ちても5秒後に自動再起動する設定（ミッション継続に重要）
-Restart=always
-RestartSec=5
-# ログを出力する場合
-StandardOutput=inherit
-StandardError=inherit
+Type=simple
 User=pi
+Group=pi
+
+# ここは実際のクローン先に合わせて必ず書き換える
+WorkingDirectory=/home/pi/TRC2026
+
+# ログを journald に即時反映しやすくする（print が遅延しにくい）
+Environment=PYTHONUNBUFFERED=1
+
+# venv を使う場合は venv の python を使う（activate は不要）
+# ※ パスは必ず実環境に合わせる
+ExecStart=/home/pi/TRC2026/venv/bin/python /home/pi/TRC2026/main.py
+
+# 異常終了時に自動再起動（ミッション継続のため重要）
+Restart=on-failure
+RestartSec=5
+
+# 手動停止時の扱いを安定させるための猶予
+TimeoutStopSec=15
+
+# 標準出力/標準エラーは journalctl で確認する
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-#### 3. サービスの有効化と開始
+補足（重要）
+
+* `WorkingDirectory` と `ExecStart` のパスがズレると起動失敗するので、必ず実際の環境に合わせて書き換えること
+* `venv` を使う場合、`source venv/bin/activate` は不要。`ExecStart` に venv の Python を直接書くのが `systemd` の定石
+* `Restart=on-failure` はクラッシュ時に再起動し、`sudo systemctl stop cansat.service` のような手動停止時は再起動しないので運用しやすい
+* 通信を使わない構成なら `network-online.target` は必須ではないが、将来の通知機能などを考えると入れておく方が無難
+
+#### 4. サービスの有効化と起動
 
 ```bash
 # 設定の反映
 sudo systemctl daemon-reload
 
-# ラズパイ起動時に自動実行されるように設定
-sudo systemctl enable cansat.service
-
-# 今すぐプログラムを開始する場合
-sudo systemctl start cansat.service
+# 起動時に自動起動 + 今すぐ起動
+sudo systemctl enable --now cansat.service
 ```
 
-#### 4. 状態の確認
+#### 5. 状態・ログの確認（必須）
 
 ```bash
+# 稼働状態の確認（active (running) になっているか）
 sudo systemctl status cansat.service
 ```
 
 ```bash
-# cansat.service のログを最新のものから表示する
-journalctl -u cansat.service -e
+# 直近ログを表示
+sudo journalctl -u cansat.service -e
 ```
+
+```bash
+# リアルタイムでログを追う（デバッグ時に便利）
+sudo journalctl -u cansat.service -f
+```
+
+#### 6. 運用で使う基本コマンド
+
+```bash
+# 再起動（コード更新後など）
+sudo systemctl restart cansat.service
+
+# 停止
+sudo systemctl stop cansat.service
+
+# 自動起動の無効化（必要時のみ）
+sudo systemctl disable cansat.service
+
+# 自動起動設定の確認
+automatically_enabled=$(sudo systemctl is-enabled cansat.service); echo $automatically_enabled
+```
+
+#### 7. 本当に「電源投入で自動起動」するか確認（重要）
+
+```bash
+sudo reboot
+```
+
+再起動後に SSH 接続して、以下を確認する。
+
+```bash
+sudo systemctl status cansat.service
+sudo journalctl -u cansat.service -b
+```
+
+`-b` は「今回の起動（boot）分のログだけ」を見るためのオプション。
+
+#### 8. よくある起動失敗ポイント（先に潰す）
+
+* パス違い: `WorkingDirectory` / `ExecStart` が実際の配置と違う
+* venv 未作成: `/home/pi/TRC2026/venv/bin/python` が存在しない
+* 権限問題: `User=pi` でアクセスできないファイル/ディレクトリがある
+* ライブラリ不足: 手動実行では動いたが、`venv` 側に必要ライブラリが入っていない
+* 例外で即終了: `sudo journalctl -u cansat.service -e` で Python の traceback を確認
+
+#### 9. `tmux` との使い分け（整理）
+
+* `tmux`: 手動起動・画面確認・その場のデバッグ向け
+* `systemd`: 本番常駐・自動起動・異常終了時の自動復帰向け
+
+本番中に一時的に手動デバッグしたい場合は、先に `sudo systemctl stop cansat.service` してから `tmux` で起動する（同時起動を避ける）。
 
 ---
 
