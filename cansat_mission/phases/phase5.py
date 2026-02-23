@@ -22,7 +22,7 @@ from cansat_mission.constants import (
 )
 from cansat_mission.phases.base import BasePhaseHandler
 
-PHASE5_REACH_CONFIRM_FRAMES = 4
+PHASE5_REACH_CONFIRM_FRAMES = 8
 
 
 class Phase5Handler(BasePhaseHandler):

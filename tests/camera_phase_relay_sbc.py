@@ -60,7 +60,7 @@ from cansat_mission.constants import (
     Phase,
 )
 from cansat_mission.managers import LedManager, MotorManager, SensorManager
-from cansat_mission.phases import Phase4Handler, Phase5Handler, Phase6Handler
+from cansat_mission.phases import Phase4Handler, Phase5Handler, Phase6Handler, Phase7Handler
 from cansat_mission.state import CanSatState
 
 # Runtime defaults (change here when your environment changes)
@@ -156,6 +156,7 @@ class RelayController(MotorManager, SensorManager, LedManager):
             Phase.PHASE4: Phase4Handler(),
             Phase.PHASE5: Phase5Handler(),
             Phase.PHASE6: Phase6Handler(),
+            Phase.PHASE7: Phase7Handler(),
         }
     def _angle_diff_deg(self, target_deg, current_deg):
         diff = target_deg - current_deg
@@ -309,12 +310,12 @@ class RelayController(MotorManager, SensorManager, LedManager):
                 handler.execute(self, snapshot)
             except SystemExit:
                 current_phase = Phase(self.state.snapshot()["phase"])
-                if current_phase == Phase.PHASE6:
+                if current_phase == Phase.PHASE7:
                     if self.phase6_exit_started_at is None:
                         self.phase6_exit_started_at = time.time()
                         if self.shutdown_reason is None:
-                            self.shutdown_reason = self.mission_end_reason if self.mission_end_reason != "RUNNING" else "PHASE6_REACHED"
-                        print(f"Phase6 reached. Auto exit in {self.args.phase6_hold_sec:.1f}s")
+                            self.shutdown_reason = self.mission_end_reason if self.mission_end_reason != "RUNNING" else "PHASE7_REACHED"
+                        print(f"Final phase reached. Auto exit in {self.args.phase6_hold_sec:.1f}s")
                     elif time.time() - self.phase6_exit_started_at >= self.args.phase6_hold_sec:
                         self.stop_event.set()
                 elif self.args.exit_on_goal:
@@ -325,7 +326,7 @@ class RelayController(MotorManager, SensorManager, LedManager):
     def camera_debug_loop(self):
         while not self.stop_event.is_set():
             phase = Phase(self.state.snapshot()["phase"])
-            if phase in (Phase.PHASE4, Phase.PHASE5, Phase.PHASE6):
+            if phase in (Phase.PHASE4, Phase.PHASE5, Phase.PHASE6, Phase.PHASE7):
                 self.cone_detect()
                 snapshot = self.state.snapshot()
                 detector = self.devices.get(DEVICE_DETECTOR)
@@ -353,7 +354,7 @@ class RelayController(MotorManager, SensorManager, LedManager):
                         "detected": bool(getattr(detector, "is_detected", False)) if detector else False,
                         "centroid_px": centroid,
                         "bbox_px": bbox,
-                        "goal_sign": bool(snapshot.get("cone_is_reached", False) or phase == Phase.PHASE6),
+                        "goal_sign": bool(snapshot.get("cone_is_reached", False) or phase in (Phase.PHASE6, Phase.PHASE7)),
                         "message": msg,
                         "method": detector_method,
                     }
@@ -495,7 +496,7 @@ def parse_args():
     parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY)
     parser.add_argument("--tx-hz", type=float, default=DEFAULT_TX_HZ)
     parser.add_argument("--video-every", type=int, default=DEFAULT_VIDEO_EVERY)
-    parser.add_argument("--start-phase", type=int, default=DEFAULT_START_PHASE, choices=[4, 5, 6])
+    parser.add_argument("--start-phase", type=int, default=DEFAULT_START_PHASE, choices=[4, 5, 6, 7])
     parser.add_argument("--exit-on-goal", action="store_true")
     parser.add_argument("--phase6-hold-sec", type=float, default=5.0)
     parser.add_argument("--preview-rotate-180", action=argparse.BooleanOptionalAction, default=True)

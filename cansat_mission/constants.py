@@ -12,6 +12,7 @@ class Phase(IntEnum):
     PHASE4 = 4
     PHASE5 = 5
     PHASE6 = 6
+    PHASE7 = 7
 
 # ログ関連定数
 LOG_DIR = "./log"
@@ -50,6 +51,7 @@ MISSION_PHASE_TIMEOUT_TRANSITIONS = {
     Phase.PHASE3: Phase.PHASE4,
     Phase.PHASE4: Phase.PHASE5,
     Phase.PHASE5: Phase.PHASE6,
+    Phase.PHASE6: Phase.PHASE7,
 }
 
 # センサーと動作の閾値
@@ -86,6 +88,8 @@ CAMERA_FAIL_LIMIT = 5
 CAMERA_DEAD_TIMEOUT = 30.0
 CAMERA_PHASE4_MAX_ATTEMPTS = 3
 CAMERA_PHASE5_MAX_ATTEMPTS = 3
+PHASE6_RAM_SPEED = 45
+PHASE6_RAM_DURATION_SEC = 2.5
 
 # ロゴ保存パス
 # ROI画像はホーム配下の固定パスを常に参照する
@@ -246,8 +250,8 @@ DEVICE_KEYS = (
 )
 
 # フェーズごとの動作制御関連定数
-PHASES_STOP_MOTORS = (Phase.PHASE0, Phase.PHASE6)
-PHASES_SKIP_OBSTACLE = (Phase.PHASE0, Phase.PHASE1, Phase.PHASE5, Phase.PHASE6)
+PHASES_STOP_MOTORS = (Phase.PHASE0, Phase.PHASE7)
+PHASES_SKIP_OBSTACLE = (Phase.PHASE0, Phase.PHASE1, Phase.PHASE5, Phase.PHASE6, Phase.PHASE7)
 PHASES_CAMERA_ACTIVE = (Phase.PHASE4, Phase.PHASE5)
 
 # ログのヘッダー

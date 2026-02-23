@@ -39,6 +39,7 @@ from cansat_mission.phases import (
     Phase4Handler,
     Phase5Handler,
     Phase6Handler,
+    Phase7Handler,
 )
 from cansat_mission.state import CanSatState
 
@@ -113,6 +114,7 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
             Phase.PHASE4: Phase4Handler(),
             Phase.PHASE5: Phase5Handler(),
             Phase.PHASE6: Phase6Handler(),
+            Phase.PHASE7: Phase7Handler(),
         }
 
     def initialize_phase(self, phase):
