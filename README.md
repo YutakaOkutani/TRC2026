@@ -3,60 +3,53 @@
 ## ファイル構成
 
 ```plaintext
-├── main.py
-├── cansat_mission/
-│   ├── managers/
-│       ├── __init__.py
-│       ├── hardware_manager.py
-│       ├── led_manager.py
-│       ├── motor_manager.py
-│       ├── sensor_manager.py
-│   ├── phases/
-│       ├── __init__.py
-│       ├── base.py
-│       ├── phase0.py
-│       ├── phase1.py
-│       ├── phase2.py
-│       ├── phase3.py
-│       ├── phase4.py
-│       ├── phase5.py
-│       ├── phase6.py
-│       ├── phase7.py
-│   ├── __init__.py
-│   ├── ARCHITECTURE_SUMMARY.md
-│   ├── constants.py
-│   ├── controller.py
-│   ├── navigation.py
-│   ├── runners.py
-│   ├── state.py
-├── library/
-│   ├── __init__.py
-│   ├── bno055.py
-│   ├── bmp180.py
-│   ├── capture_roi_img.py
-│   ├── detect_corn.py
-├── tests/
-│   ├── camera_phase_monitor_pc.py
-│   ├── camera_phase_relay_README.md
-│   ├── camera_phase_relay_sbc.py
-│   ├── gps_test.py
-│   ├── landing_impact.py
-│   ├── led.py
-│   ├── motor_test.py
-│   ├── open_parachute.py
-│   ├── orchestrator_phase1_to_phase6.py
-│   ├── orchestrator_phase2_to_phase3.py
-│   ├── orchestrator_phase4_to_phase6.py
-└── README.md
+├── main.py                             # 本番用コード
+├── cansat_mission/                     # ミッションコードが入ったフォルダ
+│   ├── managers/                        # センサーやモーターなどのハードウェアを管理するコード
+│       ├── __init__.py                     # マネージャコード用のディレクトリ
+│       ├── hardware_manager.py             # ハードウェア全体を管理するコード
+│       ├── led_manager.py                  # LED管理コード
+│       ├── motor_manager.py                # モーター管理コード
+│       ├── sensor_manager.py               # センサー管理コード
+│   ├── phases/                          # ミッションの各フェーズのコード
+│       ├── __init__.py                     # フェーズコード用のディレクトリ
+│       ├── base.py                         # フェーズの基底クラスコード
+│       ├── phase0.py                       # フェーズ0のコード
+│       ├── phase1.py                       # フェーズ1のコード
+│       ├── phase2.py                       # フェーズ2のコード
+│       ├── phase3.py                       # フェーズ3のコード
+│       ├── phase4.py                       # フェーズ4のコード 
+│       ├── phase5.py                       # フェーズ5のコード
+│       ├── phase6.py                       # フェーズ6のコード
+│       ├── phase7.py                       # フェーズ7のコード
+│   ├── __init__.py                      # ミッションコード用のディレクトリ
+│   ├── ARCHITECTURE_SUMMARY.md          # アーキテクチャの概要説明
+│   ├── constants.py                     # 定数定義
+│   ├── controller.py                    # ミッション全体の制御コード
+│   ├── gps_utils.py                     # GPS関連のユーティリティコード
+│   ├── navigation.py                    # ナビゲーション関連のコード
+│   ├── runners.py                       # フェーズの実行コード
+│   ├── state.py                         # ミッションの状態管理コード
+├── library/                            # ライブラリコードが入ったフォルダ
+│   ├── __init__.py                      # ライブラリコード用のディレクトリ
+│   ├── bno055.py                        # BNO055センサー用のライブラリコード
+│   ├── bmp180.py                        # BMP180センサー用のライブラリコード
+│   ├── capture_roi_img.py               # ゴール画像撮影用コード
+│   ├── detect_corn.py                   # カメラフェーズ用コード
+├── tests/                              # テストコードが入ったフォルダ
+│   ├── camera_phase_monitor_pc.py       # カメラフェーズのリレーコード（PC側）
+│   ├── camera_phase_relay_README.md     # カメラフェーズのリレーコードの説明
+│   ├── camera_phase_relay_sbc.py        # カメラフェーズのリレーコード（SBC側）
+│   ├── gps_test.py                      # GPSからの生データ取得テストコード
+│   ├── landing_impact.py                # 着地衝撃試験用テストコード
+│   ├── led.py                           # LEDテストコード
+│   ├── motor_test.py                    # モーター制御テストコード
+│   ├── open_parachute.py                # 開傘衝撃試験用テストコード（landing_impact.py と同じ内容。ログファイルを分けるために別ファイルにしている）
+│   ├── orchestrator_phase1_to_phase6.py # フェーズ1からフェーズ6までのオーケストレーションテストコード
+│   ├── orchestrator_phase2_to_phase3.py # フェーズ2からフェーズ3のオーケストレーションテストコード
+│   ├── orchestrator_phase4_to_phase6.py # フェーズ4からフェーズ6のオーケストレーションテストコード
+└── README.md                           # このファイル
 ```
-
-* 本番用コード：main.py
-* センサー用ライブラリ：bno055.py, bmp180.py
-* カメラフェーズ用：detect_corn.py
-* ゴール画像撮影用：capture_roi_image.py
-* テストコード：gps_test.py, landing_impact.py, led.py, motor_test.py, open_parachute.py（landing_impact.py と open_parachute.py の中身は同じ。出力されるログファイルを区別するために分けてある）
-* カメラフェーズのリレーコード：camera_phase_relay_sbc.py, camera_phase_monitor_pc.py
-* カメラフェーズのリレーコードの説明：camera_phase_relay_README.md
 
 ## 1. 環境構築の準備
 

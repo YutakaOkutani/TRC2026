@@ -4,7 +4,6 @@ import os
 import time
 import traceback
 
-import pynmea2
 import serial
 
 from library import bno055
@@ -34,8 +33,6 @@ from cansat_mission.constants import (
     DEVICE_DETECTOR,
     DEVICE_SONAR,
     GPS_ACTIVE_DETECT,
-    GPS_BAUDRATE,
-    GPS_BAUDRATE_CANDIDATES,
     GPS_BUFFER_CLEAR_INTERVAL,
     GPS_BUFFER_CLEAR_THRESHOLD,
     GPS_FIX_LOSS_TIMEOUT,
@@ -45,18 +42,12 @@ from cansat_mission.constants import (
     GPS_MAX_SPEED_MPS,
     GPS_MIN_FIX_QUAL,
     GPS_MIN_SATELLITES,
-    GPS_PROBE_SECONDS,
     GPS_RECONNECT_SLEEP,
-    GPS_SERIAL_DISCOVERY_TIMEOUT,
-    GPS_SERIAL_PORT,
-    GPS_SERIAL_PORT_CANDIDATES,
-    GPS_SERIAL_TIMEOUT,
     GPS_STABLE_FIX_COUNT,
-    NMEA_GGA_PREFIXES,
-    NMEA_SENTENCE_GGA,
     PHASES_CAMERA_ACTIVE,
     SONAR_MAX_DISTANCE,
 )
+from cansat_mission.gps_utils import coerce_gga_metrics, gga_quality_ok, open_gps_serial, parse_gga_sentence
 from cansat_mission.navigation import calc_distance_and_azimuth, current_milli_time
 
 
@@ -289,52 +280,7 @@ class SensorManager:
             )
 
     def gps_thread(self):
-        def _probe_nmea(serial_obj, probe_seconds=GPS_PROBE_SECONDS):
-            start = time.time()
-            last_line = ""
-            while time.time() - start < probe_seconds:
-                try:
-                    line_bytes = serial_obj.readline()
-                except Exception:
-                    return False, last_line
-                if not line_bytes:
-                    continue
-                line = line_bytes.decode("utf-8", errors="ignore").strip()
-                if line:
-                    last_line = line
-                if line.startswith("$"):
-                    return True, last_line
-            return False, last_line
-
-        def open_serial():
-            ports = [GPS_SERIAL_PORT] + [port for port in GPS_SERIAL_PORT_CANDIDATES if port != GPS_SERIAL_PORT]
-            bauds = [GPS_BAUDRATE] + [baud for baud in GPS_BAUDRATE_CANDIDATES if baud != GPS_BAUDRATE]
-            for port in ports:
-                for baud in bauds:
-                    try:
-                        serial_obj = serial.Serial(port, baud, timeout=GPS_SERIAL_DISCOVERY_TIMEOUT)
-                        try:
-                            serial_obj.reset_input_buffer()
-                        except Exception:
-                            pass
-                        ok, last_line = _probe_nmea(serial_obj)
-                        if ok:
-                            serial_obj.timeout = GPS_SERIAL_TIMEOUT
-                            print(f"GPS serial opened: {port} @ {baud}")
-                            return serial_obj
-                        try:
-                            serial_obj.close()
-                        except Exception:
-                            pass
-                        if last_line:
-                            print(f"No NMEA at {port} @ {baud} (last: {last_line})")
-                        else:
-                            print(f"No NMEA at {port} @ {baud}")
-                    except Exception as exc:
-                        print(f"GPS Serial Open Failed: {port} @ {baud}: {exc}")
-            return None
-
-        serial_obj = open_serial()
+        serial_obj, _, _ = open_gps_serial()
         last_buffer_clear = time.time()
         last_fix_time = 0.0
         last_valid_fix_time = 0.0
@@ -343,7 +289,7 @@ class SensorManager:
         while True:
             try:
                 if serial_obj is None or not serial_obj.is_open:
-                    serial_obj = open_serial()
+                    serial_obj, _, _ = open_gps_serial()
                     time.sleep(GPS_RECONNECT_SLEEP)
                     continue
                 now = time.time()
@@ -362,50 +308,16 @@ class SensorManager:
                 if not line_bytes:
                     continue
                 line = line_bytes.decode("utf-8", errors="ignore").strip()
-                if not line.startswith(NMEA_GGA_PREFIXES):
+                parsed = parse_gga_sentence(line)
+                if parsed is None:
                     continue
-                try:
-                    msg = pynmea2.parse(line, check=True)
-                except Exception:
-                    continue
-                if getattr(msg, "sentence_type", "") != NMEA_SENTENCE_GGA:
-                    continue
-
-                lat_val = getattr(msg, "latitude", None)
-                lng_val = getattr(msg, "longitude", None)
-                if lat_val is None or lng_val is None:
-                    continue
-                lat = float(lat_val)
-                lng = float(lng_val)
-
-                gps_qual = getattr(msg, "gps_qual", None)
-                num_sats = getattr(msg, "num_sats", None)
-                hdop = getattr(msg, "horizontal_dil", None)
-                try:
-                    qual_ok = gps_qual is not None and int(gps_qual) >= GPS_MIN_FIX_QUAL
-                except (TypeError, ValueError):
-                    qual_ok = False
-                try:
-                    sats_ok = num_sats is not None and int(num_sats) >= GPS_MIN_SATELLITES
-                except (TypeError, ValueError):
-                    sats_ok = False
-                try:
-                    hdop_ok = hdop is not None and float(hdop) <= GPS_MAX_HDOP
-                except (TypeError, ValueError):
-                    hdop_ok = True
-
-                try:
-                    gps_fix_qual_val = int(gps_qual) if gps_qual is not None else 0
-                except (TypeError, ValueError):
-                    gps_fix_qual_val = 0
-                try:
-                    gps_sats_val = int(num_sats) if num_sats is not None else 0
-                except (TypeError, ValueError):
-                    gps_sats_val = 0
-                try:
-                    gps_hdop_val = float(hdop) if hdop is not None else 0.0
-                except (TypeError, ValueError):
-                    gps_hdop_val = 0.0
+                lat = parsed["lat"]
+                lng = parsed["lng"]
+                gps_qual = parsed["gps_qual"]
+                num_sats = parsed["num_sats"]
+                hdop = parsed["hdop"]
+                qual_ok, sats_ok, hdop_ok = gga_quality_ok(gps_qual, num_sats, hdop)
+                gps_fix_qual_val, gps_sats_val, gps_hdop_val = coerce_gga_metrics(gps_qual, num_sats, hdop)
                 self.state.update_gps(
                     gps_fix_qual=gps_fix_qual_val,
                     gps_sats=gps_sats_val,
