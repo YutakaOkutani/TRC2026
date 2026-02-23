@@ -102,20 +102,53 @@ class RelayServer:
         self.port = port
         self.state = state
         self.stop_event = threading.Event()
+        self._server_sock = None
+        self._conn_sock = None
+        self._sock_lock = threading.Lock()
+
+    def shutdown(self):
+        self.stop_event.set()
+        with self._sock_lock:
+            socks = [self._conn_sock, self._server_sock]
+            self._conn_sock = None
+            self._server_sock = None
+        for sock in socks:
+            if sock is None:
+                continue
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     def run(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.settimeout(0.2)
         server.bind((self.host, self.port))
         server.listen(1)
+        with self._sock_lock:
+            self._server_sock = server
         print(f"Listening on {self.host}:{self.port}")
 
         try:
             while not self.stop_event.is_set():
-                conn, addr = server.accept()
+                try:
+                    conn, addr = server.accept()
+                except (socket.timeout, TimeoutError):
+                    continue
+                except OSError:
+                    if self.stop_event.is_set():
+                        break
+                    raise
                 print(f"Connected: {addr[0]}:{addr[1]}")
                 with conn:
-                    conn.settimeout(5.0)
+                    conn.settimeout(0.2)
+                    with self._sock_lock:
+                        self._conn_sock = conn
                     try:
                         while not self.stop_event.is_set():
                             header = recv_exact(conn, 4)
@@ -133,8 +166,15 @@ class RelayServer:
                                 self.state.update(packet)
                     except (socket.timeout, TimeoutError) as exc:
                         print(f"Connection timeout: {exc}")
+                    finally:
+                        with self._sock_lock:
+                            if self._conn_sock is conn:
+                                self._conn_sock = None
                 print("Disconnected. Waiting for reconnect...")
         finally:
+            with self._sock_lock:
+                if self._server_sock is server:
+                    self._server_sock = None
             server.close()
 
 
@@ -216,8 +256,13 @@ def start_ui(state, history_sec):
 
     ani = FuncAnimation(fig, update, interval=100, blit=False, cache_frame_data=False)
     plt.tight_layout()
-    plt.show()
-    _ = ani
+    plt.show(block=False)
+
+    try:
+        while plt.fignum_exists(fig.number):
+            plt.pause(0.05)
+    finally:
+        _ = ani
 
 
 def parse_args():
@@ -238,9 +283,13 @@ def main():
 
     try:
         start_ui(state, history_sec=args.history_sec)
+    except KeyboardInterrupt:
+        print("Interrupted by Ctrl+C")
     finally:
-        server.stop_event.set()
+        server.shutdown()
+        plt.close("all")
         cv2.destroyAllWindows()
+        th.join(timeout=1.0)
 
 
 if __name__ == "__main__":
