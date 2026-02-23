@@ -41,34 +41,22 @@ from cansat_mission.constants import (
 
 
 class HardwareManager:
-    def setup_hardware(self):
-        print("--- Robust Setup Start ---")
-        self.devices = {key: None for key in DEVICE_KEYS}
-
+    def _setup_bno_device(self):
         try:
             bno = bno055.BNO055()
             for i in range(BNO_SETUP_RETRY_COUNT):
                 if bno.setUp():
                     self.devices[DEVICE_BNO] = bno
                     print("BNO055: OK")
-                    break
+                    return True
                 print(f"BNO055: Retry {i + 1}...")
                 time.sleep(BNO_SETUP_RETRY_INTERVAL)
-            else:
-                print("WARNING: BNO055 Init Failed.")
+            print("WARNING: BNO055 Init Failed.")
         except Exception as exc:
             print(f"BNO055: Critical Error {exc}.")
+        return False
 
-        try:
-            bmp = bmp180.BMP180(oss=3)
-            if bmp.setUp():
-                self.devices[DEVICE_BMP] = bmp
-                print("BMP180: OK")
-            else:
-                print("WARNING: BMP180 Init Failed.")
-        except Exception as exc:
-            print(f"BMP180: Critical Error {exc}.")
-
+    def _setup_camera_detector(self):
         print("Camera: Initializing...")
         try:
             detector = dc.detector()
@@ -83,10 +71,13 @@ class HardwareManager:
             detector.set_roi_img(roi_img)
             self.devices[DEVICE_DETECTOR] = detector
             print("Camera: OK (Initialized)")
+            return True
         except Exception as exc:
             print(f"Camera: Critical Init Error {exc}. Proceeding without Vision.")
             self.devices[DEVICE_DETECTOR] = None
+            return False
 
+    def _setup_gpio_devices(self, include_sonar=True):
         print("GPIOZero: Initializing devices...")
         try:
             pin_factory = LGPIOFactory()
@@ -114,12 +105,13 @@ class HardwareManager:
                 pin_factory=pin_factory,
                 initial_value=False,
             )
-            self.devices[DEVICE_SONAR] = DistanceSensor(
-                echo=PIN_ECHO,
-                trigger=PIN_TRIG,
-                max_distance=SONAR_MAX_DISTANCE,
-                pin_factory=pin_factory,
-            )
+            if include_sonar:
+                self.devices[DEVICE_SONAR] = DistanceSensor(
+                    echo=PIN_ECHO,
+                    trigger=PIN_TRIG,
+                    max_distance=SONAR_MAX_DISTANCE,
+                    pin_factory=pin_factory,
+                )
             self.motor_state = {}
             for key in (DEVICE_MOTOR_1_PWM, DEVICE_MOTOR_2_PWM):
                 pwm_dev = self.devices.get(key)
@@ -127,8 +119,30 @@ class HardwareManager:
                     self.motor_state[pwm_dev] = {"speed": 0.0, "direction": True}
             self.stop_motors()
             print("GPIOZero: OK")
+            return True
         except Exception as exc:
             print(f"GPIOZero Setup Error {exc}.")
+            return False
+
+    def setup_hardware(self):
+        print("--- Robust Setup Start ---")
+        self.devices = {key: None for key in DEVICE_KEYS}
+
+        self._setup_bno_device()
+
+        try:
+            bmp = bmp180.BMP180(oss=3)
+            if bmp.setUp():
+                self.devices[DEVICE_BMP] = bmp
+                print("BMP180: OK")
+            else:
+                print("WARNING: BMP180 Init Failed.")
+        except Exception as exc:
+            print(f"BMP180: Critical Error {exc}.")
+
+        self._setup_camera_detector()
+
+        self._setup_gpio_devices(include_sonar=True)
 
         # Create the log file before background threads start writing to it.
         # This avoids a race where data rows are appended and then overwritten

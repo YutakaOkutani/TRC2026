@@ -2,7 +2,6 @@ import argparse
 import base64
 import json
 import math
-import os
 import socket
 import struct
 import sys
@@ -11,19 +10,12 @@ import time
 from pathlib import Path
 
 import cv2
-from gpiozero import DigitalOutputDevice, LED, PWMOutputDevice
-from gpiozero.pins.lgpio import LGPIOFactory
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from library import bno055
-from library import detect_corn as dc
-
 from cansat_mission.constants import (
-    BNO_SETUP_RETRY_COUNT,
-    BNO_SETUP_RETRY_INTERVAL,
     CAMERA_ACTIVE_SLEEP,
     CAMERA_IDLE_SLEEP,
     CONE_CENTER_POSITION,
@@ -48,18 +40,9 @@ from cansat_mission.constants import (
     HEADING_WEIGHT_BNO_MIN,
     HEADING_WEIGHT_BNO_STEP,
     HEADING_WEIGHT_GPS,
-    PIN_EN1,
-    PIN_EN2,
-    PIN_LED_GREEN,
-    PIN_LED_RED,
-    PIN_PH1,
-    PIN_PH2,
-    PWM_FREQ,
-    ROI_PATH_1,
-    ROI_PATH_2,
     Phase,
 )
-from cansat_mission.managers import LedManager, MotorManager, SensorManager
+from cansat_mission.managers import HardwareManager, LedManager, MotorManager, SensorManager
 from cansat_mission.phases import Phase4Handler, Phase5Handler, Phase6Handler, Phase7Handler
 from cansat_mission.state import CanSatState
 
@@ -78,7 +61,7 @@ DEFAULT_JPEG_QUALITY = 55
 DEFAULT_START_PHASE = 4
 
 
-class RelayController(MotorManager, SensorManager, LedManager):
+class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
     def __init__(self, args):
         self.args = args
         self.state = CanSatState()
@@ -211,48 +194,9 @@ class RelayController(MotorManager, SensorManager, LedManager):
         return fused, HEADING_SOURCE_JOINER.join(source_parts), total_w
 
     def setup_hardware_minimal(self):
-        try:
-            bno_dev = bno055.BNO055()
-            for i in range(BNO_SETUP_RETRY_COUNT):
-                if bno_dev.setUp():
-                    self.devices[DEVICE_BNO] = bno_dev
-                    print("BNO055: OK")
-                    break
-                print(f"BNO055: Retry {i + 1}...")
-                time.sleep(BNO_SETUP_RETRY_INTERVAL)
-        except Exception as exc:
-            print(f"BNO055 init error: {exc}")
-
-        try:
-            detector = dc.detector()
-            roi_img = None
-            if os.path.exists(ROI_PATH_1):
-                roi_img = cv2.imread(ROI_PATH_1)
-            self.roi_img = roi_img
-            detector.set_roi_img(roi_img)
-            detector.detect_cone()
-            self.devices[DEVICE_DETECTOR] = detector
-            print("Camera detector: OK")
-        except Exception as exc:
-            print(f"Camera detector init error: {exc}")
-            self.devices[DEVICE_DETECTOR] = None
-
-        try:
-            pin_factory = LGPIOFactory()
-            self.devices[DEVICE_LED_RED] = LED(PIN_LED_RED, pin_factory=pin_factory)
-            self.devices[DEVICE_LED_GREEN] = LED(PIN_LED_GREEN, pin_factory=pin_factory)
-            self.devices[DEVICE_MOTOR_1_PWM] = PWMOutputDevice(PIN_EN1, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-            self.devices[DEVICE_MOTOR_1_DIR] = DigitalOutputDevice(PIN_PH1, pin_factory=pin_factory, initial_value=False)
-            self.devices[DEVICE_MOTOR_2_PWM] = PWMOutputDevice(PIN_EN2, pin_factory=pin_factory, frequency=PWM_FREQ, initial_value=0)
-            self.devices[DEVICE_MOTOR_2_DIR] = DigitalOutputDevice(PIN_PH2, pin_factory=pin_factory, initial_value=False)
-            for key in (DEVICE_MOTOR_1_PWM, DEVICE_MOTOR_2_PWM):
-                pwm_dev = self.devices.get(key)
-                if pwm_dev:
-                    self.motor_state[pwm_dev] = {"speed": 0.0, "direction": True}
-            self.stop_motors()
-            print("GPIO: OK")
-        except Exception as exc:
-            print(f"GPIO init error: {exc}")
+        self._setup_bno_device()
+        self._setup_camera_detector()
+        self._setup_gpio_devices(include_sonar=False)
 
     def _extract_detector_box(self, detector):
         if detector is None or getattr(detector, "binarized_img", None) is None:
