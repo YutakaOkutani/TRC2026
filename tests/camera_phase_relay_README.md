@@ -29,13 +29,13 @@
 1. Start PC monitor:
 
 ```bash
-python3 camera_phase_monitor_pc.py
+python camera_phase_monitor_pc.py
 ```
 
 1. Start SBC relay:
 
 ```bash
-python3 camera_phase_relay_sbc.py
+python camera_phase_relay_sbc.py
 ```
 
 ## Notes
