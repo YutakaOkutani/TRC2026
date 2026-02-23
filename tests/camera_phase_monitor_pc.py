@@ -16,7 +16,10 @@ import numpy as np
 def recv_exact(sock, n):
     data = bytearray()
     while len(data) < n:
-        chunk = sock.recv(n - len(data))
+        try:
+            chunk = sock.recv(n - len(data))
+        except (socket.timeout, TimeoutError):
+            return None
         if not chunk:
             return None
         data.extend(chunk)
@@ -113,20 +116,23 @@ class RelayServer:
                 print(f"Connected: {addr[0]}:{addr[1]}")
                 with conn:
                     conn.settimeout(5.0)
-                    while not self.stop_event.is_set():
-                        header = recv_exact(conn, 4)
-                        if header is None:
-                            break
-                        size = struct.unpack(">I", header)[0]
-                        body = recv_exact(conn, size)
-                        if body is None:
-                            break
-                        try:
-                            packet = json.loads(body.decode("utf-8"))
-                        except Exception:
-                            continue
-                        if packet.get("type") == "telemetry":
-                            self.state.update(packet)
+                    try:
+                        while not self.stop_event.is_set():
+                            header = recv_exact(conn, 4)
+                            if header is None:
+                                break
+                            size = struct.unpack(">I", header)[0]
+                            body = recv_exact(conn, size)
+                            if body is None:
+                                break
+                            try:
+                                packet = json.loads(body.decode("utf-8"))
+                            except Exception:
+                                continue
+                            if packet.get("type") == "telemetry":
+                                self.state.update(packet)
+                    except (socket.timeout, TimeoutError) as exc:
+                        print(f"Connection timeout: {exc}")
                 print("Disconnected. Waiting for reconnect...")
         finally:
             server.close()
@@ -208,7 +214,7 @@ def start_ui(state, history_sec):
 
         return line_acc, line_gyro, line_mag, line_ang, line_sats, line_hdop, line_detect, status_text
 
-    ani = FuncAnimation(fig, update, interval=100, blit=False)
+    ani = FuncAnimation(fig, update, interval=100, blit=False, cache_frame_data=False)
     plt.tight_layout()
     plt.show()
     _ = ani
