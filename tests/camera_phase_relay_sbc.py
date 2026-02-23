@@ -63,6 +63,20 @@ from cansat_mission.managers import LedManager, MotorManager, SensorManager
 from cansat_mission.phases import Phase4Handler, Phase5Handler, Phase6Handler
 from cansat_mission.state import CanSatState
 
+# Runtime defaults (change here when your environment changes)
+# Variable parameter: PC monitor host (receiver IP)
+DEFAULT_PC_HOST = "100.100.219.60"
+# Variable parameter: PC monitor port
+DEFAULT_PC_PORT = 5001
+# Variable parameter: telemetry transmit rate [Hz]
+DEFAULT_TX_HZ = 10.0
+# Variable parameter: attach one JPEG frame every N packets
+DEFAULT_VIDEO_EVERY = 2
+# Variable parameter: JPEG quality (1-95)
+DEFAULT_JPEG_QUALITY = 55
+# Variable parameter: start phase for this relay test
+DEFAULT_START_PHASE = 4
+
 
 class RelayController(MotorManager, SensorManager, LedManager):
     def __init__(self, args):
@@ -427,12 +441,12 @@ class RelayController(MotorManager, SensorManager, LedManager):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="SBC relay (phase4-6 via mission handlers + custom realtime debug relay)")
-    parser.add_argument("--pc-host", required=True)
-    parser.add_argument("--pc-port", type=int, default=5001)
-    parser.add_argument("--jpeg-quality", type=int, default=55)
-    parser.add_argument("--tx-hz", type=float, default=10.0)
-    parser.add_argument("--video-every", type=int, default=2)
-    parser.add_argument("--start-phase", type=int, default=4, choices=[4, 5, 6])
+    parser.add_argument("--pc-host", default=DEFAULT_PC_HOST)
+    parser.add_argument("--pc-port", type=int, default=DEFAULT_PC_PORT)
+    parser.add_argument("--jpeg-quality", type=int, default=DEFAULT_JPEG_QUALITY)
+    parser.add_argument("--tx-hz", type=float, default=DEFAULT_TX_HZ)
+    parser.add_argument("--video-every", type=int, default=DEFAULT_VIDEO_EVERY)
+    parser.add_argument("--start-phase", type=int, default=DEFAULT_START_PHASE, choices=[4, 5, 6])
     parser.add_argument("--exit-on-goal", action="store_true")
     parser.add_argument("--preview-rotate-180", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--preview-swap-rb", action=argparse.BooleanOptionalAction, default=True)

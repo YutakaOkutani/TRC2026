@@ -29,18 +29,19 @@
 1. Start PC monitor:
 
 ```bash
-python3 camera_phase_monitor_pc.py --host 0.0.0.0 --port 5001 --history-sec 30
+python3 camera_phase_monitor_pc.py
 ```
 
-1. Start SBC relay (replace with your PC IP):
+1. Start SBC relay:
 
 ```bash
-python3 camera_phase_relay_sbc.py --pc-host 100.100.219.60 --pc-port 5001 --tx-hz 10 --video-every 2 --jpeg-quality 55 --start-phase 4
+python3 camera_phase_relay_sbc.py
 ```
 
 ## Notes
 
 - If ROI image is missing, default red-color detection fallback is used (same as `main.py`).
+- Runtime defaults (host/port/tx rate/JPEG quality/start phase) are embedded in each script and can be changed in the constants near the top of each file.
 - `--exit-on-goal` を付けると、phase6到達時に停止します（付けなければGOAL表示を維持して配信継続）。
 - Reduce SBC load further:
   - Increase `--video-every` (send frames less often).

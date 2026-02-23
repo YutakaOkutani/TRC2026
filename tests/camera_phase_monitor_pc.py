@@ -12,6 +12,14 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
 
+# Runtime defaults (change here when your environment changes)
+# Variable parameter: PC monitor bind address
+DEFAULT_MONITOR_HOST = "0.0.0.0"
+# Variable parameter: PC monitor listen port
+DEFAULT_MONITOR_PORT = 5001
+# Variable parameter: graph history window [sec]
+DEFAULT_HISTORY_SEC = 30.0
+
 
 def recv_exact(sock, n):
     data = bytearray()
@@ -267,9 +275,9 @@ def start_ui(state, history_sec):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="PC monitor for SBC camera/BNO055/GPS relay")
-    parser.add_argument("--host", default="0.0.0.0", help="listen host")
-    parser.add_argument("--port", type=int, default=5001, help="listen port")
-    parser.add_argument("--history-sec", type=float, default=30.0, help="plot window seconds")
+    parser.add_argument("--host", default=DEFAULT_MONITOR_HOST, help="listen host")
+    parser.add_argument("--port", type=int, default=DEFAULT_MONITOR_PORT, help="listen port")
+    parser.add_argument("--history-sec", type=float, default=DEFAULT_HISTORY_SEC, help="plot window seconds")
     return parser.parse_args()
 
 
