@@ -29,13 +29,13 @@
 1. Start PC monitor:
 
 ```bash
-python camera_phase_monitor_pc.py --host 0.0.0.0 --port 5001 --history-sec 30
+python3 camera_phase_monitor_pc.py --host 0.0.0.0 --port 5001 --history-sec 30
 ```
 
 1. Start SBC relay (replace with your PC IP):
 
 ```bash
-python camera_phase_relay_sbc.py --pc-host 100.100.219.60 --pc-port 5001 --tx-hz 10 --video-every 2 --jpeg-quality 55 --start-phase 4
+python3 camera_phase_relay_sbc.py --pc-host 100.100.219.60 --pc-port 5001 --tx-hz 10 --video-every 2 --jpeg-quality 55 --start-phase 4
 ```
 
 ## Notes
