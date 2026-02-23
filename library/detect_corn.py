@@ -13,8 +13,9 @@ class detector:
         self.ratio_thresh = 0.25
 
         # Goal (close contact) judgment: screen should be mostly red and touching edges
-        self.reached_occupancy_thresh = 0.55
-        self.reached_edge_touch_min = 2
+        # Goal判定はやや厳しめにする（近距離で画面を大きく占有していること）
+        self.reached_occupancy_thresh = 0.68
+        self.reached_edge_touch_min = 3
 
         # Runtime state
         self.input_img = None
