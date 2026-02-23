@@ -1,5 +1,6 @@
 import csv
 import math
+import os
 import time
 
 import pynmea2
@@ -551,6 +552,8 @@ class SensorManager:
                             f"{mission_elapsed_sec:.2f}",
                         ]
                     )
+                    file_obj.flush()
+                    os.fsync(file_obj.fileno())
             except Exception as exc:
                 print(f"Log Error: {exc}")
             time.sleep(DATA_SAMPLING_RATE)

@@ -130,8 +130,11 @@ class HardwareManager:
         except Exception as exc:
             print(f"GPIOZero Setup Error {exc}.")
 
-        self.start_threads()
+        # Create the log file before background threads start writing to it.
+        # This avoids a race where data rows are appended and then overwritten
+        # by the header initialization.
         self.init_log_file()
+        self.start_threads()
         print("--- Setup Finished (Ready to Die Trying) ---")
 
     def start_threads(self):
@@ -148,5 +151,7 @@ class HardwareManager:
             with open(self.log_path, "w", newline="") as file_obj:
                 writer = csv.writer(file_obj)
                 writer.writerow(LOG_HEADER)
+                file_obj.flush()
+                os.fsync(file_obj.fileno())
         except Exception:
             print("Log File Init Failed. No logging.")
