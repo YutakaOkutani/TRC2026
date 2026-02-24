@@ -20,7 +20,7 @@ def main():
     mission_constants.LOG_DIR = str(TEST_LOG_DIR)
     mission_controller.LOG_DIR = str(TEST_LOG_DIR)
     run_phase_sequence(
-        start_phase=Phase.PHASE1,
+        start_phase=Phase.PHASE3,
         allowed_phases=(Phase.PHASE3, Phase.PHASE4),
     )
 
