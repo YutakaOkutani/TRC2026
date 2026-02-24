@@ -140,6 +140,21 @@ class SensorManager:
         if os.name != "nt":
             os.fsync(file_obj.fileno())
 
+    def log_thread(self):
+        log_error_last_print = 0.0
+        while True:
+            try:
+                with open(self.log_path, "a", newline="") as file_obj:
+                    writer = csv.writer(file_obj)
+                    self._append_log_row(writer, file_obj)
+            except Exception as exc:
+                now = time.time()
+                if now - log_error_last_print >= 1.0:
+                    print(f"Log Error: {exc}")
+                    traceback.print_exc()
+                    log_error_last_print = now
+            time.sleep(DATA_SAMPLING_RATE)
+
     def _vector_within(self, vec, max_abs):
         try:
             for value in vec:
@@ -472,7 +487,6 @@ class SensorManager:
                 time.sleep(CAMERA_IDLE_SLEEP)
 
     def data_thread(self):
-        log_error_last_print = 0.0
         while True:
             try:
                 bno_data = self.get_bno_data()
@@ -508,17 +522,4 @@ class SensorManager:
             except Exception as exc:
                 print(f"Data Thread Error: {exc}")
                 traceback.print_exc()
-
-            try:
-                # Log after sensor/state updates so each row reflects the latest cycle.
-                with open(self.log_path, "a", newline="") as file_obj:
-                    writer = csv.writer(file_obj)
-                    self._append_log_row(writer, file_obj)
-            except Exception as exc:
-                now = time.time()
-                # Throttle repeated log errors to avoid flooding and hiding phase logs.
-                if now - log_error_last_print >= 1.0:
-                    print(f"Log Error: {exc}")
-                    traceback.print_exc()
-                    log_error_last_print = now
             time.sleep(DATA_SAMPLING_RATE)

@@ -155,6 +155,7 @@ class HardwareManager:
         try:
             threading.Thread(target=self.move_motor_thread, daemon=True).start()
             threading.Thread(target=self.data_thread, daemon=True).start()
+            threading.Thread(target=self.log_thread, daemon=True).start()
             threading.Thread(target=self.gps_thread, daemon=True).start()
             threading.Thread(target=self.camera_thread, daemon=True).start()
         except Exception as exc:
