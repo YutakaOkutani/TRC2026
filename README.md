@@ -515,6 +515,8 @@ git push
 # ローカルを GitHub の最新版で完全に上書きするコマンド
 git fetch origin
 git reset --hard origin/main
+# 一行で実行するコマンド
+git fetch origin && git reset --hard origin/main
 ```
 
 ```bash
