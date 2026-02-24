@@ -62,6 +62,7 @@ class LedPatternHarness(LedManager):
         }
         self.state = DummyState()
         self.led_blink_timer = 0
+        self.bno_calib = {"valid": False, "value": (0, 0, 0, 0)}
 
         self.time_phase1_start = None
         self.phase0_entry_marker = None
