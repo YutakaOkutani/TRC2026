@@ -90,10 +90,12 @@ class SensorManager:
         mag = self._snapshot_vec3(current_data, "mag")
 
         motor_cmd_updated_ms = self._coerce_int(motor_cmd.get("updated_ms", 0))
-        motor_cmd_updated_sec = motor_cmd_updated_ms // 1000 if motor_cmd_updated_ms > 0 else 0
+        motor_cmd_updated_elapsed_sec = 0.0
+        if mission_start and motor_cmd_updated_ms > 0:
+            motor_cmd_updated_elapsed_sec = max(0.0, (motor_cmd_updated_ms / 1000.0) - mission_start)
 
         return [
-            int(time.time()),
+            f"{mission_elapsed_sec:.2f}",
             self._coerce_int(current_data.get("phase", 0)),
             f"{acc[0]:.2f}",
             f"{acc[1]:.2f}",
@@ -125,7 +127,7 @@ class SensorManager:
             self._coerce_int(bool(current_data.get("angle_valid", False))),
             f"{self._coerce_float(getattr(self, 'bno_stale_sec', 0.0)):.2f}",
             str(motor_cmd.get("type", "")),
-            motor_cmd_updated_sec,
+            f"{motor_cmd_updated_elapsed_sec:.2f}",
             f"{self._coerce_float(motor_cmd.get('motor1_speed', 0.0)):.2f}",
             self._coerce_int(bool(motor_cmd.get("motor1_forward", 1))),
             f"{self._coerce_float(motor_cmd.get('motor2_speed', 0.0)):.2f}",
