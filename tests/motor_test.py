@@ -11,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 from gpiozero import PWMOutputDevice, DigitalOutputDevice
 from gpiozero.pins.lgpio import LGPIOFactory
 
+from cansat_mission.constants import MOTOR_DIR_INVERT_1, MOTOR_DIR_INVERT_2
 from cansat_mission.managers.motor_manager import get_manual_drive_pattern
 
 # --- GPIO Pin Definition ---
@@ -135,8 +136,9 @@ def set_motor(motor_side, speed, direction, ramp_time=0.6, step_interval=0.05):
         current_speed = _ramp_pwm(pwm_dev, current_speed, 0, ramp_time / 2, step_interval)
 
     # Set direction (PH Pin)
-    # Hardware wiring uses inverted logic: logical "forward" (1) needs PH low.
-    dir_dev.value = 0 if direction == 1 else 1
+    # Match production polarity handling through invert flags.
+    invert = MOTOR_DIR_INVERT_1 if motor_side == 'A' else MOTOR_DIR_INVERT_2
+    dir_dev.value = 1 if (bool(direction) ^ bool(invert)) else 0
 
     # Set PWM duty with ramp (EN Pin - PWM 0.0-1.0)
     target_speed = max(0.0, min(100.0, speed))
@@ -171,9 +173,9 @@ def set_motors(speed_a, dir_a, speed_b, dir_b, ramp_time=0.6, step_interval=0.05
             ramp_time / 2, step_interval
         )
 
-    # Set directions (PH Pin). Hardware wiring uses inverted logic.
-    motor_1_dir.value = 0 if dir_a == 1 else 1
-    motor_2_dir.value = 0 if dir_b == 1 else 1
+    # Match production polarity handling through invert flags.
+    motor_1_dir.value = 1 if (bool(dir_a) ^ bool(MOTOR_DIR_INVERT_1)) else 0
+    motor_2_dir.value = 1 if (bool(dir_b) ^ bool(MOTOR_DIR_INVERT_2)) else 0
 
     target_a = max(0.0, min(100.0, speed_a))
     target_b = max(0.0, min(100.0, speed_b))
