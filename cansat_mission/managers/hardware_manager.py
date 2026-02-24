@@ -166,6 +166,8 @@ class HardwareManager:
                 writer = csv.writer(file_obj)
                 writer.writerow(LOG_HEADER)
                 file_obj.flush()
-                os.fsync(file_obj.fileno())
+                # Avoid fsync stalls on Windows/OneDrive test environments.
+                if os.name != "nt":
+                    os.fsync(file_obj.fileno())
         except Exception:
             print("Log File Init Failed. No logging.")

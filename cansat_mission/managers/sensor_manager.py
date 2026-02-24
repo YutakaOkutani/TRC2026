@@ -440,7 +440,10 @@ class SensorManager:
                         ]
                     )
                     file_obj.flush()
-                    os.fsync(file_obj.fileno())
+                    # On Windows (especially cloud-synced folders like OneDrive),
+                    # fsync per row can block for a long time and stall logging.
+                    if os.name != "nt":
+                        os.fsync(file_obj.fileno())
             except Exception as exc:
                 print(f"Log Error: {exc}")
 
