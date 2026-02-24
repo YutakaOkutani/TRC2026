@@ -613,7 +613,7 @@ sudo tailscale up
 * Android
 * Raspberry Pi
 
-が **同じ仮想LAN** に入る
+が **同じ仮想LAN** に入る（実際のネットがそれぞれ別でもSSH接続できるようになる）
 
 ---
 
