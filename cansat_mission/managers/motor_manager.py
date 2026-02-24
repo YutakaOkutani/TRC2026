@@ -16,6 +16,8 @@ from cansat_mission.constants import (
     MOTOR_LOOP_INTERVAL,
     MOTOR_RAMP_STEP,
     MOTOR_RAMP_TIME,
+    MOTOR_SPEED_OFFSET_1,
+    MOTOR_SPEED_OFFSET_2,
     MOTOR_SPEED_SCALE_1,
     MOTOR_SPEED_SCALE_2,
     OBSTACLE_AVOID_DIST,
@@ -84,8 +86,19 @@ class MotorManager:
             scale = default
         return max(0.0, scale)
 
+    def _get_motor_speed_offset(self, motor_index):
+        default = MOTOR_SPEED_OFFSET_1 if motor_index == 1 else MOTOR_SPEED_OFFSET_2
+        attr_name = f"motor_speed_offset_{motor_index}"
+        try:
+            offset = float(getattr(self, attr_name, default))
+        except (TypeError, ValueError):
+            offset = default
+        return offset
+
     def _apply_motor_speed_scale(self, speed, motor_index):
-        return self._clamp_percent(float(speed) * self._get_motor_speed_scale(motor_index))
+        scaled = float(speed) * self._get_motor_speed_scale(motor_index)
+        adjusted = scaled + self._get_motor_speed_offset(motor_index)
+        return self._clamp_percent(adjusted)
 
     def _phase45_bno_heading(self, snapshot):
         if snapshot.get("angle_valid", False):

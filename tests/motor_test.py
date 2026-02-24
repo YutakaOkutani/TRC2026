@@ -14,6 +14,8 @@ from gpiozero.pins.lgpio import LGPIOFactory
 from cansat_mission.constants import (
     MOTOR_DIR_INVERT_1,
     MOTOR_DIR_INVERT_2,
+    MOTOR_SPEED_OFFSET_1,
+    MOTOR_SPEED_OFFSET_2,
     MOTOR_SPEED_SCALE_1,
     MOTOR_SPEED_SCALE_2,
 )
@@ -63,7 +65,8 @@ def setup():
 
     print(
         f"Setup Complete: gpiozero initialized. "
-        f"speed_scale A={MOTOR_SPEED_SCALE_1:.3f}, B={MOTOR_SPEED_SCALE_2:.3f}"
+        f"speed_scale A={MOTOR_SPEED_SCALE_1:.3f}, B={MOTOR_SPEED_SCALE_2:.3f}, "
+        f"speed_offset A={MOTOR_SPEED_OFFSET_1:.1f}, B={MOTOR_SPEED_OFFSET_2:.1f}"
     )
 
 
@@ -115,9 +118,11 @@ def _ramp_pwm_dual(pwm_a, start_a, target_a, pwm_b, start_b, target_b, ramp_time
 
 
 def _apply_speed_scale(speed, motor_side):
-    """Apply per-motor PWM trim to compensate individual motor differences."""
+    """Apply per-motor PWM trim (scale + offset) to compensate differences."""
     scale = MOTOR_SPEED_SCALE_1 if motor_side == 'A' else MOTOR_SPEED_SCALE_2
-    return max(0.0, min(100.0, float(speed) * max(0.0, float(scale))))
+    offset = MOTOR_SPEED_OFFSET_1 if motor_side == 'A' else MOTOR_SPEED_OFFSET_2
+    adjusted = float(speed) * max(0.0, float(scale)) + float(offset)
+    return max(0.0, min(100.0, adjusted))
 
 
 def set_motor(motor_side, speed, direction, ramp_time=0.6, step_interval=0.05):
