@@ -1,5 +1,13 @@
+import sys
 import os
 import time
+from pathlib import Path
+
+# Allow running this file directly (e.g. `python tests/gps_test.py`) by adding
+# the repository root to sys.path so `cansat_mission` can be imported.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from cansat_mission.gps_utils import RobustGPSReader, open_gps_serial
 
