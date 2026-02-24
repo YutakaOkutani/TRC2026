@@ -367,7 +367,7 @@ ls venv/bin/python
 想定例（環境に合わせて読み替える）
 
 * リポジトリ: `/home/pi/TRC2026`
-* venv の Python: `/home/pi/TRC2026/venv/bin/python`
+* venv の Python: `/home/pi/venv/bin/python`
 
 #### 2. サービスファイルの作成
 
@@ -397,7 +397,7 @@ Environment=PYTHONUNBUFFERED=1
 
 # venv を使う場合は venv の python を使う（activate は不要）
 # ※ パスは必ず実環境に合わせる
-ExecStart=/home/pi/TRC2026/venv/bin/python /home/pi/TRC2026/main.py
+ExecStart=/home/pi/venv/bin/python /home/pi/TRC2026/main.py
 
 # 異常終了時に自動再起動（ミッション継続のため重要）
 Restart=on-failure
@@ -547,10 +547,10 @@ Tailscaleに登録された各デバイスは：
 
 * 管理画面に表示される
 
-* そのIPで直接SSH接続が可能になる
+* そのIPで直接SSH接続が可能になる（実際のネットワークは同じでなくてもよい）
 
 ```powershell
-ssh pi@100.x.y.z）
+ssh pi@100.x.y.z
 ```
 
 #### 1. 構成手順
@@ -613,7 +613,7 @@ sudo tailscale up
 * Android
 * Raspberry Pi
 
-が **同じ仮想LAN** に入る（実際のネットがそれぞれ別でもSSH接続できるようになる）
+が **同じ仮想LAN** に入る
 
 ---
 
