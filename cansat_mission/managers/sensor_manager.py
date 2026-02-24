@@ -52,6 +52,94 @@ from cansat_mission.navigation import calc_distance_and_azimuth, current_milli_t
 
 
 class SensorManager:
+    def _coerce_float(self, value, default=0.0):
+        try:
+            casted = float(value)
+            if not math.isfinite(casted):
+                return float(default)
+            return casted
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _coerce_int(self, value, default=0):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _snapshot_vec3(self, snapshot, key):
+        value = snapshot.get(key, (0.0, 0.0, 0.0))
+        if not isinstance(value, (list, tuple)) or len(value) < 3:
+            return [0.0, 0.0, 0.0]
+        return [
+            self._coerce_float(value[0]),
+            self._coerce_float(value[1]),
+            self._coerce_float(value[2]),
+        ]
+
+    def _build_log_row(self):
+        current_data = self.state.snapshot()
+        motor_cmd = getattr(self, "last_motor_command", {})
+        mission_start = getattr(self, "mission_start_time", None)
+        mission_elapsed_sec = 0.0
+        if mission_start:
+            mission_elapsed_sec = max(0.0, time.time() - mission_start)
+
+        acc = self._snapshot_vec3(current_data, "acc")
+        gyro = self._snapshot_vec3(current_data, "gyro")
+        mag = self._snapshot_vec3(current_data, "mag")
+
+        return [
+            current_milli_time(),
+            self._coerce_int(current_data.get("phase", 0)),
+            f"{acc[0]:.2f}",
+            f"{acc[1]:.2f}",
+            f"{acc[2]:.2f}",
+            f"{gyro[0]:.2f}",
+            f"{gyro[1]:.2f}",
+            f"{gyro[2]:.2f}",
+            f"{mag[0]:.2f}",
+            f"{mag[1]:.2f}",
+            f"{mag[2]:.2f}",
+            f"{self._coerce_float(current_data.get('lat', 0.0)):.6f}",
+            f"{self._coerce_float(current_data.get('lng', 0.0)):.6f}",
+            self._coerce_int(current_data.get("gps_fix_qual", 0)),
+            self._coerce_int(current_data.get("gps_sats", 0)),
+            f"{self._coerce_float(current_data.get('gps_hdop', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('alt', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('pres', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('distance', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('azimuth', 0.0)):.2f}",
+            f"{self._coerce_float(getattr(self, 'target_lat', 0.0)):.6f}",
+            f"{self._coerce_float(getattr(self, 'target_lng', 0.0)):.6f}",
+            f"{self._coerce_float(current_data.get('angle', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('direction', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('fall', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('cone_direction', 0.0)):.2f}",
+            f"{self._coerce_float(current_data.get('cone_probability', 0.0)):.2f}",
+            str(current_data.get("cone_method", "")),
+            f"{self._coerce_float(current_data.get('obstacle_dist', 0.0)):.2f}",
+            self._coerce_int(bool(current_data.get("angle_valid", False))),
+            f"{self._coerce_float(getattr(self, 'bno_stale_sec', 0.0)):.2f}",
+            str(motor_cmd.get("type", "")),
+            self._coerce_int(motor_cmd.get("updated_ms", 0)),
+            f"{self._coerce_float(motor_cmd.get('motor1_speed', 0.0)):.2f}",
+            self._coerce_int(bool(motor_cmd.get("motor1_forward", 1))),
+            f"{self._coerce_float(motor_cmd.get('motor2_speed', 0.0)):.2f}",
+            self._coerce_int(bool(motor_cmd.get("motor2_forward", 1))),
+            str(getattr(self, "mission_end_reason", "RUNNING")),
+            self._coerce_int(bool(getattr(self, "mission_total_timeout_triggered", False))),
+            f"{self._coerce_float(mission_elapsed_sec):.2f}",
+        ]
+
+    def _append_log_row(self, writer, file_obj):
+        writer.writerow(self._build_log_row())
+        file_obj.flush()
+        # On Windows (especially cloud-synced folders like OneDrive),
+        # fsync per row can block for a long time and stall logging.
+        if os.name != "nt":
+            os.fsync(file_obj.fileno())
+
     def _vector_within(self, vec, max_abs):
         try:
             for value in vec:
@@ -384,69 +472,8 @@ class SensorManager:
                 time.sleep(CAMERA_IDLE_SLEEP)
 
     def data_thread(self):
+        log_error_last_print = 0.0
         while True:
-            try:
-                # Log the latest available snapshot first so abrupt termination leaves a row.
-                current_data = self.state.snapshot()
-                motor_cmd = getattr(self, "last_motor_command", {})
-                mission_start = getattr(self, "mission_start_time", None)
-                mission_elapsed_sec = 0.0
-                if mission_start:
-                    mission_elapsed_sec = max(0.0, time.time() - mission_start)
-                with open(self.log_path, "a", newline="") as file_obj:
-                    writer = csv.writer(file_obj)
-                    writer.writerow(
-                        [
-                            current_milli_time(),
-                            current_data["phase"],
-                            f"{current_data['acc'][0]:.2f}",
-                            f"{current_data['acc'][1]:.2f}",
-                            f"{current_data['acc'][2]:.2f}",
-                            f"{current_data['gyro'][0]:.2f}",
-                            f"{current_data['gyro'][1]:.2f}",
-                            f"{current_data['gyro'][2]:.2f}",
-                            f"{current_data['mag'][0]:.2f}",
-                            f"{current_data['mag'][1]:.2f}",
-                            f"{current_data['mag'][2]:.2f}",
-                            f"{current_data['lat']:.6f}",
-                            f"{current_data['lng']:.6f}",
-                            int(current_data.get("gps_fix_qual", 0)),
-                            int(current_data.get("gps_sats", 0)),
-                            f"{current_data.get('gps_hdop', 0.0):.2f}",
-                            f"{current_data['alt']:.2f}",
-                            f"{current_data['pres']:.2f}",
-                            f"{current_data['distance']:.2f}",
-                            f"{current_data['azimuth']:.2f}",
-                            f"{self.target_lat:.6f}",
-                            f"{self.target_lng:.6f}",
-                            f"{current_data['angle']:.2f}",
-                            f"{current_data['direction']:.2f}",
-                            f"{current_data['fall']:.2f}",
-                            f"{current_data['cone_direction']:.2f}",
-                            f"{current_data['cone_probability']:.2f}",
-                            current_data.get("cone_method", ""),
-                            f"{current_data['obstacle_dist']:.2f}",
-                            int(current_data.get("angle_valid", False)),
-                            f"{self.bno_stale_sec:.2f}",
-                            motor_cmd.get("type", ""),
-                            int(motor_cmd.get("updated_ms", 0)),
-                            f"{float(motor_cmd.get('motor1_speed', 0.0)):.2f}",
-                            int(bool(motor_cmd.get("motor1_forward", 1))),
-                            f"{float(motor_cmd.get('motor2_speed', 0.0)):.2f}",
-                            int(bool(motor_cmd.get("motor2_forward", 1))),
-                            getattr(self, "mission_end_reason", "RUNNING"),
-                            int(bool(getattr(self, "mission_total_timeout_triggered", False))),
-                            f"{mission_elapsed_sec:.2f}",
-                        ]
-                    )
-                    file_obj.flush()
-                    # On Windows (especially cloud-synced folders like OneDrive),
-                    # fsync per row can block for a long time and stall logging.
-                    if os.name != "nt":
-                        os.fsync(file_obj.fileno())
-            except Exception as exc:
-                print(f"Log Error: {exc}")
-
             try:
                 bno_data = self.get_bno_data()
                 bmp_data = self.get_bmp_data()
@@ -481,4 +508,17 @@ class SensorManager:
             except Exception as exc:
                 print(f"Data Thread Error: {exc}")
                 traceback.print_exc()
+
+            try:
+                # Log after sensor/state updates so each row reflects the latest cycle.
+                with open(self.log_path, "a", newline="") as file_obj:
+                    writer = csv.writer(file_obj)
+                    self._append_log_row(writer, file_obj)
+            except Exception as exc:
+                now = time.time()
+                # Throttle repeated log errors to avoid flooding and hiding phase logs.
+                if now - log_error_last_print >= 1.0:
+                    print(f"Log Error: {exc}")
+                    traceback.print_exc()
+                    log_error_last_print = now
             time.sleep(DATA_SAMPLING_RATE)
