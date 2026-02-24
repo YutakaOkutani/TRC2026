@@ -264,7 +264,7 @@ PHASES_CAMERA_ACTIVE = (Phase.PHASE4, Phase.PHASE5)
 
 # ログのヘッダー
 LOG_HEADER = [
-    "MilliTime",
+    "UnixTimeSec",
     "Phase",
     "AccX",
     "AccY",
@@ -296,7 +296,7 @@ LOG_HEADER = [
     "AngleValid",
     "BNOStaleSec",
     "MotorCmdType",
-    "MotorCmdUpdatedMs",
+    "MotorCmdUpdatedSec",
     "Motor1CmdSpeed",
     "Motor1CmdForward",
     "Motor2CmdSpeed",

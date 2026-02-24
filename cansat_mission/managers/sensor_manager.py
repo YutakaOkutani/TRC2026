@@ -48,7 +48,7 @@ from cansat_mission.constants import (
     SONAR_MAX_DISTANCE,
 )
 from cansat_mission.gps_utils import coerce_gga_metrics, gga_quality_ok, open_gps_serial, parse_gga_sentence
-from cansat_mission.navigation import calc_distance_and_azimuth, current_milli_time
+from cansat_mission.navigation import calc_distance_and_azimuth
 
 
 class SensorManager:
@@ -89,8 +89,11 @@ class SensorManager:
         gyro = self._snapshot_vec3(current_data, "gyro")
         mag = self._snapshot_vec3(current_data, "mag")
 
+        motor_cmd_updated_ms = self._coerce_int(motor_cmd.get("updated_ms", 0))
+        motor_cmd_updated_sec = motor_cmd_updated_ms // 1000 if motor_cmd_updated_ms > 0 else 0
+
         return [
-            current_milli_time(),
+            int(time.time()),
             self._coerce_int(current_data.get("phase", 0)),
             f"{acc[0]:.2f}",
             f"{acc[1]:.2f}",
@@ -122,7 +125,7 @@ class SensorManager:
             self._coerce_int(bool(current_data.get("angle_valid", False))),
             f"{self._coerce_float(getattr(self, 'bno_stale_sec', 0.0)):.2f}",
             str(motor_cmd.get("type", "")),
-            self._coerce_int(motor_cmd.get("updated_ms", 0)),
+            motor_cmd_updated_sec,
             f"{self._coerce_float(motor_cmd.get('motor1_speed', 0.0)):.2f}",
             self._coerce_int(bool(motor_cmd.get("motor1_forward", 1))),
             f"{self._coerce_float(motor_cmd.get('motor2_speed', 0.0)):.2f}",
