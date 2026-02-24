@@ -16,6 +16,8 @@ from cansat_mission.constants import (
     MOTOR_LOOP_INTERVAL,
     MOTOR_RAMP_STEP,
     MOTOR_RAMP_TIME,
+    MOTOR_SPEED_SCALE_1,
+    MOTOR_SPEED_SCALE_2,
     OBSTACLE_AVOID_DIST,
     OBSTACLE_BACKUP_TIME,
     OBSTACLE_CONFIRM_COUNT,
@@ -72,6 +74,18 @@ def get_manual_drive_pattern(cmd, speed):
 class MotorManager:
     def _clamp_percent(self, value):
         return max(PWM_PERCENT_MIN, min(PWM_PERCENT_MAX, value))
+
+    def _get_motor_speed_scale(self, motor_index):
+        default = MOTOR_SPEED_SCALE_1 if motor_index == 1 else MOTOR_SPEED_SCALE_2
+        attr_name = f"motor_speed_scale_{motor_index}"
+        try:
+            scale = float(getattr(self, attr_name, default))
+        except (TypeError, ValueError):
+            scale = default
+        return max(0.0, scale)
+
+    def _apply_motor_speed_scale(self, speed, motor_index):
+        return self._clamp_percent(float(speed) * self._get_motor_speed_scale(motor_index))
 
     def _phase45_bno_heading(self, snapshot):
         if snapshot.get("angle_valid", False):
@@ -290,6 +304,11 @@ class MotorManager:
 
         motor_dir.value = 1 if (forward ^ invert) else 0
         target_speed = self._clamp_percent(speed)
+        devices = getattr(self, "devices", {})
+        if motor_pwm is devices.get(DEVICE_MOTOR_1_PWM):
+            target_speed = self._apply_motor_speed_scale(target_speed, 1)
+        elif motor_pwm is devices.get(DEVICE_MOTOR_2_PWM):
+            target_speed = self._apply_motor_speed_scale(target_speed, 2)
         current_speed = self._ramp_pwm(motor_pwm, current_speed, target_speed, ramp_time, step_interval)
         state["speed"] = current_speed
         state["direction"] = forward
@@ -331,8 +350,8 @@ class MotorManager:
         motor_1_dir.value = 1 if (forward_a ^ MOTOR_DIR_INVERT_1) else 0
         motor_2_dir.value = 1 if (forward_b ^ MOTOR_DIR_INVERT_2) else 0
 
-        target_a = self._clamp_percent(speed_a)
-        target_b = self._clamp_percent(speed_b)
+        target_a = self._apply_motor_speed_scale(speed_a, 1)
+        target_b = self._apply_motor_speed_scale(speed_b, 2)
         current_a, current_b = self._ramp_pwm_dual(
             motor_1_pwm,
             current_a,

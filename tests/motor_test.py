@@ -11,7 +11,12 @@ if str(REPO_ROOT) not in sys.path:
 from gpiozero import PWMOutputDevice, DigitalOutputDevice
 from gpiozero.pins.lgpio import LGPIOFactory
 
-from cansat_mission.constants import MOTOR_DIR_INVERT_1, MOTOR_DIR_INVERT_2
+from cansat_mission.constants import (
+    MOTOR_DIR_INVERT_1,
+    MOTOR_DIR_INVERT_2,
+    MOTOR_SPEED_SCALE_1,
+    MOTOR_SPEED_SCALE_2,
+)
 from cansat_mission.managers.motor_manager import get_manual_drive_pattern
 
 # --- GPIO Pin Definition ---
@@ -56,7 +61,10 @@ def setup():
 
     stop()
 
-    print("Setup Complete: gpiozero initialized.")
+    print(
+        f"Setup Complete: gpiozero initialized. "
+        f"speed_scale A={MOTOR_SPEED_SCALE_1:.3f}, B={MOTOR_SPEED_SCALE_2:.3f}"
+    )
 
 
 def _ramp_pwm(pwm_dev, start_speed, target_speed, ramp_time, step_interval=0.05):
@@ -106,6 +114,12 @@ def _ramp_pwm_dual(pwm_a, start_a, target_a, pwm_b, start_b, target_b, ramp_time
     return target_a, target_b
 
 
+def _apply_speed_scale(speed, motor_side):
+    """Apply per-motor PWM trim to compensate individual motor differences."""
+    scale = MOTOR_SPEED_SCALE_1 if motor_side == 'A' else MOTOR_SPEED_SCALE_2
+    return max(0.0, min(100.0, float(speed) * max(0.0, float(scale))))
+
+
 def set_motor(motor_side, speed, direction, ramp_time=0.6, step_interval=0.05):
     """
     Control motor duty and direction with a soft-start ramp.
@@ -141,7 +155,7 @@ def set_motor(motor_side, speed, direction, ramp_time=0.6, step_interval=0.05):
     dir_dev.value = 1 if (bool(direction) ^ bool(invert)) else 0
 
     # Set PWM duty with ramp (EN Pin - PWM 0.0-1.0)
-    target_speed = max(0.0, min(100.0, speed))
+    target_speed = _apply_speed_scale(speed, motor_side)
     current_speed = _ramp_pwm(pwm_dev, current_speed, target_speed, ramp_time, step_interval)
     state['speed'] = current_speed
     state['direction'] = direction
@@ -177,8 +191,8 @@ def set_motors(speed_a, dir_a, speed_b, dir_b, ramp_time=0.6, step_interval=0.05
     motor_1_dir.value = 1 if (bool(dir_a) ^ bool(MOTOR_DIR_INVERT_1)) else 0
     motor_2_dir.value = 1 if (bool(dir_b) ^ bool(MOTOR_DIR_INVERT_2)) else 0
 
-    target_a = max(0.0, min(100.0, speed_a))
-    target_b = max(0.0, min(100.0, speed_b))
+    target_a = _apply_speed_scale(speed_a, 'A')
+    target_b = _apply_speed_scale(speed_b, 'B')
     current_a, current_b = _ramp_pwm_dual(
         motor_1_pwm, current_a, target_a,
         motor_2_pwm, current_b, target_b,
