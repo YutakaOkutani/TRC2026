@@ -185,16 +185,16 @@ class MotorManager:
 
             if phase == Phase.PHASE3:
                 target_heading = direction
-                fused_heading, _, total_weight = self._weighted_heading(snapshot)
-                if fused_heading is not None:
+                bno_heading = self._phase45_bno_heading(snapshot)
+                if bno_heading is not None:
                     self.phase3_no_heading_start = None
-                    diff = self._angle_diff_deg(target_heading, fused_heading)
-                    gain_scale = max(TURN_GAIN_SCALE_MIN, min(TURN_GAIN_SCALE_MAX, total_weight))
+                    diff = self._angle_diff_deg(target_heading, bno_heading)
+                    gain_scale = TURN_GAIN_SCALE_MAX
                     turn_val = diff * GPS_TURN_GAIN * gain_scale
                     turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
                     speed_l = self._clamp_percent(BASE_SPEED + turn_val)
                     speed_r = self._clamp_percent(BASE_SPEED - turn_val)
-                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_heading_follow")
+                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_bno_heading_follow")
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
