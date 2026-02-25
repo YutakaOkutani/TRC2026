@@ -1,3 +1,4 @@
+import math
 import time
 
 from cansat_mission.constants import (
@@ -38,6 +39,7 @@ from cansat_mission.constants import (
     PHASE2_TURN_BIAS,
     PHASE2_TURN_INTERVAL,
     PHASE3_NO_HEADING_SPEED,
+    PHASE3_HEADING_DEADBAND_DEG,
     PHASE3_NO_HEADING_TURN_BIAS,
     PHASE3_NO_HEADING_TURN_INTERVAL,
     PHASES_SKIP_OBSTACLE,
@@ -78,6 +80,39 @@ def get_manual_drive_pattern(cmd, speed):
 
 
 class MotorManager:
+    def _mag_heading_from_snapshot(self, snapshot):
+        mag = snapshot.get("mag")
+        if not isinstance(mag, (list, tuple)) or len(mag) < 2:
+            return None
+        try:
+            mx = float(mag[0])
+            my = float(mag[1])
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(mx) or not math.isfinite(my):
+            return None
+        if abs(mx) < 1e-6 and abs(my) < 1e-6:
+            return None
+        # Legacy rover logic (main(7).py): magnetometer XY -> heading.
+        azimuth = 90.0 - math.degrees(math.atan2(my, mx))
+        azimuth *= -1.0
+        azimuth %= 360.0
+        return azimuth
+
+    def _phase3_heading(self, snapshot):
+        try:
+            angle = float(snapshot.get("angle", 0.0))
+        except (TypeError, ValueError):
+            angle = 0.0
+        if snapshot.get("angle_valid", False) and math.isfinite(angle):
+            return angle, "BNO"
+        if math.isfinite(angle) and abs(angle) > 1e-6:
+            return angle, "BNO_RAW"
+        mag_heading = self._mag_heading_from_snapshot(snapshot)
+        if mag_heading is not None:
+            return mag_heading, "MAG"
+        return None, "INVALID"
+
     def _clamp_percent(self, value):
         return max(PWM_PERCENT_MIN, min(PWM_PERCENT_MAX, value))
 
@@ -105,9 +140,8 @@ class MotorManager:
         return self._clamp_percent(adjusted)
 
     def _phase45_bno_heading(self, snapshot):
-        if snapshot.get("angle_valid", False):
-            return snapshot.get("angle", 0.0)
-        return None
+        heading, _ = self._phase3_heading(snapshot)
+        return heading
 
     def _record_motor_command(self, cmd_type, motor1_speed, motor1_forward, motor2_speed, motor2_forward):
         self.last_motor_command = {
@@ -189,16 +223,24 @@ class MotorManager:
 
             if phase == Phase.PHASE3:
                 target_heading = direction
-                bno_heading = self._phase45_bno_heading(snapshot)
-                if bno_heading is not None:
+                nav_heading, _heading_source = self._phase3_heading(snapshot)
+                if nav_heading is not None:
                     self.phase3_no_heading_start = None
-                    diff = self._angle_diff_deg(target_heading, bno_heading)
-                    gain_scale = TURN_GAIN_SCALE_MAX
-                    turn_val = diff * GPS_TURN_GAIN * gain_scale
-                    turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
-                    speed_l = self._clamp_percent(BASE_SPEED + turn_val)
-                    speed_r = self._clamp_percent(BASE_SPEED - turn_val)
-                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_bno_heading_follow")
+                    # Legacy-style GPS guidance: steer from relative heading error.
+                    diff = self._angle_diff_deg(target_heading, nav_heading)
+                    base = self._clamp_percent(BASE_SPEED)
+                    bias = self._clamp_percent(PHASE3_NO_HEADING_TURN_BIAS)
+                    if abs(diff) <= PHASE3_HEADING_DEADBAND_DEG:
+                        self.set_motors(base, True, base, True, cmd_type="phase3_gps_forward")
+                    elif diff > 0:
+                        # Turn toward target while keeping forward motion.
+                        speed_l = self._clamp_percent(base + bias)
+                        speed_r = self._clamp_percent(base - bias)
+                        self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_gps_turn")
+                    else:
+                        speed_l = self._clamp_percent(base - bias)
+                        speed_r = self._clamp_percent(base + bias)
+                        self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_gps_turn")
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()

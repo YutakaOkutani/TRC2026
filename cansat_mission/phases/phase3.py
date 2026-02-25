@@ -39,20 +39,24 @@ class Phase3Handler(BasePhaseHandler):
         if snapshot["gps_detect"] == GPS_ACTIVE_DETECT:
             dist, azimuth = calc_distance_and_azimuth(snapshot["lat"], snapshot["lng"], controller.target_lat, controller.target_lng)
             controller.state.update_navigation(distance=dist, azimuth=azimuth, direction=azimuth)
-            bno_heading = None
-            if hasattr(controller, "_phase45_bno_heading"):
-                bno_heading = controller._phase45_bno_heading(snapshot)
+            nav_heading = None
+            nav_heading_source = "INVALID"
+            if hasattr(controller, "_phase3_heading"):
+                nav_heading, nav_heading_source = controller._phase3_heading(snapshot)
+            elif hasattr(controller, "_phase45_bno_heading"):
+                nav_heading = controller._phase45_bno_heading(snapshot)
+                nav_heading_source = "BNO" if nav_heading is not None else "INVALID"
             heading_diff = None
-            if bno_heading is not None:
-                heading_diff = controller._angle_diff_deg(azimuth, bno_heading)
+            if nav_heading is not None:
+                heading_diff = controller._angle_diff_deg(azimuth, nav_heading)
             if controller.led_blink_timer % PHASE_LOG_INTERVAL == 0:
-                if bno_heading is not None and heading_diff is not None:
+                if nav_heading is not None and heading_diff is not None:
                     print(
                         f"GPS Nav: Dist={dist:.1f}m, TargetDir={azimuth:.1f}, "
-                        f"Head(BNO)={bno_heading:.1f}, Diff={heading_diff:+.1f}"
+                        f"Head({nav_heading_source})={nav_heading:.1f}, Diff={heading_diff:+.1f}"
                     )
                 else:
-                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azimuth:.1f}, Head(BNO)=INVALID")
+                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azimuth:.1f}, Head(INVALID)=INVALID")
             if dist < GPS_CLOSE_DISTANCE:
                 print(f"Close enough ({dist:.1f}m): switching to Phase4")
                 controller.state.update_navigation(phase=int(Phase.PHASE4))
