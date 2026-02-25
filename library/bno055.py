@@ -312,18 +312,22 @@ class BNO055:
     def getSystemError(self):
         """
         Reads the system error code.
-        SYS_ERR uses the lower nibble; upper bits are reserved and should be 0.
+        SYS_ERR uses the lower nibble. Some boards/firmware combinations can
+        return reserved upper bits (e.g. 0x80), so treat the low nibble as the
+        error code and only warn when the code itself is out of range.
         :return: {"value": error, "valid": bool}
         """
         try:
             error_raw = self._read_byte(self.BNO055_SYS_ERR_ADDR)
-            reserved_bits_set = (error_raw & 0xF0) != 0
             error = error_raw & 0x0F
             valid_error_code = 0 <= error <= 10
-            valid = (not reserved_bits_set) and valid_error_code
-            if not valid:
+            if not valid_error_code:
                 print(f"Warning: Unexpected BNO055 SYS_ERR raw value: 0x{error_raw:02X}")
-            return {"value": int(error), "valid": valid}
+            return {
+                "value": int(error),
+                "valid": valid_error_code,
+                "raw": int(error_raw),
+            }
         except IOError:
             print("Error reading system error byte.")
             return {"value": 0xFF, "valid": False}

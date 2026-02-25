@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import pynmea2
 import serial
@@ -25,6 +26,16 @@ from cansat_mission.constants import (
 from cansat_mission.navigation import calc_distance_and_azimuth
 
 
+def _is_parseable_nmea(line):
+    if not line or not line.startswith("$"):
+        return False
+    try:
+        pynmea2.parse(line, check=True)
+        return True
+    except Exception:
+        return False
+
+
 def probe_nmea(serial_obj, probe_seconds=GPS_PROBE_SECONDS):
     start = time.time()
     last_line = ""
@@ -38,13 +49,30 @@ def probe_nmea(serial_obj, probe_seconds=GPS_PROBE_SECONDS):
         line = line_bytes.decode("utf-8", errors="ignore").strip()
         if line:
             last_line = line
-        if line.startswith("$"):
+        if _is_parseable_nmea(line):
             return True, last_line
     return False, last_line
 
 
-def open_gps_serial(log=print):
+def _unique_port_candidates():
     ports = [GPS_SERIAL_PORT] + [port for port in GPS_SERIAL_PORT_CANDIDATES if port != GPS_SERIAL_PORT]
+    unique = []
+    seen = set()
+    for port in ports:
+        try:
+            real = str(Path(port).resolve(strict=False))
+        except Exception:
+            real = port
+        key = (port, real) if not real else real
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(port)
+    return unique
+
+
+def open_gps_serial(log=print):
+    ports = _unique_port_candidates()
     bauds = [GPS_BAUDRATE] + [baud for baud in GPS_BAUDRATE_CANDIDATES if baud != GPS_BAUDRATE]
     for port in ports:
         for baud in bauds:
@@ -66,7 +94,8 @@ def open_gps_serial(log=print):
                     pass
                 if log:
                     if last_line:
-                        log(f"No NMEA at {port} @ {baud} (last: {last_line})")
+                        hint = " (baud mismatch or wrong UART?)" if "$" not in last_line else ""
+                        log(f"No NMEA at {port} @ {baud}{hint} (last: {last_line})")
                     else:
                         log(f"No NMEA at {port} @ {baud}")
             except Exception as exc:
