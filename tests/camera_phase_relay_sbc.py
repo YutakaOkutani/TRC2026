@@ -91,6 +91,10 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         self.motor_state = {}
         self.stop_event = threading.Event()
         self.debug_lock = threading.Lock()
+        # Detector runs on raw camera orientation, while preview is rotated for humans.
+        # A 180deg camera mount flips left/right in the control frame as well.
+        self.camera_control_invert_x = bool(getattr(args, "preview_rotate_180", True))
+        print(f"Camera control X inversion: {'ON' if self.camera_control_invert_x else 'OFF'}")
 
         self.frame_b64 = None
         self.frame_seq = 0

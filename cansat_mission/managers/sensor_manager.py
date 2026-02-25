@@ -52,6 +52,20 @@ from cansat_mission.navigation import calc_distance_and_azimuth
 
 
 class SensorManager:
+    def _transform_cone_direction_for_control(self, cone_direction):
+        """Map detector X position into the rover control frame."""
+        try:
+            cdir = float(cone_direction)
+        except (TypeError, ValueError):
+            return CONE_CENTER_POSITION
+        if not math.isfinite(cdir):
+            return CONE_CENTER_POSITION
+
+        if bool(getattr(self, "camera_control_invert_x", False)):
+            cdir = 1.0 - cdir
+
+        return max(0.0, min(1.0, cdir))
+
     def _coerce_float(self, value, default=0.0):
         try:
             casted = float(value)
@@ -368,7 +382,10 @@ class SensorManager:
             prob = detector.probability if detector.probability else 0.0
             cdir = CONE_CENTER_POSITION
             if detector.cone_direction is not None:
-                cdir = 1.0 - detector.cone_direction
+                # detector.cone_direction is in camera image coordinates.
+                # Convert to mission convention, then apply mount compensation.
+                cdir = 1.0 - float(detector.cone_direction)
+                cdir = self._transform_cone_direction_for_control(cdir)
             cone_method = str(getattr(detector, "debug_method", "unknown"))
             self.state.update_cone(
                 cone_direction=cdir,

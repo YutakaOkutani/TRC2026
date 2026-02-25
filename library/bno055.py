@@ -321,6 +321,8 @@ class BNO055:
             error_raw = self._read_byte(self.BNO055_SYS_ERR_ADDR)
             error = error_raw & 0x0F
             valid_error_code = 0 <= error <= 10
+            # Some environments intermittently return reserved upper bits (e.g. 0x80)
+            # while the low nibble still reports a valid code. Ignore those bits.
             if not valid_error_code:
                 print(f"Warning: Unexpected BNO055 SYS_ERR raw value: 0x{error_raw:02X}")
             return {
