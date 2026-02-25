@@ -1,0 +1,9 @@
+# Analyzer generated outputs (graphs/images/csv summaries)
+analyzer/outputs/
+
+# Backward compatibility with older analyzer script output locations
+analyzer/*.png
+
+# Python cache
+__pycache__/
+*.py[cod]
