@@ -29,7 +29,7 @@ class Phase2Handler(BasePhaseHandler):
     def execute(self, controller, snapshot):
         led_red = controller.devices.get(DEVICE_LED_RED)
         led_green = controller.devices.get(DEVICE_LED_GREEN)
-        print("phase2 : BNO Phase2 Calibration (Straight + Figure-8)")
+        print("phase2 : BNO Phase2 Calibration (Straight + Figure-8, faster)")
         if led_red:
             led_red.off()
         if led_green:

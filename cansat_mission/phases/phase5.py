@@ -14,6 +14,7 @@ from cansat_mission.constants import (
     CAMERA_PHASE5_MAX_ATTEMPTS,
     CONE_LOST_COUNT_LIMIT,
     CONE_PROBABILITY_THRESHOLD,
+    CONE_PROBABILITY_THRESHOLD_PHASE5,
     DEVICE_LED_GREEN,
     DEVICE_LED_RED,
     LED_INTERVAL_PHASE5,
@@ -59,7 +60,8 @@ class Phase5Handler(BasePhaseHandler):
         current_snapshot = controller.state.snapshot()
         is_reach = current_snapshot["cone_is_reached"]
         # 近距離時はprobabilityが落ちても、到達判定が立っていれば見失い扱いにしない
-        is_det = (current_snapshot["cone_probability"] > CONE_PROBABILITY_THRESHOLD) or is_reach
+        cone_prob = current_snapshot["cone_probability"]
+        is_det = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE5) or is_reach
         now = time.time()
         camera_dead = (
             controller.camera_dead_since is not None
@@ -77,6 +79,8 @@ class Phase5Handler(BasePhaseHandler):
         if not is_det:
             controller.count_cone_lost += 1
             controller.phase5_reach_confirm_count = 0
+            if cone_prob > CONE_PROBABILITY_THRESHOLD and controller.led_blink_timer % 10 == 0:
+                print(f"Phase5: weak visual ignored (prob={cone_prob:.2f})")
         else:
             controller.count_cone_lost = 0
 

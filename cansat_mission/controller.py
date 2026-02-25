@@ -27,6 +27,8 @@ from cansat_mission.constants import (
     MISSION_PHASE_TIME_BUDGETS,
     MISSION_PHASE_TIMEOUT_TRANSITIONS,
     MISSION_TIMEOUT_TOTAL,
+    PHASE3_BNO_GPS_OFFSET_ALPHA,
+    PHASE3_BNO_GPS_OFFSET_MAX_STEP_DEG,
     PHASE2_STAGE_STRAIGHT,
     Phase,
 )
@@ -101,6 +103,10 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.phase5_entry_marker = None
         self.obstacle_detect_count = 0
         self.phase3_no_heading_start = None
+        self.phase4_detect_confirm_count = 0
+        self.phase4_detect_confirm_marker = None
+        self.bno_heading_offset_deg = float(GPS_HEADING_OFFSET)
+        self.bno_heading_offset_valid = False
         self.mission_start_time = None
         self.phase_entry_time = None
         self.last_phase_observed = None
@@ -138,6 +144,8 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         elif phase_enum == Phase.PHASE4:
             self.time_phase4_start = now
             self.searching_flag = False
+            self.phase4_detect_confirm_count = 0
+            self.phase4_detect_confirm_marker = None
         elif phase_enum == Phase.PHASE5:
             self.time_phase5_start = now
 
@@ -239,6 +247,48 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         if diff < -180.0:
             diff += 360.0
         return diff
+
+    def _normalize_heading_deg(self, value):
+        try:
+            deg = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(deg):
+            return None
+        deg %= 360.0
+        if deg < 0.0:
+            deg += 360.0
+        return deg
+
+    def _update_bno_heading_offset_from_gps(self, snapshot):
+        if not snapshot.get("gps_heading_valid", False):
+            return
+        if not snapshot.get("angle_valid", False):
+            return
+        gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
+        bno_heading = self._normalize_heading_deg(snapshot.get("angle"))
+        if gps_heading is None or bno_heading is None:
+            return
+
+        observed_offset = self._angle_diff_deg(gps_heading, bno_heading)
+        if self.bno_heading_offset_valid:
+            offset_delta = self._angle_diff_deg(observed_offset, self.bno_heading_offset_deg)
+            max_step = max(1.0, float(PHASE3_BNO_GPS_OFFSET_MAX_STEP_DEG))
+            offset_delta = max(-max_step, min(max_step, offset_delta))
+            alpha = max(0.0, min(1.0, float(PHASE3_BNO_GPS_OFFSET_ALPHA)))
+            self.bno_heading_offset_deg = self._normalize_heading_deg(
+                self.bno_heading_offset_deg + offset_delta * alpha
+            )
+        else:
+            self.bno_heading_offset_deg = self._normalize_heading_deg(observed_offset)
+            self.bno_heading_offset_valid = True
+
+    def _bno_heading_aligned_to_gps(self, snapshot):
+        bno_heading = self._normalize_heading_deg(snapshot.get("angle"))
+        if bno_heading is None:
+            return None
+        offset = self.bno_heading_offset_deg if self.bno_heading_offset_valid else GPS_HEADING_OFFSET
+        return self._normalize_heading_deg(bno_heading + offset)
 
     def _weighted_heading(self, snapshot):
         weights = []

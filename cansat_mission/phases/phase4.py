@@ -12,7 +12,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from cansat_mission.constants import (
     CAMERA_DEAD_TIMEOUT,
     CAMERA_PHASE4_MAX_ATTEMPTS,
+    CONE_CENTER_POSITION,
+    CONE_PHASE4_CENTER_TOLERANCE,
+    CONE_PHASE4_CONFIRM_FRAMES,
     CONE_PROBABILITY_THRESHOLD,
+    CONE_PROBABILITY_THRESHOLD_PHASE4,
     DEVICE_LED_GREEN,
     DEVICE_LED_RED,
     Phase,
@@ -27,6 +31,7 @@ class Phase4Handler(BasePhaseHandler):
         led_green = controller.devices.get(DEVICE_LED_GREEN)
         current_snapshot = controller.state.snapshot()
         cone_prob = current_snapshot["cone_probability"]
+        cone_dir = current_snapshot.get("cone_direction", CONE_CENTER_POSITION)
         cone_reached = current_snapshot.get("cone_is_reached", False)
         print("phase4 : camera searching")
         if led_red:
@@ -59,15 +64,40 @@ class Phase4Handler(BasePhaseHandler):
             controller.searching_flag = False
             controller.time_phase3_start = time.time()
             return
-        # 近距離ではコーンが画面からはみ出してアスペクト比スコア(prob)が落ちることがある。
-        # その場合でも到達判定が立っていれば Phase5 へ進める。
-        if cone_prob > CONE_PROBABILITY_THRESHOLD or cone_reached:
+        # Phase4開始時は比較的近距離(数m)のため、誤検知低減のために
+        # Phase5より厳しめのprobability + 数フレーム連続確認を要求する。
+        try:
+            cone_dir_val = float(cone_dir)
+        except (TypeError, ValueError):
+            cone_dir_val = CONE_CENTER_POSITION
+        centered = abs(cone_dir_val - CONE_CENTER_POSITION) <= CONE_PHASE4_CENTER_TOLERANCE
+        strict_detect = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4) and centered
+        loose_detect = cone_prob > CONE_PROBABILITY_THRESHOLD
+        if cone_reached or strict_detect:
+            controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
+        elif loose_detect:
+            controller.phase4_detect_confirm_count = 0
+        else:
+            controller.phase4_detect_confirm_count = 0
+
+        # 近距離ではコーンが画面からはみ出してprobが落ちても、到達判定が立てば進める。
+        if cone_reached or controller.phase4_detect_confirm_count >= CONE_PHASE4_CONFIRM_FRAMES:
             if cone_reached:
                 print("Phase4 -> Phase5: close-range visual reached detected")
             else:
-                print(f"Phase4 -> Phase5: cone detected (prob={cone_prob:.2f})")
+                print(
+                    "Phase4 -> Phase5: cone detected "
+                    f"(prob={cone_prob:.2f}, confirm={controller.phase4_detect_confirm_count})"
+                )
             controller.searching_flag = False
+            controller.phase4_detect_confirm_count = 0
             controller.state.update_navigation(phase=int(Phase.PHASE5))
+            return
+
+        if loose_detect and controller.led_blink_timer % 10 == 0:
+            print(
+                f"Phase4: low-confidence cone ignored (prob={cone_prob:.2f}, dir={cone_dir_val:.2f})"
+            )
 
 
 def run_standalone():

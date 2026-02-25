@@ -6,6 +6,7 @@ from cansat_mission.constants import (
     BASE_SPEED,
     CONE_CENTER_POSITION,
     CONE_PROBABILITY_THRESHOLD,
+    CONE_PROBABILITY_THRESHOLD_PHASE4,
     DEVICE_MOTOR_1_DIR,
     DEVICE_MOTOR_1_PWM,
     DEVICE_MOTOR_2_DIR,
@@ -34,6 +35,8 @@ from cansat_mission.constants import (
     PHASE4_SEARCH_SWEEP_INTERVAL,
     PHASE4_TRACK_ROTATE_CLAMP,
     PHASE4_TRACK_ROTATE_GAIN,
+    PHASE5_BASE_SPEED,
+    PHASE5_TURN_CLAMP,
     PHASE2_SPEED,
     PHASE2_STAGE_STRAIGHT,
     PHASE2_TURN_BIAS,
@@ -100,11 +103,22 @@ class MotorManager:
         return azimuth
 
     def _phase3_heading(self, snapshot):
+        if snapshot.get("gps_heading_valid", False):
+            gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
+            if gps_heading is not None:
+                if hasattr(self, "_update_bno_heading_offset_from_gps"):
+                    self._update_bno_heading_offset_from_gps(snapshot)
+                return gps_heading, "GPS"
         try:
             angle = float(snapshot.get("angle", 0.0))
         except (TypeError, ValueError):
             angle = 0.0
         if snapshot.get("angle_valid", False) and math.isfinite(angle):
+            if hasattr(self, "_bno_heading_aligned_to_gps"):
+                aligned = self._bno_heading_aligned_to_gps(snapshot)
+                if aligned is not None:
+                    source = "BNO_ALIGNED" if getattr(self, "bno_heading_offset_valid", False) else "BNO_SEEDED"
+                    return aligned, source
             return angle, "BNO"
         if math.isfinite(angle) and abs(angle) > 1e-6:
             return angle, "BNO_RAW"
@@ -259,7 +273,7 @@ class MotorManager:
                 # Phase4 is camera-only: no BNO heading hold.
                 cone_prob = snapshot.get("cone_probability", 0.0)
                 cone_reached = snapshot.get("cone_is_reached", False)
-                cone_seen = cone_reached or (cone_prob > CONE_PROBABILITY_THRESHOLD)
+                cone_seen = cone_reached or (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4)
                 if cone_seen:
                     err = cone_direction - CONE_CENTER_POSITION
                     turn_val = err * PHASE4_TRACK_ROTATE_GAIN
@@ -297,9 +311,9 @@ class MotorManager:
             elif phase == Phase.PHASE5:
                 err = cone_direction - CONE_CENTER_POSITION
                 turn_cam = err * APPROACH_TURN_GAIN
-                turn_total = turn_cam
-                speed_l = self._clamp_percent(BASE_SPEED + turn_total)
-                speed_r = self._clamp_percent(BASE_SPEED - turn_total)
+                turn_total = max(-PHASE5_TURN_CLAMP, min(PHASE5_TURN_CLAMP, turn_cam))
+                speed_l = self._clamp_percent(PHASE5_BASE_SPEED + turn_total)
+                speed_r = self._clamp_percent(PHASE5_BASE_SPEED - turn_total)
                 self.set_motors(speed_r, True, speed_l, True, cmd_type="phase5_approach_camera")
 
             time.sleep(MOTOR_LOOP_INTERVAL)
