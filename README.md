@@ -421,17 +421,60 @@ WantedBy=multi-user.target
 * `Restart=on-failure` はクラッシュ時に再起動し、`sudo systemctl stop cansat.service` のような手動停止時は再起動しないので運用しやすい
 * 通信を使わない構成なら `network-online.target` は必須ではないが、将来の通知機能などを考えると入れておく方が無難
 
-#### 4. サービスの有効化と起動
+#### 4. `cansat.timer` の作成（起動から5分後に開始する）
+
+電源投入直後ではなく、**起動から5分後** に `cansat.service` を開始したい場合は、`timer` を使う。
+
+```bash
+sudo nano /etc/systemd/system/cansat.timer
+```
+
+```ini
+[Unit]
+Description=Start CanSat mission 5 minutes after boot
+
+[Timer]
+# systemd 起動（=OS起動）から5分後に cansat.service を実行
+OnBootSec=5min
+
+# この timer が起動する対象ユニット
+Unit=cansat.service
+
+# タイミングの揺れを小さくしたい場合（任意）
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+```
+
+補足
+
+* `cansat.timer` は「いつ起動するか」を担当し、実際の処理本体は `cansat.service` が担当する
+* 自動起動の有効化は `cansat.service` ではなく **`cansat.timer`** に対して行う（`service` は timer から呼ばれる）
+
+#### 5. サービス / タイマーの有効化
 
 ```bash
 # 設定の反映
 sudo systemctl daemon-reload
 
-# 起動時に自動起動 + 今すぐ起動
-sudo systemctl enable --now cansat.service
+# 起動時に自動起動 + 今すぐタイマーを開始（5分カウント開始）
+sudo systemctl enable --now cansat.timer
 ```
 
-#### 5. 状態・ログの確認（必須）
+初回の動作確認で「5分待たずにすぐ実行したい」場合だけ、手動でサービスを起動してよい。
+
+```bash
+sudo systemctl start cansat.service
+```
+
+#### 6. 状態・ログの確認（必須）
+
+```bash
+# タイマーが有効か確認（NEXT に次回実行予定が出る）
+sudo systemctl list-timers cansat.timer
+sudo systemctl status cansat.timer
+```
 
 ```bash
 # 稼働状態の確認（active (running) になっているか）
@@ -448,23 +491,29 @@ sudo journalctl -u cansat.service -e
 sudo journalctl -u cansat.service -f
 ```
 
-#### 6. 運用で使う基本コマンド
+#### 7. 運用で使う基本コマンド
 
 ```bash
 # 再起動（コード更新後など）
 sudo systemctl restart cansat.service
 
+# タイマーの5分カウントを今この瞬間からやり直したい場合
+sudo systemctl restart cansat.timer
+
 # 停止
 sudo systemctl stop cansat.service
 
+# 自動起動（5分遅延起動）の停止
+sudo systemctl stop cansat.timer
+
 # 自動起動の無効化（必要時のみ）
-sudo systemctl disable cansat.service
+sudo systemctl disable cansat.timer
 
 # 自動起動設定の確認
-automatically_enabled=$(sudo systemctl is-enabled cansat.service); echo $automatically_enabled
+automatically_enabled=$(sudo systemctl is-enabled cansat.timer); echo $automatically_enabled
 ```
 
-#### 7. 本当に「電源投入で自動起動」するか確認（重要）
+#### 8. 本当に「電源投入から5分後に自動起動」するか確認（重要）
 
 ```bash
 sudo reboot
@@ -473,21 +522,24 @@ sudo reboot
 再起動後に SSH 接続して、以下を確認する。
 
 ```bash
+sudo systemctl status cansat.timer
+sudo systemctl list-timers cansat.timer
 sudo systemctl status cansat.service
 sudo journalctl -u cansat.service -b
 ```
 
 `-b` は「今回の起動（boot）分のログだけ」を見るためのオプション。
 
-#### 8. よくある起動失敗ポイント（先に潰す）
+#### 9. よくある起動失敗ポイント（先に潰す）
 
 * パス違い: `WorkingDirectory` / `ExecStart` が実際の配置と違う
 * venv 未作成: `/home/pi/TRC2026/venv/bin/python` が存在しない
 * 権限問題: `User=pi` でアクセスできないファイル/ディレクトリがある
 * ライブラリ不足: 手動実行では動いたが、`venv` 側に必要ライブラリが入っていない
 * 例外で即終了: `sudo journalctl -u cansat.service -e` で Python の traceback を確認
+* timer の有効化漏れ: `cansat.service` ではなく `cansat.timer` を `enable` しているか確認
 
-#### 9. `tmux` との使い分け（整理）
+#### 10. `tmux` との使い分け（整理）
 
 * `tmux`: 手動起動・画面確認・その場のデバッグ向け
 * `systemd`: 本番常駐・自動起動・異常終了時の自動復帰向け
