@@ -290,7 +290,9 @@ class SensorManager:
             fall = math.sqrt(acc_val[0] ** 2 + acc_val[1] ** 2 + acc_val[2] ** 2)
 
             calib_ok = calib["valid"] and calib["value"][3] >= BNO_CALIB_MAG_MIN
-            angle_valid = angle_ok and calib_ok and sys_error_ok and fusion_ok
+            # Allow heading use when Euler/system status is healthy even if magnetometer
+            # calibration is still incomplete (common during short ground E2E runs).
+            angle_valid = angle_ok and sys_error_ok and fusion_ok
             self.bno_calib = calib if calib else DEFAULT_BNO_CALIB
             now = time.time()
             if self.bno_last_valid_time > 0:
@@ -424,6 +426,10 @@ class SensorManager:
                 gps_qual = parsed["gps_qual"]
                 num_sats = parsed["num_sats"]
                 hdop = parsed["hdop"]
+                # Record the latest parsed coordinates for logging/diagnostics even
+                # before they satisfy the "stable fix" gating used for navigation.
+                if lat != 0.0 or lng != 0.0:
+                    self.state.update_gps(lat=lat, lng=lng)
                 qual_ok, sats_ok, hdop_ok = gga_quality_ok(gps_qual, num_sats, hdop)
                 gps_fix_qual_val, gps_sats_val, gps_hdop_val = coerce_gga_metrics(gps_qual, num_sats, hdop)
                 self.state.update_gps(

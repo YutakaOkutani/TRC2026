@@ -1,4 +1,5 @@
 import sys
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,9 +20,14 @@ def main():
     # Reuse the production CSV logger format while saving under tests/log.
     mission_constants.LOG_DIR = str(TEST_LOG_DIR)
     mission_controller.LOG_DIR = str(TEST_LOG_DIR)
+    target_lat = float(os.getenv("CANSAT_TARGET_LAT", mission_constants.TARGET_LAT))
+    target_lng = float(os.getenv("CANSAT_TARGET_LNG", mission_constants.TARGET_LNG))
+    print(f"Phase2-7 test target: lat={target_lat:.6f}, lng={target_lng:.6f}")
     run_phase_sequence(
         start_phase=Phase.PHASE2,
         allowed_phases=(Phase.PHASE2, Phase.PHASE3, Phase.PHASE4, Phase.PHASE5, Phase.PHASE6, Phase.PHASE7),
+        target_lat=target_lat,
+        target_lng=target_lng,
     )
 
 
