@@ -179,6 +179,10 @@ class SensorManager:
         return True
 
     def _angle_jump_ok(self, angle):
+        # Bootstrap the jump filter: before the first accepted sample (or after long
+        # dropout), there is no reliable previous heading to compare against.
+        if self.bno_last_valid_time <= 0:
+            return True
         last = self.bno_last_valid.get("angle", 0.0)
         diff = abs(((angle - last + 180.0) % 360.0) - 180.0)
         return diff <= BNO_ANGLE_JUMP_MAX
@@ -292,7 +296,9 @@ class SensorManager:
             calib_ok = calib["valid"] and calib["value"][3] >= BNO_CALIB_MAG_MIN
             # Allow heading use when Euler/system status is healthy even if magnetometer
             # calibration is still incomplete (common during short ground E2E runs).
-            angle_valid = angle_ok and sys_error_ok and fusion_ok
+            # Field tests can keep fusion status/calibration low for a while; use a
+            # sane Euler heading if it passes local consistency checks.
+            angle_valid = angle_ok
             self.bno_calib = calib if calib else DEFAULT_BNO_CALIB
             now = time.time()
             if self.bno_last_valid_time > 0:

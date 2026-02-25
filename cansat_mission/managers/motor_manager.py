@@ -4,6 +4,7 @@ from cansat_mission.constants import (
     APPROACH_TURN_GAIN,
     BASE_SPEED,
     CONE_CENTER_POSITION,
+    CONE_PROBABILITY_THRESHOLD,
     DEVICE_MOTOR_1_DIR,
     DEVICE_MOTOR_1_PWM,
     DEVICE_MOTOR_2_DIR,
@@ -29,6 +30,9 @@ from cansat_mission.constants import (
     PARACHUTE_DIRECTION,
     PARACHUTE_MOTOR_PULSE,
     PARACHUTE_SEPARATION_SPEED,
+    PHASE4_SEARCH_SWEEP_INTERVAL,
+    PHASE4_TRACK_ROTATE_CLAMP,
+    PHASE4_TRACK_ROTATE_GAIN,
     PHASE2_SPEED,
     PHASE2_STAGE_STRAIGHT,
     PHASE2_TURN_BIAS,
@@ -210,38 +214,51 @@ class MotorManager:
                         speed_r = self._clamp_percent(base - bias)
                     self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_no_heading_search")
             elif phase == Phase.PHASE4:
-                # Phase4以降はGPSを使わず、BNOのみで方位維持する
-                target_heading = direction
-                bno_heading = self._phase45_bno_heading(snapshot)
-                if bno_heading is not None:
-                    self.phase3_no_heading_start = None
-                    diff = self._angle_diff_deg(target_heading, bno_heading)
-                    gain_scale = TURN_GAIN_SCALE_MAX
-                    turn_val = diff * GPS_TURN_GAIN * gain_scale
-                    turn_val = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_val))
-                    speed_l = self._clamp_percent(BASE_SPEED + turn_val)
-                    speed_r = self._clamp_percent(BASE_SPEED - turn_val)
-                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase4_bno_heading_follow")
+                # Phase4 is camera-only: no BNO heading hold.
+                cone_prob = snapshot.get("cone_probability", 0.0)
+                cone_reached = snapshot.get("cone_is_reached", False)
+                cone_seen = cone_reached or (cone_prob > CONE_PROBABILITY_THRESHOLD)
+                if cone_seen:
+                    err = cone_direction - CONE_CENTER_POSITION
+                    turn_val = err * PHASE4_TRACK_ROTATE_GAIN
+                    turn_val = max(-PHASE4_TRACK_ROTATE_CLAMP, min(PHASE4_TRACK_ROTATE_CLAMP, turn_val))
+                    rotate_speed = self._clamp_percent(abs(turn_val))
+                    if rotate_speed < 12:
+                        rotate_speed = 12
+                    if turn_val >= 0:
+                        self.set_motors(rotate_speed, False, rotate_speed, True, cmd_type="phase4_camera_align")
+                    else:
+                        self.set_motors(rotate_speed, True, rotate_speed, False, cmd_type="phase4_camera_align")
                 else:
-                    # BNO方位が取れない時だけ探索回頭にフォールバック
-                    self.set_motors(SEARCH_ROTATION_SPEED, True, SEARCH_ROTATION_SPEED, False, cmd_type="phase4_search_fallback")
+                    # Sweep search by alternating rotation direction at fixed intervals
+                    # (approx. half-turn each segment; tune interval on hardware).
+                    elapsed = 0.0
+                    if getattr(self, "time_start_searching_cone", 0.0):
+                        elapsed = time.time() - self.time_start_searching_cone
+                    left_turn = int(elapsed // PHASE4_SEARCH_SWEEP_INTERVAL) % 2 == 0
+                    if left_turn:
+                        self.set_motors(
+                            SEARCH_ROTATION_SPEED,
+                            True,
+                            SEARCH_ROTATION_SPEED,
+                            False,
+                            cmd_type="phase4_search_sweep",
+                        )
+                    else:
+                        self.set_motors(
+                            SEARCH_ROTATION_SPEED,
+                            False,
+                            SEARCH_ROTATION_SPEED,
+                            True,
+                            cmd_type="phase4_search_sweep",
+                        )
             elif phase == Phase.PHASE5:
                 err = cone_direction - CONE_CENTER_POSITION
                 turn_cam = err * APPROACH_TURN_GAIN
-                turn_heading = 0.0
-                bno_heading = self._phase45_bno_heading(snapshot)
-                if bno_heading is not None:
-                    target_heading = direction
-                    diff = self._angle_diff_deg(target_heading, bno_heading)
-                    gain_scale = TURN_GAIN_SCALE_MAX
-                    turn_heading = diff * GPS_TURN_GAIN * gain_scale
-                    turn_heading = max(-GPS_TURN_CLAMP, min(GPS_TURN_CLAMP, turn_heading))
-                    # Phase5ではカメラ追従を優先しつつ、BNOで方位ドリフトだけ抑える
-                    turn_heading *= 0.5
-                turn_total = turn_cam + turn_heading
+                turn_total = turn_cam
                 speed_l = self._clamp_percent(BASE_SPEED + turn_total)
                 speed_r = self._clamp_percent(BASE_SPEED - turn_total)
-                self.set_motors(speed_r, True, speed_l, True, cmd_type="phase5_approach_bno")
+                self.set_motors(speed_r, True, speed_l, True, cmd_type="phase5_approach_camera")
 
             time.sleep(MOTOR_LOOP_INTERVAL)
 
