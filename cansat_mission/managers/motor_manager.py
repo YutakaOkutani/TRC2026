@@ -7,6 +7,7 @@ from cansat_mission.constants import (
     CONE_CENTER_POSITION,
     CONE_PROBABILITY_THRESHOLD,
     CONE_PROBABILITY_THRESHOLD_PHASE4,
+    CONE_PROBABILITY_THRESHOLD_PHASE5,
     DEVICE_MOTOR_1_DIR,
     DEVICE_MOTOR_1_PWM,
     DEVICE_MOTOR_2_DIR,
@@ -33,9 +34,17 @@ from cansat_mission.constants import (
     PARACHUTE_MOTOR_PULSE,
     PARACHUTE_SEPARATION_SPEED,
     PHASE4_SEARCH_SWEEP_INTERVAL,
+    PHASE4_ALIGN_ARC_BASE_SPEED,
+    PHASE4_ALIGN_ARC_DEADBAND,
+    PHASE4_ALIGN_ARC_TURN_GAIN,
+    PHASE4_ALIGN_FORWARD_SPEED,
+    PHASE4_ALIGN_STOP_DEADBAND,
+    PHASE4_TRACK_MIN_ROTATE_SPEED,
     PHASE4_TRACK_ROTATE_CLAMP,
     PHASE4_TRACK_ROTATE_GAIN,
+    PHASE45_CONE_DIR_FILTER_ALPHA,
     PHASE5_BASE_SPEED,
+    PHASE5_STEER_DEADBAND,
     PHASE5_TURN_CLAMP,
     PHASE2_SPEED,
     PHASE2_STAGE_STRAIGHT,
@@ -157,6 +166,28 @@ class MotorManager:
         heading, _ = self._phase3_heading(snapshot)
         return heading
 
+    def _reset_phase45_camera_track(self):
+        self.phase45_filtered_cone_dir = None
+        self.phase45_last_seen_time = None
+
+    def _update_phase45_filtered_cone_dir(self, raw_cone_direction, cone_seen):
+        if not cone_seen:
+            return getattr(self, "phase45_filtered_cone_dir", None)
+        try:
+            cdir = float(raw_cone_direction)
+        except (TypeError, ValueError):
+            return getattr(self, "phase45_filtered_cone_dir", None)
+        cdir = max(0.0, min(1.0, cdir))
+        prev = getattr(self, "phase45_filtered_cone_dir", None)
+        if prev is None:
+            filtered = cdir
+        else:
+            alpha = PHASE45_CONE_DIR_FILTER_ALPHA
+            filtered = (1.0 - alpha) * float(prev) + alpha * cdir
+        self.phase45_filtered_cone_dir = filtered
+        self.phase45_last_seen_time = time.time()
+        return filtered
+
     def _record_motor_command(self, cmd_type, motor1_speed, motor1_forward, motor2_speed, motor2_forward):
         self.last_motor_command = {
             "type": cmd_type,
@@ -174,6 +205,11 @@ class MotorManager:
             obstacle_dist = snapshot["obstacle_dist"]
             direction = snapshot["direction"]
             cone_direction = snapshot["cone_direction"]
+            last_phase = getattr(self, "_motor_last_phase", None)
+            if last_phase != phase:
+                if phase not in (Phase.PHASE4, Phase.PHASE5) or last_phase not in (Phase.PHASE4, Phase.PHASE5):
+                    self._reset_phase45_camera_track()
+                self._motor_last_phase = phase
 
             if phase in PHASES_STOP_MOTORS:
                 self.stop_motors()
@@ -275,17 +311,40 @@ class MotorManager:
                 cone_reached = snapshot.get("cone_is_reached", False)
                 cone_seen = cone_reached or (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4)
                 if cone_seen:
-                    err = cone_direction - CONE_CENTER_POSITION
+                    filtered_dir = self._update_phase45_filtered_cone_dir(cone_direction, True)
+                    if filtered_dir is None:
+                        filtered_dir = CONE_CENTER_POSITION
+                    err = filtered_dir - CONE_CENTER_POSITION
+                    abs_err = abs(err)
+                    if abs_err <= PHASE4_ALIGN_STOP_DEADBAND:
+                        self.set_motors(
+                            PHASE4_ALIGN_FORWARD_SPEED,
+                            True,
+                            PHASE4_ALIGN_FORWARD_SPEED,
+                            True,
+                            cmd_type="phase4_camera_center_forward",
+                        )
+                        time.sleep(MOTOR_LOOP_INTERVAL)
+                        continue
+                    if abs_err <= PHASE4_ALIGN_ARC_DEADBAND:
+                        turn_val = err * PHASE4_ALIGN_ARC_TURN_GAIN
+                        turn_val = max(-PHASE4_TRACK_ROTATE_CLAMP, min(PHASE4_TRACK_ROTATE_CLAMP, turn_val))
+                        speed_l = self._clamp_percent(PHASE4_ALIGN_ARC_BASE_SPEED + turn_val)
+                        speed_r = self._clamp_percent(PHASE4_ALIGN_ARC_BASE_SPEED - turn_val)
+                        self.set_motors(speed_r, True, speed_l, True, cmd_type="phase4_camera_arc_align")
+                        time.sleep(MOTOR_LOOP_INTERVAL)
+                        continue
                     turn_val = err * PHASE4_TRACK_ROTATE_GAIN
                     turn_val = max(-PHASE4_TRACK_ROTATE_CLAMP, min(PHASE4_TRACK_ROTATE_CLAMP, turn_val))
                     rotate_speed = self._clamp_percent(abs(turn_val))
-                    if rotate_speed < 12:
-                        rotate_speed = 12
+                    if rotate_speed < PHASE4_TRACK_MIN_ROTATE_SPEED:
+                        rotate_speed = PHASE4_TRACK_MIN_ROTATE_SPEED
                     if turn_val >= 0:
                         self.set_motors(rotate_speed, False, rotate_speed, True, cmd_type="phase4_camera_align")
                     else:
                         self.set_motors(rotate_speed, True, rotate_speed, False, cmd_type="phase4_camera_align")
                 else:
+                    self._update_phase45_filtered_cone_dir(cone_direction, False)
                     # Sweep search by alternating rotation direction at fixed intervals
                     # (approx. half-turn each segment; tune interval on hardware).
                     elapsed = 0.0
@@ -309,7 +368,14 @@ class MotorManager:
                             cmd_type="phase4_search_sweep",
                         )
             elif phase == Phase.PHASE5:
-                err = cone_direction - CONE_CENTER_POSITION
+                cone_prob = snapshot.get("cone_probability", 0.0)
+                cone_reached = snapshot.get("cone_is_reached", False)
+                cone_seen = cone_reached or (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE5)
+                filtered_dir = self._update_phase45_filtered_cone_dir(cone_direction, cone_seen)
+                steer_dir = filtered_dir if filtered_dir is not None else CONE_CENTER_POSITION
+                err = steer_dir - CONE_CENTER_POSITION
+                if abs(err) <= PHASE5_STEER_DEADBAND:
+                    err = 0.0
                 turn_cam = err * APPROACH_TURN_GAIN
                 turn_total = max(-PHASE5_TURN_CLAMP, min(PHASE5_TURN_CLAMP, turn_cam))
                 speed_l = self._clamp_percent(PHASE5_BASE_SPEED + turn_total)
