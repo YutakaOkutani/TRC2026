@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib
@@ -8,6 +9,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    PLOTLY_AVAILABLE = True
+except Exception:
+    PLOTLY_AVAILABLE = False
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +89,16 @@ COLUMN_GROUPS = [
     },
 ]
 
+ANOMALY_RULES = {
+    "Pres": {"min": 300.0, "max": 1200.0, "label": "BMP pressure out of range"},
+    "ALT": {"min": -500.0, "max": 10000.0, "label": "BMP altitude out of range"},
+    "BNOStaleSec": {"min": 0.0, "max": 1.0, "label": "BNO stale"},
+    "GPSFixQual": {"min": 0.0, "max": 8.0, "label": "GPS fix quality invalid"},
+    "GPSSats": {"min": 0.0, "max": 50.0, "label": "GPS satellites invalid"},
+    "GPSHdop": {"min": 0.0, "max": 10.0, "label": "GPS HDOP high"},
+    "GpsSpeedMps": {"min": 0.0, "max": 40.0, "label": "GPS speed suspicious"},
+}
+
 
 def find_latest_log() -> Path:
     candidates = []
@@ -95,13 +114,97 @@ def find_latest_log() -> Path:
 
 
 def prepare_output_dir(log_path: Path) -> Path:
-    out_dir = REPO_ROOT / "analyzer" / "outputs" / log_path.stem
-    out_dir.mkdir(parents=True, exist_ok=True)
+    log_root = REPO_ROOT / "analyzer" / "outputs" / log_path.stem
+    log_root.mkdir(parents=True, exist_ok=True)
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = log_root / f"run_{stamp}"
+    suffix = 1
+    while out_dir.exists():
+        suffix += 1
+        out_dir = log_root / f"run_{stamp}_{suffix:02d}"
+    out_dir.mkdir(parents=True, exist_ok=False)
     return out_dir
 
 
 def _safe_numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
+
+
+def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
+    if df.empty:
+        result = df.copy()
+        result["AnomalyCount"] = 0
+        result["AnomalyLabels"] = ""
+        return result
+
+    result = df.copy()
+    elapsed = _safe_numeric_series(result, "ElapsedSec") if "ElapsedSec" in result.columns else pd.Series(index=result.index, dtype="float64")
+
+    flags = []
+    for idx in result.index:
+        flags.append([])
+
+    for col, rule in ANOMALY_RULES.items():
+        if col not in result.columns:
+            continue
+        s = _safe_numeric_series(result, col)
+        bad = s.notna() & ((s < rule["min"]) | (s > rule["max"]))
+        for pos in result.index[bad]:
+            flags[result.index.get_loc(pos)].append(f"{rule['label']} ({col}={result.at[pos, col]})")
+
+    if {"GPSFixQual", "LAT", "LNG"}.issubset(result.columns):
+        fix = _safe_numeric_series(result, "GPSFixQual")
+        lat = _safe_numeric_series(result, "LAT")
+        lng = _safe_numeric_series(result, "LNG")
+        bad = (fix > 0) & ((lat == 0) | (lng == 0))
+        for pos in result.index[bad.fillna(False)]:
+            flags[result.index.get_loc(pos)].append("GPS fix reported but LAT/LNG is zero")
+
+    if "GPSSats" in result.columns:
+        sats = _safe_numeric_series(result, "GPSSats")
+        bad = sats.notna() & (sats < 4)
+        for pos in result.index[bad]:
+            flags[result.index.get_loc(pos)].append(f"Low GPS satellites (GPSSats={result.at[pos, 'GPSSats']})")
+
+    imu_triplets = [
+        ("AccX", "AccY", "AccZ", "BNO accel missing"),
+        ("GyroX", "GyroY", "GyroZ", "BNO gyro missing"),
+        ("MagX", "MagY", "MagZ", "BNO mag missing"),
+    ]
+    for cols in imu_triplets:
+        c1, c2, c3, label = cols
+        if {c1, c2, c3}.issubset(result.columns):
+            s1 = _safe_numeric_series(result, c1)
+            s2 = _safe_numeric_series(result, c2)
+            s3 = _safe_numeric_series(result, c3)
+            bad = s1.isna() & s2.isna() & s3.isna()
+            for pos in result.index[bad]:
+                flags[result.index.get_loc(pos)].append(label)
+
+    result["AnomalyCount"] = [len(x) for x in flags]
+    result["AnomalyLabels"] = [" | ".join(x) for x in flags]
+    result["HasAnomaly"] = result["AnomalyCount"] > 0
+
+    anomaly_rows = result[result["HasAnomaly"]].copy()
+    if not anomaly_rows.empty:
+        cols = [c for c in ["ElapsedSec", "Phase", "AnomalyCount", "AnomalyLabels"] if c in anomaly_rows.columns]
+        anomaly_rows[cols].to_csv(out_dir / "anomaly_events.csv", index=False)
+
+        summary_records = []
+        for idx, labels in zip(result.index, flags):
+            for label in labels:
+                summary_records.append(
+                    {
+                        "row_index": int(idx) if str(idx).isdigit() else idx,
+                        "ElapsedSec": float(elapsed.loc[idx]) if "ElapsedSec" in result.columns and pd.notna(elapsed.loc[idx]) else None,
+                        "label": label,
+                    }
+                )
+        if summary_records:
+            pd.DataFrame(summary_records).to_csv(out_dir / "anomaly_events_expanded.csv", index=False)
+
+    return result
 
 
 def write_group_csvs(df: pd.DataFrame, out_dir: Path) -> None:
@@ -184,6 +287,15 @@ def write_basic_summaries(df: pd.DataFrame, out_dir: Path) -> None:
         pd.DataFrame(categorical_rows).to_csv(out_dir / "categorical_value_counts_top20.csv", index=False)
 
 
+def _anomaly_event_times(df: pd.DataFrame) -> list[float]:
+    if "ElapsedSec" not in df.columns or "HasAnomaly" not in df.columns:
+        return []
+    t = _safe_numeric_series(df, "ElapsedSec")
+    mask = df["HasAnomaly"].fillna(False)
+    vals = t[mask].dropna().tolist()
+    return sorted(set(float(v) for v in vals))
+
+
 def plot_integrated_timeseries(df: pd.DataFrame, out_dir: Path) -> None:
     if "ElapsedSec" not in df.columns:
         return
@@ -211,6 +323,8 @@ def plot_integrated_timeseries(df: pd.DataFrame, out_dir: Path) -> None:
     for ax, (title, cols) in zip(axes, plot_groups):
         for col in cols:
             ax.plot(t, _safe_numeric_series(df, col), label=col, alpha=0.85, linewidth=1.0)
+        for event_t in _anomaly_event_times(df):
+            ax.axvline(event_t, color="red", alpha=0.08, linewidth=0.8)
         ax.set_title(title, fontweight="bold")
         ax.grid(True, linestyle="--", alpha=0.4)
         ax.legend(loc="upper right", fontsize="x-small", ncol=2)
@@ -219,6 +333,109 @@ def plot_integrated_timeseries(df: pd.DataFrame, out_dir: Path) -> None:
     fig.tight_layout()
     fig.savefig(out_dir / "integrated_sensor_log.png", dpi=150)
     plt.close(fig)
+
+
+def plot_anomaly_overview(df: pd.DataFrame, out_dir: Path) -> None:
+    if "ElapsedSec" not in df.columns or "AnomalyCount" not in df.columns:
+        return
+    t = _safe_numeric_series(df, "ElapsedSec")
+    y = _safe_numeric_series(df, "AnomalyCount")
+
+    fig, ax = plt.subplots(figsize=(14, 3.5))
+    ax.plot(t, y, color="crimson", linewidth=1.2, label="AnomalyCount")
+    mask = y.fillna(0) > 0
+    if mask.any():
+        ax.scatter(t[mask], y[mask], color="red", s=10, alpha=0.8, label="Detected anomaly")
+    ax.set_title("Detected Anomalies Timeline", fontweight="bold")
+    ax.set_xlabel("Elapsed Seconds [s]")
+    ax.set_ylabel("Count")
+    ax.grid(True, linestyle="--", alpha=0.4)
+    ax.legend(loc="upper right", fontsize="small")
+    fig.tight_layout()
+    fig.savefig(out_dir / "anomaly_timeline.png", dpi=150)
+    plt.close(fig)
+
+
+def plot_interactive_html(df: pd.DataFrame, out_dir: Path) -> None:
+    if not PLOTLY_AVAILABLE or "ElapsedSec" not in df.columns:
+        return
+
+    t = _safe_numeric_series(df, "ElapsedSec")
+    plot_groups = []
+    for group in COLUMN_GROUPS:
+        cols = []
+        for col in group["cols"]:
+            if col == "ElapsedSec" or col not in df.columns:
+                continue
+            s = _safe_numeric_series(df, col)
+            if s.notna().any():
+                cols.append(col)
+        if cols:
+            plot_groups.append((group["title"], cols))
+
+    if not plot_groups:
+        return
+
+    fig = make_subplots(
+        rows=len(plot_groups),
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.02,
+        subplot_titles=[title for title, _ in plot_groups],
+    )
+
+    for row_i, (_, cols) in enumerate(plot_groups, start=1):
+        for col in cols:
+            fig.add_trace(
+                go.Scattergl(
+                    x=t,
+                    y=_safe_numeric_series(df, col),
+                    mode="lines",
+                    name=col,
+                    legendgroup=col,
+                    showlegend=(row_i == 1),
+                    line={"width": 1},
+                    hovertemplate="t=%{x:.3f}s<br>%{y}<extra>" + col + "</extra>",
+                ),
+                row=row_i,
+                col=1,
+            )
+
+    for event_t in _anomaly_event_times(df):
+        fig.add_vline(x=event_t, line_width=1, line_color="red", opacity=0.12)
+
+    fig.update_layout(
+        height=max(500, 260 * len(plot_groups)),
+        width=1300,
+        title_text="CanSat Integrated Sensor Log (Interactive)",
+        hovermode="x unified",
+    )
+    fig.update_xaxes(title_text="Elapsed Seconds [s]", row=len(plot_groups), col=1)
+    fig.write_html(out_dir / "integrated_sensor_log_interactive.html", include_plotlyjs="cdn")
+
+    if {"LAT", "LNG"}.issubset(df.columns):
+        lat = _safe_numeric_series(df, "LAT")
+        lng = _safe_numeric_series(df, "LNG")
+        valid = lat.notna() & lng.notna() & (lat != 0) & (lng != 0)
+        if valid.any():
+            map_fig = go.Figure()
+            map_fig.add_trace(
+                go.Scatter(
+                    x=lng[valid],
+                    y=lat[valid],
+                    mode="lines+markers",
+                    marker={"size": 4},
+                    name="Trajectory",
+                    hovertemplate="LNG=%{x}<br>LAT=%{y}<extra></extra>",
+                )
+            )
+            map_fig.update_layout(
+                title="CanSat Trajectory (Interactive)",
+                xaxis_title="Longitude",
+                yaxis_title="Latitude",
+                hovermode="closest",
+            )
+            map_fig.write_html(out_dir / "trajectory_map_interactive.html", include_plotlyjs="cdn")
 
 
 def plot_trajectory(df: pd.DataFrame, out_dir: Path) -> None:
@@ -263,14 +480,20 @@ def analyze_cansat_log(file_path: str | Path | None = None) -> Path:
     df.attrs["source_path"] = str(log_path)
 
     coverage = write_coverage_reports(df, out_dir)
+    df = detect_anomalies(df, out_dir)
     write_group_csvs(df, out_dir)
     write_basic_summaries(df, out_dir)
     plot_integrated_timeseries(df, out_dir)
     plot_trajectory(df, out_dir)
+    plot_anomaly_overview(df, out_dir)
+    plot_interactive_html(df, out_dir)
 
     print(f"[INFO] Source log: {log_path}")
     print(f"[INFO] Output dir : {out_dir}")
     print(f"[INFO] Rows/Cols   : {len(df)} / {len(df.columns)}")
+    if "HasAnomaly" in df.columns:
+        print(f"[INFO] Anomalies   : {int(df['HasAnomaly'].sum())} rows flagged")
+    print(f"[INFO] Plotly HTML : {'enabled' if PLOTLY_AVAILABLE else 'skipped (plotly not installed)'}")
     if any(coverage.values()):
         print("[WARN] Column coverage mismatch detected. See coverage_report.txt")
     else:
