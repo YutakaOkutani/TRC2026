@@ -298,6 +298,7 @@ LOG_HEADER = [
     "MagZ",
     "LAT",
     "LNG",
+    "GpsSpeedMps",
     "GPSFixQual",
     "GPSSats",
     "GPSHdop",

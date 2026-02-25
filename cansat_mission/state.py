@@ -19,6 +19,7 @@ class CanSatState:
         self.lng = DEFAULT_FLOAT_VALUE
         self.gps_heading = DEFAULT_FLOAT_VALUE
         self.gps_heading_valid = False
+        self.gps_speed_mps = DEFAULT_FLOAT_VALUE
         self.gps_fix_qual = 0
         self.gps_sats = 0
         self.gps_hdop = DEFAULT_FLOAT_VALUE
@@ -60,6 +61,7 @@ class CanSatState:
         gps_detect=None,
         gps_heading=None,
         gps_heading_valid=None,
+        gps_speed_mps=None,
         gps_fix_qual=None,
         gps_sats=None,
         gps_hdop=None,
@@ -75,6 +77,8 @@ class CanSatState:
                 self.gps_heading = gps_heading
             if gps_heading_valid is not None:
                 self.gps_heading_valid = gps_heading_valid
+            if gps_speed_mps is not None:
+                self.gps_speed_mps = gps_speed_mps
             if gps_fix_qual is not None:
                 self.gps_fix_qual = gps_fix_qual
             if gps_sats is not None:
@@ -126,6 +130,7 @@ class CanSatState:
                 "lng": self.lng,
                 "gps_heading": self.gps_heading,
                 "gps_heading_valid": self.gps_heading_valid,
+                "gps_speed_mps": self.gps_speed_mps,
                 "gps_fix_qual": self.gps_fix_qual,
                 "gps_sats": self.gps_sats,
                 "gps_hdop": self.gps_hdop,

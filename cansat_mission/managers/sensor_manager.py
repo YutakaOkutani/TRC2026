@@ -122,6 +122,7 @@ class SensorManager:
             f"{mag[2]:.2f}",
             f"{self._coerce_float(current_data.get('lat', 0.0)):.6f}",
             f"{self._coerce_float(current_data.get('lng', 0.0)):.6f}",
+            f"{self._coerce_float(current_data.get('gps_speed_mps', 0.0)):.2f}",
             self._coerce_int(current_data.get("gps_fix_qual", 0)),
             self._coerce_int(current_data.get("gps_sats", 0)),
             f"{self._coerce_float(current_data.get('gps_hdop', 0.0)):.2f}",
@@ -428,7 +429,7 @@ class SensorManager:
                 now = time.time()
                 if last_valid_fix_time > 0 and now - last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
                     stable_count = 0
-                    self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False)
+                    self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False, gps_speed_mps=0.0)
                 if serial_obj.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL:
                     try:
                         serial_obj.reset_input_buffer()
@@ -463,9 +464,11 @@ class SensorManager:
 
                 if not (qual_ok and sats_ok and hdop_ok and (lat != 0.0 or lng != 0.0)):
                     stable_count = 0
+                    self.state.update_gps(gps_speed_mps=0.0)
                     continue
 
                 speed_ok = True
+                speed = 0.0
                 if last_valid_latlng is not None:
                     dist, _ = calc_distance_and_azimuth(last_valid_latlng[0], last_valid_latlng[1], lat, lng)
                     dt = now - last_fix_time if last_fix_time > 0 else 0
@@ -475,6 +478,7 @@ class SensorManager:
                             speed_ok = False
                 if not speed_ok:
                     stable_count = 0
+                    self.state.update_gps(gps_speed_mps=0.0)
                     continue
 
                 stable_count += 1
@@ -482,8 +486,12 @@ class SensorManager:
                 if stable_count >= GPS_STABLE_FIX_COUNT:
                     gps_heading = None
                     gps_heading_valid = False
+                    gps_speed_mps = 0.0
                     if last_valid_latlng is not None:
                         dist, course = calc_distance_and_azimuth(last_valid_latlng[0], last_valid_latlng[1], lat, lng)
+                        dt_valid = now - last_valid_fix_time if last_valid_fix_time > 0 else 0.0
+                        if dt_valid > 0:
+                            gps_speed_mps = dist / dt_valid
                         if dist >= GPS_HEADING_MIN_DIST:
                             gps_heading = course
                             gps_heading_valid = True
@@ -493,6 +501,7 @@ class SensorManager:
                         gps_detect=GPS_ACTIVE_DETECT,
                         gps_heading=gps_heading,
                         gps_heading_valid=gps_heading_valid,
+                        gps_speed_mps=gps_speed_mps,
                         gps_fix_qual=gps_fix_qual_val,
                         gps_sats=gps_sats_val,
                         gps_hdop=gps_hdop_val,
@@ -500,7 +509,7 @@ class SensorManager:
                     last_valid_fix_time = now
                     last_valid_latlng = (lat, lng)
                 else:
-                    self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False)
+                    self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False, gps_speed_mps=0.0)
             except Exception:
                 try:
                     if serial_obj is not None:
