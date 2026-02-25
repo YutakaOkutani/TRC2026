@@ -397,8 +397,8 @@ Environment=PYTHONUNBUFFERED=1
 
 # venv を使う場合は venv の python を使う（activate は不要）
 # ※ パスは必ず実環境に合わせる
-ExecStart=/home/pi//TRC2026venv/bin/python /home/pi/TRC2026/main.py
-    
+ExecStart=/home/pi/TRC2026/venv/bin/python /home/pi/TRC2026/main.py
+
 # 異常終了時に自動再起動（ミッション継続のため重要）
 Restart=on-failure
 RestartSec=5
