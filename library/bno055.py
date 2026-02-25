@@ -265,11 +265,14 @@ class BNO055:
     def getTemp(self):
         """
         Reads the internal temperature of the BNO055 in Celsius.
+        The TEMP register is a signed 8-bit value (two's complement).
         :return: {"value": temperature_c, "valid": bool}
         """
         try:
-            temp = self._read_byte(self.BNO055_TEMP_ADDR)
-            return {"value": float(temp), "valid": True}
+            temp_raw = self._read_byte(self.BNO055_TEMP_ADDR)
+            if temp_raw & 0x80:
+                temp_raw -= 0x100
+            return {"value": float(temp_raw), "valid": True}
         except IOError:
             print("Error reading temperature data.")
             return {"value": 0.0, "valid": False}
@@ -309,11 +312,18 @@ class BNO055:
     def getSystemError(self):
         """
         Reads the system error code.
+        SYS_ERR uses the lower nibble; upper bits are reserved and should be 0.
         :return: {"value": error, "valid": bool}
         """
         try:
-            error = self._read_byte(self.BNO055_SYS_ERR_ADDR)
-            return {"value": int(error), "valid": True}
+            error_raw = self._read_byte(self.BNO055_SYS_ERR_ADDR)
+            reserved_bits_set = (error_raw & 0xF0) != 0
+            error = error_raw & 0x0F
+            valid_error_code = 0 <= error <= 10
+            valid = (not reserved_bits_set) and valid_error_code
+            if not valid:
+                print(f"Warning: Unexpected BNO055 SYS_ERR raw value: 0x{error_raw:02X}")
+            return {"value": int(error), "valid": valid}
         except IOError:
             print("Error reading system error byte.")
             return {"value": 0xFF, "valid": False}
