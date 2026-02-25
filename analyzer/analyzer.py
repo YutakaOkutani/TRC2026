@@ -411,9 +411,6 @@ def plot_interactive_html(df: pd.DataFrame, out_dir: Path) -> None:
                 col=1,
             )
 
-    for event_t in _anomaly_event_times(df):
-        fig.add_vline(x=event_t, line_width=1, line_color="red", opacity=0.12)
-
     fig.update_layout(
         height=max(500, 260 * len(plot_groups)),
         width=1300,
