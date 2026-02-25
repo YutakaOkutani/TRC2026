@@ -3,7 +3,6 @@
 ## ファイル構成
 
 ```plaintext
-├── main.py                             # 本番用コード
 ├── analyzer/                           # ログ解析コードが入ったフォルダ
 │   ├── analyzer.py                      # ログ解析コード    
 ├── cansat_mission/                     # ミッションコードが入ったフォルダ
@@ -50,6 +49,8 @@
 │   ├── orchestrator_phase1_to_phase7.py # フェーズ1からフェーズ7までのE2E試験用コード
 │   ├── orchestrator_phase2_to_phase3.py # フェーズ2からフェーズ3のGPS, IMU誘導デバッグ用コード
 │   ├── orchestrator_phase4_to_phase7.py # フェーズ4からフェーズ7のカメラ誘導デバッグ用コード
+├── .gitignore                          # Git管理から除外するファイルのリスト
+├── main.py                             # 本番用コード
 └── README.md                           # このファイル
 ```
 
