@@ -99,6 +99,9 @@ ANOMALY_RULES = {
     "GpsSpeedMps": {"min": 0.0, "max": 40.0, "label": "GPS speed suspicious"},
 }
 
+# Heavy per-row label generation is disabled by default for PC responsiveness on large logs.
+ANOMALY_LIGHTWEIGHT = True
+
 
 def find_latest_log() -> Path:
     candidates = []
@@ -139,70 +142,77 @@ def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
         return result
 
     result = df.copy()
-    elapsed = _safe_numeric_series(result, "ElapsedSec") if "ElapsedSec" in result.columns else pd.Series(index=result.index, dtype="float64")
-
-    flags = []
-    for idx in result.index:
-        flags.append([])
+    anomaly_count = pd.Series(0, index=result.index, dtype="int32")
+    summary_records = []
 
     for col, rule in ANOMALY_RULES.items():
         if col not in result.columns:
             continue
         s = _safe_numeric_series(result, col)
-        bad = s.notna() & ((s < rule["min"]) | (s > rule["max"]))
-        for pos in result.index[bad]:
-            flags[result.index.get_loc(pos)].append(f"{rule['label']} ({col}={result.at[pos, col]})")
+        bad = (s.notna() & ((s < rule["min"]) | (s > rule["max"]))).fillna(False)
+        if bad.any():
+            anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+            summary_records.append(
+                {
+                    "rule": rule["label"],
+                    "column": col,
+                    "rows_flagged": int(bad.sum()),
+                    "min_threshold": rule["min"],
+                    "max_threshold": rule["max"],
+                }
+            )
 
     if {"GPSFixQual", "LAT", "LNG"}.issubset(result.columns):
         fix = _safe_numeric_series(result, "GPSFixQual")
         lat = _safe_numeric_series(result, "LAT")
         lng = _safe_numeric_series(result, "LNG")
-        bad = (fix > 0) & ((lat == 0) | (lng == 0))
-        for pos in result.index[bad.fillna(False)]:
-            flags[result.index.get_loc(pos)].append("GPS fix reported but LAT/LNG is zero")
+        bad = ((fix > 0) & ((lat == 0) | (lng == 0))).fillna(False)
+        if bad.any():
+            anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+            summary_records.append(
+                {"rule": "GPS fix reported but LAT/LNG is zero", "column": "LAT/LNG", "rows_flagged": int(bad.sum()), "min_threshold": None, "max_threshold": None}
+            )
 
     if "GPSSats" in result.columns:
         sats = _safe_numeric_series(result, "GPSSats")
-        bad = sats.notna() & (sats < 4)
-        for pos in result.index[bad]:
-            flags[result.index.get_loc(pos)].append(f"Low GPS satellites (GPSSats={result.at[pos, 'GPSSats']})")
+        bad = (sats.notna() & (sats < 4)).fillna(False)
+        if bad.any():
+            anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+            summary_records.append(
+                {"rule": "Low GPS satellites", "column": "GPSSats", "rows_flagged": int(bad.sum()), "min_threshold": 4, "max_threshold": None}
+            )
 
     imu_triplets = [
         ("AccX", "AccY", "AccZ", "BNO accel missing"),
         ("GyroX", "GyroY", "GyroZ", "BNO gyro missing"),
         ("MagX", "MagY", "MagZ", "BNO mag missing"),
     ]
-    for cols in imu_triplets:
-        c1, c2, c3, label = cols
+    for c1, c2, c3, label in imu_triplets:
         if {c1, c2, c3}.issubset(result.columns):
-            s1 = _safe_numeric_series(result, c1)
-            s2 = _safe_numeric_series(result, c2)
-            s3 = _safe_numeric_series(result, c3)
-            bad = s1.isna() & s2.isna() & s3.isna()
-            for pos in result.index[bad]:
-                flags[result.index.get_loc(pos)].append(label)
+            bad = (_safe_numeric_series(result, c1).isna() & _safe_numeric_series(result, c2).isna() & _safe_numeric_series(result, c3).isna()).fillna(False)
+            if bad.any():
+                anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+                summary_records.append(
+                    {"rule": label, "column": f"{c1},{c2},{c3}", "rows_flagged": int(bad.sum()), "min_threshold": None, "max_threshold": None}
+                )
 
-    result["AnomalyCount"] = [len(x) for x in flags]
-    result["AnomalyLabels"] = [" | ".join(x) for x in flags]
+    result["AnomalyCount"] = anomaly_count
     result["HasAnomaly"] = result["AnomalyCount"] > 0
+
+    if not ANOMALY_LIGHTWEIGHT:
+        result["AnomalyLabels"] = ""
 
     anomaly_rows = result[result["HasAnomaly"]].copy()
     if not anomaly_rows.empty:
-        cols = [c for c in ["ElapsedSec", "Phase", "AnomalyCount", "AnomalyLabels"] if c in anomaly_rows.columns]
+        cols = [c for c in ["ElapsedSec", "Phase", "AnomalyCount"] if c in anomaly_rows.columns]
+        if "AnomalyLabels" in anomaly_rows.columns:
+            cols.append("AnomalyLabels")
         anomaly_rows[cols].to_csv(out_dir / "anomaly_events.csv", index=False)
 
-        summary_records = []
-        for idx, labels in zip(result.index, flags):
-            for label in labels:
-                summary_records.append(
-                    {
-                        "row_index": int(idx) if str(idx).isdigit() else idx,
-                        "ElapsedSec": float(elapsed.loc[idx]) if "ElapsedSec" in result.columns and pd.notna(elapsed.loc[idx]) else None,
-                        "label": label,
-                    }
-                )
-        if summary_records:
-            pd.DataFrame(summary_records).to_csv(out_dir / "anomaly_events_expanded.csv", index=False)
+    if summary_records:
+        pd.DataFrame(summary_records).sort_values(["rows_flagged", "rule"], ascending=[False, True]).to_csv(
+            out_dir / "anomaly_summary.csv", index=False
+        )
 
     return result
 
