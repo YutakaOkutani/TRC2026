@@ -37,7 +37,12 @@ def build_parser():
     parser.add_argument(
         "--outdir",
         default=str(DEFAULT_OUTPUT_DIR),
-        help="Output directory (default: ./tests/log).",
+        help="Base output directory (default: ./tests/log). A run subfolder is created automatically.",
+    )
+    parser.add_argument(
+        "--session-name",
+        default="",
+        help="Optional suffix for the run folder name (e.g. phase4_grass).",
     )
     parser.add_argument(
         "--preview",
@@ -56,8 +61,8 @@ def main():
         print("ERROR: --width/--height must be >= 1")
         return 2
 
-    outdir = Path(args.outdir).expanduser().resolve()
-    outdir.mkdir(parents=True, exist_ok=True)
+    base_outdir = Path(args.outdir).expanduser().resolve()
+    base_outdir.mkdir(parents=True, exist_ok=True)
 
     picam2 = None
     try:
@@ -78,6 +83,11 @@ def main():
         time.sleep(max(0.0, args.warmup))
 
         ts = time.strftime("%Y%m%d_%H%M%S")
+        session_suffix = f"_{args.session_name}" if args.session_name else ""
+        outdir = base_outdir / f"capture_{ts}{session_suffix}"
+        outdir.mkdir(parents=True, exist_ok=True)
+        print(f"Run folder: {outdir}")
+
         for idx in range(args.count):
             file_path = outdir / f"{args.prefix}_{ts}_{idx + 1:03d}.jpg"
             picam2.capture_file(str(file_path))
