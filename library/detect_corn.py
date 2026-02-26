@@ -44,8 +44,8 @@ class detector:
 
         # Default red HSV ranges (OpenCV H: 0-179)
         self.default_hsv_ranges = [
-            (np.array([0, 70, 50], dtype=np.uint8), np.array([12, 255, 255], dtype=np.uint8)),
-            (np.array([168, 70, 50], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8)),
+            (np.array([0, 100, 70], dtype=np.uint8), np.array([16, 255, 255], dtype=np.uint8)),
+            (np.array([165, 100, 70], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8)),
         ]
 
     def set_roi_img(self, roi):
@@ -144,7 +144,109 @@ class detector:
             count += 1
         return count
 
-    def __component_metrics(self, mask):
+    def __row_span_width(self, mask_crop, row_start, row_end):
+        if mask_crop is None or mask_crop.size == 0:
+            return 0.0
+        h, _ = mask_crop.shape[:2]
+        row_start = max(0, min(h, int(row_start)))
+        row_end = max(row_start + 1, min(h, int(row_end)))
+        band = mask_crop[row_start:row_end, :] > 0
+        if not np.any(band):
+            return 0.0
+        cols = np.where(np.any(band, axis=0))[0]
+        if cols.size == 0:
+            return 0.0
+        return float(cols[-1] - cols[0] + 1)
+
+    def __contour_shape_metrics(self, labels, label_idx, bbox, area):
+        if labels is None or bbox is None:
+            return {
+                "cone_shape_score": 0.0,
+                "taper_score": 0.0,
+                "solidity": 0.0,
+                "extent": 0.0,
+                "bottom_heavy_score": 0.0,
+                "vertex_score": 0.0,
+            }
+
+        x, y, w, h = bbox
+        comp_crop = (labels[y : y + h, x : x + w] == label_idx).astype(np.uint8) * 255
+        contours, _ = cv2.findContours(comp_crop, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return {
+                "cone_shape_score": 0.0,
+                "taper_score": 0.0,
+                "solidity": 0.0,
+                "extent": 0.0,
+                "bottom_heavy_score": 0.0,
+                "vertex_score": 0.0,
+            }
+
+        cnt = max(contours, key=cv2.contourArea)
+        cnt_area = max(float(cv2.contourArea(cnt)), 1.0)
+        hull = cv2.convexHull(cnt)
+        hull_area = max(float(cv2.contourArea(hull)), 1.0)
+        solidity = min(cnt_area / hull_area, 1.0)
+        extent = min(float(area) / max(float(w * h), 1.0), 1.0)
+
+        top_width = self.__row_span_width(comp_crop, h * 0.05, h * 0.25)
+        bottom_width = self.__row_span_width(comp_crop, h * 0.70, h * 0.95)
+        taper_raw = (bottom_width - top_width) / max(float(w), 1.0)
+        taper_score = max(0.0, min((taper_raw + 0.05) / 0.45, 1.0))
+
+        half = max(1, h // 2)
+        upper_pixels = float(np.count_nonzero(comp_crop[:half, :]))
+        lower_pixels = float(np.count_nonzero(comp_crop[half:, :]))
+        total_pixels = upper_pixels + lower_pixels
+        lower_ratio = (lower_pixels / total_pixels) if total_pixels > 0 else 0.0
+        bottom_heavy_score = max(0.0, min((lower_ratio - 0.48) / 0.22, 1.0))
+
+        peri = float(cv2.arcLength(cnt, True))
+        vertex_score = 0.0
+        if peri > 0.0:
+            approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+            # Cone silhouettes often appear as 3-6 vertices depending on blur and truncation.
+            v = len(approx)
+            if 3 <= v <= 6:
+                vertex_score = 1.0
+            elif v in (2, 7):
+                vertex_score = 0.5
+
+        # Penalize thin/irregular blobs (grass) while keeping tolerance for far blurry cones.
+        cone_shape_score = (
+            0.30 * taper_score
+            + 0.25 * solidity
+            + 0.20 * max(0.0, min((extent - 0.18) / 0.45, 1.0))
+            + 0.15 * bottom_heavy_score
+            + 0.10 * vertex_score
+        )
+        return {
+            "cone_shape_score": float(max(0.0, min(cone_shape_score, 1.0))),
+            "taper_score": float(taper_score),
+            "solidity": float(solidity),
+            "extent": float(extent),
+            "bottom_heavy_score": float(bottom_heavy_score),
+            "vertex_score": float(vertex_score),
+        }
+
+    def __component_color_metrics(self, hsv_img, labels, label_idx):
+        if hsv_img is None or labels is None:
+            return {"sv_score": 0.0, "sat_mean": 0.0, "val_mean": 0.0}
+        pix = hsv_img[labels == label_idx]
+        if pix.size == 0:
+            return {"sv_score": 0.0, "sat_mean": 0.0, "val_mean": 0.0}
+        sat_mean = float(np.mean(pix[:, 1]))
+        val_mean = float(np.mean(pix[:, 2]))
+        sat_score = max(0.0, min((sat_mean - 110.0) / 90.0, 1.0))
+        val_score = max(0.0, min((val_mean - 70.0) / 90.0, 1.0))
+        sv_score = 0.6 * sat_score + 0.4 * val_score
+        return {
+            "sv_score": float(max(0.0, min(sv_score, 1.0))),
+            "sat_mean": sat_mean,
+            "val_mean": val_mean,
+        }
+
+    def __component_metrics(self, mask, hsv_img=None):
         if mask is None:
             return None
         mask_u8 = mask.astype(np.uint8)
@@ -164,26 +266,48 @@ class detector:
             cx, cy = centroids[idx]
             aspect = float(w) / float(h)
             aspect_diff = abs(aspect - self.cone_ratio)
-            shape_score = 1.0 - min(aspect_diff / max(self.ratio_thresh, 1e-6), 1.0)
+            aspect_score = 1.0 - min(aspect_diff / max(self.ratio_thresh, 1e-6), 1.0)
+            bbox = [
+                int(s[cv2.CC_STAT_LEFT]),
+                int(s[cv2.CC_STAT_TOP]),
+                int(s[cv2.CC_STAT_WIDTH]),
+                int(s[cv2.CC_STAT_HEIGHT]),
+            ]
+            contour_metrics = self.__contour_shape_metrics(labels, idx, bbox, area)
+            cone_shape_score = contour_metrics["cone_shape_score"]
+            color_metrics = self.__component_color_metrics(hsv_img, labels, idx)
+            sv_score = color_metrics["sv_score"]
+            shape_score = 0.50 * aspect_score + 0.50 * cone_shape_score
             area_score = min((area / img_size) / 0.10, 1.0)
             center_score = 1.0 - min(abs((cx / self.camera_width) - 0.5) / 0.5, 1.0)
-            score = 0.55 * area_score + 0.30 * shape_score + 0.15 * center_score
+            bottom_y = float(bbox[1] + bbox[3]) / float(self.camera_height)
+            ground_position_score = max(0.0, min((bottom_y - 0.35) / 0.55, 1.0))
+            score = (
+                0.32 * area_score
+                + 0.40 * shape_score
+                + 0.12 * center_score
+                + 0.10 * sv_score
+                + 0.06 * ground_position_score
+            )
+            if (area / img_size) < 0.08:
+                score *= 0.55 + 0.45 * cone_shape_score
             item = {
                 "label_idx": idx,
                 "score": score,
                 "area": area,
                 "occupancy": area / img_size,
-                "bbox": [
-                    int(s[cv2.CC_STAT_LEFT]),
-                    int(s[cv2.CC_STAT_TOP]),
-                    int(s[cv2.CC_STAT_WIDTH]),
-                    int(s[cv2.CC_STAT_HEIGHT]),
-                ],
+                "bbox": bbox,
                 "centroid": [int(cx), int(cy)],
                 "shape_score": shape_score,
+                "aspect_score": aspect_score,
+                "cone_shape_score": cone_shape_score,
+                "sv_score": sv_score,
+                "ground_position_score": ground_position_score,
                 "aspect": aspect,
                 "labels": labels,
             }
+            item.update(contour_metrics)
+            item.update(color_metrics)
             if best is None or item["score"] > best["score"]:
                 best = item
         return best
@@ -223,7 +347,7 @@ class detector:
         best_mask = None
         best_mode_score = -1.0
         for mode_name, mask in candidates:
-            comp = self.__component_metrics(mask)
+            comp = self.__component_metrics(mask, hsv_img=hsv)
             comp_score = comp["score"] if comp is not None else 0.0
             # Slight preference for hue-based masks in close range because shape can collapse.
             if mode_name.startswith("hue"):
