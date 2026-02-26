@@ -79,7 +79,7 @@ class Phase4Handler(BasePhaseHandler):
         if strict_detect:
             try:
                 if dir_marker is not None:
-                    dir_consistent = abs(cone_dir_val - float(dir_marker)) <= 0.10
+                    dir_consistent = abs(cone_dir_val - float(dir_marker)) <= 0.14
             except (TypeError, ValueError):
                 dir_consistent = True
 

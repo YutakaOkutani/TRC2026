@@ -49,9 +49,9 @@ class detector:
             (np.array([165, 100, 70], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8)),
         ]
         # Stricter candidate quality floors (user reported cones are visually salient).
-        self.min_shape_score_strict = 0.45
-        self.min_sv_score_strict = 0.38
-        self.min_hue_redness_strict = 0.55
+        self.min_shape_score_strict = 0.34
+        self.min_sv_score_strict = 0.26
+        self.min_hue_redness_strict = 0.42
 
     def set_roi_img(self, roi):
         if roi is None:
@@ -225,12 +225,17 @@ class detector:
                 vertex_score = 0.5
 
         # Penalize thin/irregular blobs (grass) while keeping tolerance for far blurry cones.
+        slenderness = float(h) / max(float(w), 1.0)
+        slender_tall_score = max(0.0, min((slenderness - 1.4) / 2.8, 1.0))
+        taper_contrast_score = max(0.0, min(abs(taper_raw) / 0.45, 1.0))
         cone_shape_score = (
-            0.30 * taper_score
-            + 0.25 * solidity
-            + 0.20 * max(0.0, min((extent - 0.18) / 0.45, 1.0))
-            + 0.15 * bottom_heavy_score
+            0.26 * taper_score
+            + 0.22 * solidity
+            + 0.16 * max(0.0, min((extent - 0.16) / 0.46, 1.0))
+            + 0.12 * bottom_heavy_score
             + 0.10 * vertex_score
+            + 0.09 * slender_tall_score
+            + 0.05 * taper_contrast_score
         )
         return {
             "cone_shape_score": float(max(0.0, min(cone_shape_score, 1.0))),
@@ -243,6 +248,8 @@ class detector:
             "bottom_heavy_score_down": float(bottom_heavy_score_down),
             "bottom_heavy_score_up": float(bottom_heavy_score_up),
             "vertex_score": float(vertex_score),
+            "slender_tall_score": float(slender_tall_score),
+            "taper_contrast_score": float(taper_contrast_score),
         }
 
     def __component_color_metrics(self, hsv_img, labels, label_idx):
@@ -288,7 +295,10 @@ class detector:
             cx, cy = centroids[idx]
             aspect = float(w) / float(h)
             aspect_diff = abs(aspect - self.cone_ratio)
-            aspect_score = 1.0 - min(aspect_diff / max(self.ratio_thresh, 1e-6), 1.0)
+            aspect_score_std = 1.0 - min(aspect_diff / max(self.ratio_thresh, 1e-6), 1.0)
+            # Distant cone often looks more slender in this camera geometry.
+            aspect_score_far = 1.0 - min(abs(aspect - 0.24) / 0.18, 1.0)
+            aspect_score = max(aspect_score_std, 0.95 * aspect_score_far)
             bbox = [
                 int(s[cv2.CC_STAT_LEFT]),
                 int(s[cv2.CC_STAT_TOP]),
@@ -300,7 +310,7 @@ class detector:
             color_metrics = self.__component_color_metrics(hsv_img, labels, idx)
             sv_score = color_metrics["sv_score"]
             hue_redness_score = color_metrics["hue_redness_score"]
-            shape_score = 0.50 * aspect_score + 0.50 * cone_shape_score
+            shape_score = 0.42 * aspect_score + 0.58 * cone_shape_score
             area_score = min((area / img_size) / 0.10, 1.0)
             center_score = 1.0 - min(abs((cx / self.camera_width) - 0.5) / 0.5, 1.0)
             cy_norm = float(cy) / float(self.camera_height)
@@ -313,19 +323,28 @@ class detector:
                 + 0.05 * hue_redness_score
                 + 0.03 * vertical_center_score
             )
-            if (area / img_size) < 0.08:
-                score *= 0.55 + 0.45 * cone_shape_score
+            occ = area / img_size
+            if occ < 0.08:
+                score *= 0.60 + 0.40 * cone_shape_score
             if hue_redness_score < 0.45:
                 score *= 0.70 + 0.30 * hue_redness_score
             quality_floor = min(cone_shape_score, sv_score, hue_redness_score)
-            score *= 0.40 + 0.60 * quality_floor
+            score *= 0.52 + 0.48 * quality_floor
             if (
                 cone_shape_score < self.min_shape_score_strict
                 or sv_score < self.min_sv_score_strict
                 or hue_redness_score < self.min_hue_redness_strict
             ):
                 # Strongly suppress grass/branches and brownish blobs that pass hue threshold loosely.
-                score *= 0.45
+                score *= 0.60
+            # Far cone rescue: allow small but very cone-like red silhouettes to survive strict penalties.
+            if (
+                occ < 0.035
+                and cone_shape_score >= 0.62
+                and hue_redness_score >= 0.68
+                and sv_score >= 0.30
+            ):
+                score = max(score, 0.34 + 0.36 * cone_shape_score + 0.18 * hue_redness_score)
             item = {
                 "label_idx": idx,
                 "score": score,
@@ -335,6 +354,8 @@ class detector:
                 "centroid": [int(cx), int(cy)],
                 "shape_score": shape_score,
                 "aspect_score": aspect_score,
+                "aspect_score_std": aspect_score_std,
+                "aspect_score_far": aspect_score_far,
                 "cone_shape_score": cone_shape_score,
                 "sv_score": sv_score,
                 "hue_redness_score": hue_redness_score,
