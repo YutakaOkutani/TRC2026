@@ -73,12 +73,35 @@ class Phase4Handler(BasePhaseHandler):
         centered = abs(cone_dir_val - CONE_CENTER_POSITION) <= CONE_PHASE4_CENTER_TOLERANCE
         strict_detect = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4) and centered
         loose_detect = cone_prob > CONE_PROBABILITY_THRESHOLD
+        # Require short-term direction consistency in Phase4 to suppress transient grass false positives.
+        dir_marker = getattr(controller, "phase4_detect_confirm_marker", None)
+        dir_consistent = True
+        if strict_detect:
+            try:
+                if dir_marker is not None:
+                    dir_consistent = abs(cone_dir_val - float(dir_marker)) <= 0.16
+            except (TypeError, ValueError):
+                dir_consistent = True
+
         if cone_reached or strict_detect:
-            controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
+            if cone_reached:
+                controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
+                controller.phase4_detect_confirm_marker = cone_dir_val
+            elif dir_consistent:
+                controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
+                if dir_marker is None:
+                    controller.phase4_detect_confirm_marker = cone_dir_val
+                else:
+                    controller.phase4_detect_confirm_marker = 0.7 * float(dir_marker) + 0.3 * cone_dir_val
+            else:
+                controller.phase4_detect_confirm_count = 1
+                controller.phase4_detect_confirm_marker = cone_dir_val
         elif loose_detect:
             controller.phase4_detect_confirm_count = 0
+            controller.phase4_detect_confirm_marker = None
         else:
             controller.phase4_detect_confirm_count = 0
+            controller.phase4_detect_confirm_marker = None
 
         # 近距離ではコーンが画面からはみ出してprobが落ちても、到達判定が立てば進める。
         if cone_reached or controller.phase4_detect_confirm_count >= CONE_PHASE4_CONFIRM_FRAMES:

@@ -18,6 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from cansat_mission.constants import (
     CAMERA_ACTIVE_SLEEP,
     CAMERA_IDLE_SLEEP,
+    CONE_PROBABILITY_THRESHOLD_PHASE4,
+    CONE_PROBABILITY_THRESHOLD_PHASE5,
     CONE_CENTER_POSITION,
     DEVICE_BMP,
     DEVICE_BNO,
@@ -91,9 +93,9 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         self.motor_state = {}
         self.stop_event = threading.Event()
         self.debug_lock = threading.Lock()
-        # Detector runs on raw camera orientation, while preview is rotated for humans.
-        # A 180deg camera mount flips left/right in the control frame as well.
-        self.camera_control_invert_x = bool(getattr(args, "preview_rotate_180", True))
+        # Detector input is standardized to the vehicle-forward orientation in detect_corn.py.
+        # Keep optional override, but default to no extra control inversion.
+        self.camera_control_invert_x = bool(getattr(args, "camera_control_invert_x", False))
         print(f"Camera control X inversion: {'ON' if self.camera_control_invert_x else 'OFF'}")
 
         self.frame_b64 = None
@@ -104,6 +106,7 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
             "bbox_px": None,
             "goal_sign": False,
             "message": "init",
+            "scores": {},
         }
 
         self.roi_img = None
@@ -227,8 +230,8 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
     def _prepare_preview_frame(self, frame):
         if frame is None:
             return None
-        # This relay is used on a vehicle build where the camera output is
-        # channel-swapped and mounted upside down relative to the usual setup.
+        # Optional preview transforms for operator convenience.
+        # Detector input is already standardized in detect_corn.py.
         if getattr(self.args, "preview_swap_rb", True):
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         if getattr(self.args, "preview_rotate_180", True):
@@ -239,6 +242,46 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         if bbox is not None:
             x, y, bw, bh = bbox
             cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 255), 2)
+        return frame
+
+    def _overlay_debug_text(self, frame, snapshot, detector, phase):
+        if frame is None:
+            return None
+        prob = float(snapshot.get("cone_probability", 0.0))
+        scores = dict(getattr(detector, "debug_scores", {}) or {}) if detector is not None else {}
+        shape = float(scores.get("shape", 0.0))
+        sv = float(scores.get("sv", 0.0))
+        hue = float(scores.get("hue", 0.0))
+        method = str(getattr(detector, "debug_method", "unknown")) if detector is not None else "detector_unavailable"
+        if phase == Phase.PHASE4:
+            phase_thr = CONE_PROBABILITY_THRESHOLD_PHASE4
+        elif phase == Phase.PHASE5:
+            phase_thr = CONE_PROBABILITY_THRESHOLD_PHASE5
+        else:
+            phase_thr = 0.0
+        pass_mark = "PASS" if prob >= phase_thr else "HOLD"
+        reject_hints = []
+        if prob < phase_thr:
+            if shape < 0.45:
+                reject_hints.append("shape")
+            if sv < 0.35:
+                reject_hints.append("sv")
+            if hue < 0.45:
+                reject_hints.append("hue")
+            if not reject_hints:
+                reject_hints.append("confirm/center")
+        lines = [
+            f"prob {prob:.2f}  thr {phase_thr:.2f}  {pass_mark}",
+            f"shape {shape:.2f}  sv {sv:.2f}  hue {hue:.2f}",
+            f"det {bool(getattr(detector, 'is_detected', False)) if detector else False}  method {method}",
+        ]
+        if reject_hints:
+            lines.append("weak: " + ",".join(reject_hints))
+        y = 18
+        for line in lines:
+            cv2.putText(frame, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(frame, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (60, 255, 60), 1, cv2.LINE_AA)
+            y += 18
         return frame
 
     def phase_loop(self):
@@ -289,6 +332,7 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
                     frame = detector.input_img.copy()
                     frame = self._annotate_frame(frame, snapshot, bbox, centroid)
                     frame = self._prepare_preview_frame(frame)
+                    frame = self._overlay_debug_text(frame, snapshot, detector, phase)
                     frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_LINEAR)
                     ok, enc = cv2.imencode(
                         ".jpg",
@@ -305,6 +349,7 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
                         "goal_sign": bool(snapshot.get("cone_is_reached", False) or phase in (Phase.PHASE6, Phase.PHASE7)),
                         "message": msg,
                         "method": detector_method,
+                        "scores": dict(getattr(detector, "debug_scores", {}) or {}) if detector else {},
                     }
                     if frame_b64 is not None:
                         self.frame_b64 = frame_b64
@@ -447,8 +492,9 @@ def parse_args():
     parser.add_argument("--start-phase", type=int, default=DEFAULT_START_PHASE, choices=[4, 5, 6, 7])
     parser.add_argument("--exit-on-goal", action="store_true")
     parser.add_argument("--phase6-hold-sec", type=float, default=5.0)
-    parser.add_argument("--preview-rotate-180", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--preview-swap-rb", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--preview-rotate-180", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--preview-swap-rb", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--camera-control-invert-x", action=argparse.BooleanOptionalAction, default=False)
     return parser.parse_args()
 
 

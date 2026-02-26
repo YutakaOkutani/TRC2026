@@ -30,6 +30,7 @@ class detector:
         self.is_detected = False
         self.is_reached = False
         self.debug_method = "init"
+        self.debug_scores = {}
 
         # Camera
         self.picam2 = None
@@ -96,6 +97,8 @@ class detector:
         for attempt in range(self.capture_retry_count):
             try:
                 raw = self.picam2.capture_array()
+                # Standardize detector input orientation for this vehicle build (camera is mounted upside down).
+                raw = cv2.rotate(raw, cv2.ROTATE_180)
                 return cv2.blur(raw, (5, 5))
             except Exception as exc:
                 print(f"[Detector] Capture Error (attempt {attempt + 1}/{self.capture_retry_count}): {exc}")
@@ -192,14 +195,19 @@ class detector:
         top_width = self.__row_span_width(comp_crop, h * 0.05, h * 0.25)
         bottom_width = self.__row_span_width(comp_crop, h * 0.70, h * 0.95)
         taper_raw = (bottom_width - top_width) / max(float(w), 1.0)
-        taper_score = max(0.0, min((taper_raw + 0.05) / 0.45, 1.0))
+        taper_score_down = max(0.0, min((taper_raw + 0.05) / 0.45, 1.0))
+        # Camera may be mounted upside down. Evaluate the opposite taper as well.
+        taper_score_up = max(0.0, min(((-taper_raw) + 0.05) / 0.45, 1.0))
+        taper_score = max(taper_score_down, taper_score_up)
 
         half = max(1, h // 2)
         upper_pixels = float(np.count_nonzero(comp_crop[:half, :]))
         lower_pixels = float(np.count_nonzero(comp_crop[half:, :]))
         total_pixels = upper_pixels + lower_pixels
         lower_ratio = (lower_pixels / total_pixels) if total_pixels > 0 else 0.0
-        bottom_heavy_score = max(0.0, min((lower_ratio - 0.48) / 0.22, 1.0))
+        bottom_heavy_score_down = max(0.0, min((lower_ratio - 0.48) / 0.22, 1.0))
+        bottom_heavy_score_up = max(0.0, min(((1.0 - lower_ratio) - 0.48) / 0.22, 1.0))
+        bottom_heavy_score = max(bottom_heavy_score_down, bottom_heavy_score_up)
 
         peri = float(cv2.arcLength(cnt, True))
         vertex_score = 0.0
@@ -223,20 +231,29 @@ class detector:
         return {
             "cone_shape_score": float(max(0.0, min(cone_shape_score, 1.0))),
             "taper_score": float(taper_score),
+            "taper_score_down": float(taper_score_down),
+            "taper_score_up": float(taper_score_up),
             "solidity": float(solidity),
             "extent": float(extent),
             "bottom_heavy_score": float(bottom_heavy_score),
+            "bottom_heavy_score_down": float(bottom_heavy_score_down),
+            "bottom_heavy_score_up": float(bottom_heavy_score_up),
             "vertex_score": float(vertex_score),
         }
 
     def __component_color_metrics(self, hsv_img, labels, label_idx):
         if hsv_img is None or labels is None:
-            return {"sv_score": 0.0, "sat_mean": 0.0, "val_mean": 0.0}
+            return {"sv_score": 0.0, "sat_mean": 0.0, "val_mean": 0.0, "hue_redness_score": 0.0}
         pix = hsv_img[labels == label_idx]
         if pix.size == 0:
-            return {"sv_score": 0.0, "sat_mean": 0.0, "val_mean": 0.0}
+            return {"sv_score": 0.0, "sat_mean": 0.0, "val_mean": 0.0, "hue_redness_score": 0.0}
+        hue = pix[:, 0].astype(np.float32)
         sat_mean = float(np.mean(pix[:, 1]))
         val_mean = float(np.mean(pix[:, 2]))
+        # Circular distance on OpenCV hue scale [0,179]; red is near 0/179.
+        hue_dist = np.minimum(hue, 180.0 - hue)
+        hue_redness = 1.0 - np.clip(hue_dist / 18.0, 0.0, 1.0)
+        hue_redness_score = float(np.mean(hue_redness))
         sat_score = max(0.0, min((sat_mean - 110.0) / 90.0, 1.0))
         val_score = max(0.0, min((val_mean - 70.0) / 90.0, 1.0))
         sv_score = 0.6 * sat_score + 0.4 * val_score
@@ -244,6 +261,7 @@ class detector:
             "sv_score": float(max(0.0, min(sv_score, 1.0))),
             "sat_mean": sat_mean,
             "val_mean": val_mean,
+            "hue_redness_score": hue_redness_score,
         }
 
     def __component_metrics(self, mask, hsv_img=None):
@@ -277,20 +295,24 @@ class detector:
             cone_shape_score = contour_metrics["cone_shape_score"]
             color_metrics = self.__component_color_metrics(hsv_img, labels, idx)
             sv_score = color_metrics["sv_score"]
+            hue_redness_score = color_metrics["hue_redness_score"]
             shape_score = 0.50 * aspect_score + 0.50 * cone_shape_score
             area_score = min((area / img_size) / 0.10, 1.0)
             center_score = 1.0 - min(abs((cx / self.camera_width) - 0.5) / 0.5, 1.0)
-            bottom_y = float(bbox[1] + bbox[3]) / float(self.camera_height)
-            ground_position_score = max(0.0, min((bottom_y - 0.35) / 0.55, 1.0))
+            cy_norm = float(cy) / float(self.camera_height)
+            vertical_center_score = 1.0 - min(abs(cy_norm - 0.5) / 0.5, 1.0)
             score = (
-                0.32 * area_score
-                + 0.40 * shape_score
+                0.28 * area_score
+                + 0.42 * shape_score
                 + 0.12 * center_score
                 + 0.10 * sv_score
-                + 0.06 * ground_position_score
+                + 0.05 * hue_redness_score
+                + 0.03 * vertical_center_score
             )
             if (area / img_size) < 0.08:
                 score *= 0.55 + 0.45 * cone_shape_score
+            if hue_redness_score < 0.45:
+                score *= 0.70 + 0.30 * hue_redness_score
             item = {
                 "label_idx": idx,
                 "score": score,
@@ -302,7 +324,8 @@ class detector:
                 "aspect_score": aspect_score,
                 "cone_shape_score": cone_shape_score,
                 "sv_score": sv_score,
-                "ground_position_score": ground_position_score,
+                "hue_redness_score": hue_redness_score,
+                "vertical_center_score": vertical_center_score,
                 "aspect": aspect,
                 "labels": labels,
             }
@@ -427,6 +450,7 @@ class detector:
         self.projected_img = None
         self.binarized_img = None
         self.debug_method = "reset"
+        self.debug_scores = {}
 
         raw_img = self.__get_camera_img()
         if raw_img is None:
@@ -452,6 +476,14 @@ class detector:
         self.is_detected = bool(best["is_detected"])
         self.is_reached = bool(best["is_reached"])
         self.debug_method = best["debug_method"]
+        self.debug_scores = {
+            "shape": float(best.get("shape_score", 0.0)),
+            "cone_shape": float(best.get("cone_shape_score", 0.0)),
+            "aspect": float(best.get("aspect_score", 0.0)),
+            "sv": float(best.get("sv_score", 0.0)),
+            "hue": float(best.get("hue_redness_score", 0.0)),
+            "occ": float(best.get("occupancy", 0.0)),
+        }
 
         if self.is_reached:
             try:

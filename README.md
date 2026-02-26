@@ -38,6 +38,7 @@
 │   ├── capture_roi_img.py               # ゴール画像撮影用コード
 │   ├── detect_corn.py                   # カメラフェーズ用コード
 ├── tests/                              # テストコードが入ったフォルダ
+│   ├── camera_capture_dataset.py        # カメラキャプチャのデータセット作成コード
 │   ├── camera_phase_monitor_pc.py       # カメラフェーズのリレーコード（PC側）
 │   ├── camera_phase_relay_README.md     # カメラフェーズのリレーコードの説明
 │   ├── camera_phase_relay_sbc.py        # カメラフェーズのリレーコード（SBC側）
