@@ -485,11 +485,13 @@ def plot_interactive_html(df: pd.DataFrame, out_dir: Path) -> None:
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.02,
+        specs=[[{"secondary_y": True}]] + [[{"secondary_y": False}] for _ in range(len(plot_groups) - 1)],
         subplot_titles=[title for title, _ in plot_groups],
     )
 
-    for row_i, (_, cols) in enumerate(plot_groups, start=1):
+    for row_i, (group_title, cols) in enumerate(plot_groups, start=1):
         for col in cols:
+            use_secondary_y = row_i == 1 and col == "Phase"
             fig.add_trace(
                 go.Scattergl(
                     x=t,
@@ -503,7 +505,14 @@ def plot_interactive_html(df: pd.DataFrame, out_dir: Path) -> None:
                 ),
                 row=row_i,
                 col=1,
+                secondary_y=use_secondary_y,
             )
+
+    if plot_groups:
+        first_title, first_cols = plot_groups[0]
+        if first_title == "Time & Mission Phase" and "Phase" in first_cols:
+            fig.update_yaxes(title_text="Phase", row=1, col=1, secondary_y=True, tickmode="linear", dtick=1)
+            fig.update_yaxes(title_text="Elapsed/Mission Values", row=1, col=1, secondary_y=False)
 
     fig.update_layout(
         height=max(500, 260 * len(plot_groups)),
