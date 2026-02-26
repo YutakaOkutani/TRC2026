@@ -48,6 +48,10 @@ class detector:
             (np.array([0, 100, 70], dtype=np.uint8), np.array([16, 255, 255], dtype=np.uint8)),
             (np.array([165, 100, 70], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8)),
         ]
+        # Stricter candidate quality floors (user reported cones are visually salient).
+        self.min_shape_score_strict = 0.45
+        self.min_sv_score_strict = 0.38
+        self.min_hue_redness_strict = 0.55
 
     def set_roi_img(self, roi):
         if roi is None:
@@ -313,6 +317,15 @@ class detector:
                 score *= 0.55 + 0.45 * cone_shape_score
             if hue_redness_score < 0.45:
                 score *= 0.70 + 0.30 * hue_redness_score
+            quality_floor = min(cone_shape_score, sv_score, hue_redness_score)
+            score *= 0.40 + 0.60 * quality_floor
+            if (
+                cone_shape_score < self.min_shape_score_strict
+                or sv_score < self.min_sv_score_strict
+                or hue_redness_score < self.min_hue_redness_strict
+            ):
+                # Strongly suppress grass/branches and brownish blobs that pass hue threshold loosely.
+                score *= 0.45
             item = {
                 "label_idx": idx,
                 "score": score,
