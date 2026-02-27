@@ -36,7 +36,10 @@ from cansat_mission.constants import (
     GPS_BUFFER_CLEAR_INTERVAL,
     GPS_BUFFER_CLEAR_THRESHOLD,
     GPS_FIX_LOSS_TIMEOUT,
+    GPS_HEADING_BASELINE_MIN_DIST,
+    GPS_HEADING_HOLD_SEC,
     GPS_HEADING_MIN_DIST,
+    GPS_HEADING_WINDOW_SEC,
     GPS_INACTIVE_DETECT,
     GPS_MAX_HDOP,
     GPS_MAX_SPEED_MPS,
@@ -419,6 +422,9 @@ class SensorManager:
         last_fix_time = 0.0
         last_valid_fix_time = 0.0
         last_valid_latlng = None
+        recent_valid_fixes = []
+        last_heading = None
+        last_heading_time = 0.0
         stable_count = 0
         while True:
             try:
@@ -429,6 +435,7 @@ class SensorManager:
                 now = time.time()
                 if last_valid_fix_time > 0 and now - last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
                     stable_count = 0
+                    recent_valid_fixes = []
                     self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False, gps_speed_mps=0.0)
                 if serial_obj.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL:
                     try:
@@ -487,6 +494,9 @@ class SensorManager:
                     gps_heading = None
                     gps_heading_valid = False
                     gps_speed_mps = 0.0
+                    recent_valid_fixes.append((now, lat, lng))
+                    cutoff = now - max(1.0, float(GPS_HEADING_WINDOW_SEC))
+                    recent_valid_fixes = [fix for fix in recent_valid_fixes if fix[0] >= cutoff]
                     if last_valid_latlng is not None:
                         dist, course = calc_distance_and_azimuth(last_valid_latlng[0], last_valid_latlng[1], lat, lng)
                         dt_valid = now - last_valid_fix_time if last_valid_fix_time > 0 else 0.0
@@ -495,6 +505,23 @@ class SensorManager:
                         if dist >= GPS_HEADING_MIN_DIST:
                             gps_heading = course
                             gps_heading_valid = True
+                    if not gps_heading_valid and recent_valid_fixes:
+                        best_dist = 0.0
+                        best_course = None
+                        for _, old_lat, old_lng in recent_valid_fixes:
+                            span_dist, span_course = calc_distance_and_azimuth(old_lat, old_lng, lat, lng)
+                            if span_dist >= GPS_HEADING_BASELINE_MIN_DIST and span_dist > best_dist:
+                                best_dist = span_dist
+                                best_course = span_course
+                        if best_course is not None:
+                            gps_heading = best_course
+                            gps_heading_valid = True
+                    if gps_heading_valid and gps_heading is not None:
+                        last_heading = gps_heading
+                        last_heading_time = now
+                    elif last_heading is not None and (now - last_heading_time) <= GPS_HEADING_HOLD_SEC:
+                        gps_heading = last_heading
+                        gps_heading_valid = True
                     self.state.update_gps(
                         lat=lat,
                         lng=lng,

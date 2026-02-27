@@ -119,23 +119,26 @@ class MotorManager:
         return azimuth
 
     def _phase3_heading(self, snapshot):
-        if snapshot.get("gps_heading_valid", False):
-            gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
-            if gps_heading is not None:
-                if hasattr(self, "_update_bno_heading_offset_from_gps"):
-                    self._update_bno_heading_offset_from_gps(snapshot)
-                return gps_heading, "GPS"
+        # Phase3 heading policy (explicit):
+        # 1) Prefer BNO heading for actual steering.
+        # 2) Use GPS heading only to update BNO alignment offset and as fallback.
         try:
             angle = float(snapshot.get("angle", 0.0))
         except (TypeError, ValueError):
             angle = 0.0
         if snapshot.get("angle_valid", False) and math.isfinite(angle):
+            if snapshot.get("gps_heading_valid", False) and hasattr(self, "_update_bno_heading_offset_from_gps"):
+                self._update_bno_heading_offset_from_gps(snapshot)
             if hasattr(self, "_bno_heading_aligned_to_gps"):
                 aligned = self._bno_heading_aligned_to_gps(snapshot)
                 if aligned is not None:
-                    source = "BNO_ALIGNED" if getattr(self, "bno_heading_offset_valid", False) else "BNO_SEEDED"
+                    source = "BNO_ALIGNED" if getattr(self, "bno_heading_offset_valid", False) else "BNO"
                     return aligned, source
             return angle, "BNO"
+        if snapshot.get("gps_heading_valid", False):
+            gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
+            if gps_heading is not None:
+                return gps_heading, "GPS_FALLBACK"
         mag_heading = self._mag_heading_from_snapshot(snapshot)
         if mag_heading is not None:
             return mag_heading, "MAG"
