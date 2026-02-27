@@ -53,6 +53,7 @@ from cansat_mission.constants import (
     PHASE3_NO_HEADING_SPEED,
     PHASE3_HEADING_DEADBAND_DEG,
     PHASE3_PIVOT_SPEED,
+    PHASE3_PIVOT_SLOW_MIN_SPEED,
     PHASE3_PIVOT_THRESHOLD_DEG,
     PHASE3_NO_HEADING_TURN_BIAS,
     PHASE3_NO_HEADING_TURN_INTERVAL,
@@ -305,7 +306,8 @@ class MotorManager:
                         self.set_motors(base, True, base, True, cmd_type="phase3_gps_forward")
                     elif abs(diff) >= PHASE3_PIVOT_THRESHOLD_DEG:
                         pivot_speed = self._clamp_percent(PHASE3_PIVOT_SPEED)
-                        pivot_slow = self._clamp_percent(max(0.0, pivot_speed * 0.1))
+                        # Keep both wheels driving in pivot to avoid apparent one-side stop on hardware.
+                        pivot_slow = self._clamp_percent(max(PHASE3_PIVOT_SLOW_MIN_SPEED, pivot_speed * 0.1))
                         if diff > 0:
                             self._set_forward_diff_turn(
                                 "left",
