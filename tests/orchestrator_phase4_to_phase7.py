@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from cansat_mission import constants as mission_constants
 from cansat_mission import controller as mission_controller
 from cansat_mission.constants import Phase
+from cansat_mission.log_sync_launcher import trigger_async_log_sync
 from cansat_mission.runners import run_phase_sequence
 
 
@@ -19,10 +20,13 @@ def main():
     # Reuse the production CSV logger format while saving under tests/log.
     mission_constants.LOG_DIR = str(TEST_LOG_DIR)
     mission_controller.LOG_DIR = str(TEST_LOG_DIR)
-    run_phase_sequence(
-        start_phase=Phase.PHASE4,
-        allowed_phases=(Phase.PHASE4, Phase.PHASE5, Phase.PHASE6, Phase.PHASE7),
-    )
+    try:
+        run_phase_sequence(
+            start_phase=Phase.PHASE4,
+            allowed_phases=(Phase.PHASE4, Phase.PHASE5, Phase.PHASE6, Phase.PHASE7),
+        )
+    finally:
+        trigger_async_log_sync("orchestrator_phase4_to_phase7_end")
 
 
 if __name__ == "__main__":
