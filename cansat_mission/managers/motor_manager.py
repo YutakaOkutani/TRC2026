@@ -12,8 +12,7 @@ from cansat_mission.constants import (
     DEVICE_MOTOR_1_PWM,
     DEVICE_MOTOR_2_DIR,
     DEVICE_MOTOR_2_PWM,
-    GPS_TURN_CLAMP,
-    GPS_TURN_GAIN,
+    GPS_HEADING_RELIABLE_SPEED_MPS,
     MOTOR_DIR_INVERT_1,
     MOTOR_DIR_INVERT_2,
     MOTOR_IDLE_SLEEP,
@@ -50,12 +49,9 @@ from cansat_mission.constants import (
     PHASE2_STAGE_STRAIGHT,
     PHASE2_TURN_BIAS,
     PHASE2_TURN_INTERVAL,
-    PHASE3_NO_HEADING_SPEED,
     PHASE3_HEADING_DEADBAND_DEG,
-    PHASE3_PIVOT_SPEED,
-    PHASE3_PIVOT_SLOW_MIN_SPEED,
-    PHASE3_PIVOT_THRESHOLD_DEG,
-    PHASE3_NO_HEADING_TURN_BIAS,
+    PHASE3_TURN_FAST_SPEED,
+    PHASE3_TURN_SLOW_SPEED,
     PHASE3_NO_HEADING_TURN_INTERVAL,
     PHASES_SKIP_OBSTACLE,
     PHASES_STOP_MOTORS,
@@ -149,6 +145,13 @@ class MotorManager:
                     return aligned, source
             return angle, "BNO"
         if snapshot.get("gps_heading_valid", False):
+            # Reject low-speed GPS heading; course-over-ground is unstable when nearly stopped.
+            try:
+                gps_speed = float(snapshot.get("gps_speed_mps", 0.0))
+            except (TypeError, ValueError):
+                gps_speed = 0.0
+            if not math.isfinite(gps_speed) or gps_speed < GPS_HEADING_RELIABLE_SPEED_MPS:
+                return None, "GPS_LOW_SPEED"
             gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
             if gps_heading is not None:
                 return gps_heading, "GPS_FALLBACK"
@@ -295,55 +298,30 @@ class MotorManager:
             if phase == Phase.PHASE3:
                 target_heading = direction
                 nav_heading, _heading_source = self._phase3_heading(snapshot)
+                turn_fast = self._clamp_percent(PHASE3_TURN_FAST_SPEED)
+                turn_slow = self._clamp_percent(PHASE3_TURN_SLOW_SPEED)
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
                     diff = self._angle_diff_deg(target_heading, nav_heading)
                     base = self._clamp_percent(BASE_SPEED)
-                    min_bias = self._clamp_percent(PHASE3_NO_HEADING_TURN_BIAS)
-                    turn_mag = self._clamp_percent(abs(diff) * GPS_TURN_GAIN)
-                    bias = min(GPS_TURN_CLAMP, max(min_bias, turn_mag))
                     if abs(diff) <= PHASE3_HEADING_DEADBAND_DEG:
                         self.set_motors(base, True, base, True, cmd_type="phase3_gps_forward")
-                    elif abs(diff) >= PHASE3_PIVOT_THRESHOLD_DEG:
-                        pivot_speed = self._clamp_percent(PHASE3_PIVOT_SPEED)
-                        # Keep both wheels driving in pivot to avoid apparent one-side stop on hardware.
-                        pivot_slow = self._clamp_percent(max(PHASE3_PIVOT_SLOW_MIN_SPEED, pivot_speed * 0.1))
-                        if diff > 0:
-                            self._set_forward_diff_turn(
-                                "left",
-                                pivot_speed,
-                                pivot_slow,
-                                cmd_type="phase3_gps_pivot",
-                            )
-                        else:
-                            self._set_forward_diff_turn(
-                                "right",
-                                pivot_speed,
-                                pivot_slow,
-                                cmd_type="phase3_gps_pivot",
-                            )
-                    elif diff > 0:
-                        speed_l = self._clamp_percent(base + bias)
-                        speed_r = self._clamp_percent(base - bias)
-                        self.set_motors(speed_l, True, speed_r, True, cmd_type="phase3_gps_turn")
                     else:
-                        speed_l = self._clamp_percent(base - bias)
-                        speed_r = self._clamp_percent(base + bias)
-                        self.set_motors(speed_l, True, speed_r, True, cmd_type="phase3_gps_turn")
+                        if diff > 0:
+                            # right turn: right fast(80), left slow(60)
+                            self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="phase3_gps_turn")
+                        else:
+                            # left turn: left fast(80), right slow(60)
+                            self._set_forward_diff_turn("left", turn_fast, turn_slow, cmd_type="phase3_gps_turn")
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
                     elapsed = time.time() - self.phase3_no_heading_start
                     left_turn = int(elapsed // PHASE3_NO_HEADING_TURN_INTERVAL) % 2 == 0
-                    base = self._clamp_percent(PHASE3_NO_HEADING_SPEED)
-                    bias = self._clamp_percent(PHASE3_NO_HEADING_TURN_BIAS)
                     if left_turn:
-                        speed_l = self._clamp_percent(base - bias)
-                        speed_r = self._clamp_percent(base + bias)
+                        self._set_forward_diff_turn("left", turn_fast, turn_slow, cmd_type="phase3_no_heading_search")
                     else:
-                        speed_l = self._clamp_percent(base + bias)
-                        speed_r = self._clamp_percent(base - bias)
-                    self.set_motors(speed_l, True, speed_r, True, cmd_type="phase3_no_heading_search")
+                        self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="phase3_no_heading_search")
             elif phase == Phase.PHASE4:
                 # Phase4 is camera-only: no BNO heading hold.
                 cone_prob = snapshot.get("cone_probability", 0.0)
