@@ -13,7 +13,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from cansat_mission import constants as mission_constants
 from cansat_mission import controller as mission_controller
 from cansat_mission.constants import Phase
-from cansat_mission.log_sync_launcher import trigger_async_log_sync
 from cansat_mission.runners import run_phase_sequence
 
 
@@ -24,15 +23,12 @@ def main():
     target_lat = float(os.getenv("CANSAT_TARGET_LAT", mission_constants.TARGET_LAT))
     target_lng = float(os.getenv("CANSAT_TARGET_LNG", mission_constants.TARGET_LNG))
     print(f"Phase2-7 test target: lat={target_lat:.6f}, lng={target_lng:.6f}")
-    try:
-        run_phase_sequence(
-            start_phase=Phase.PHASE2,
-            allowed_phases=(Phase.PHASE2, Phase.PHASE3, Phase.PHASE4, Phase.PHASE5, Phase.PHASE6, Phase.PHASE7),
-            target_lat=target_lat,
-            target_lng=target_lng,
-        )
-    finally:
-        trigger_async_log_sync("orchestrator_phase2_to_phase7_end")
+    run_phase_sequence(
+        start_phase=Phase.PHASE2,
+        allowed_phases=(Phase.PHASE2, Phase.PHASE3, Phase.PHASE4, Phase.PHASE5, Phase.PHASE6, Phase.PHASE7),
+        target_lat=target_lat,
+        target_lng=target_lng,
+    )
 
 
 if __name__ == "__main__":
