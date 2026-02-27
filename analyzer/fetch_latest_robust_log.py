@@ -10,7 +10,7 @@ PI_IP = "100.107.201.122"
 PI_USER = "pi"
 SSH_PORT = 22
 
-PI_LOG_DIRS = ("~/TRC2026/log", "~/TRC2026/tests/log")
+PI_LOG_DIRS = ("/home/pi/TRC2026/log", "/home/pi/TRC2026/tests/log")
 PC_DEST_DIR = "~/Downloads"
 LOG_PATTERN = "robust_log_*.csv"
 
@@ -36,6 +36,10 @@ def _ssh_common_opts(identity_file: Path) -> list[str]:
         "-o",
         f"ConnectTimeout={SSH_CONNECT_TIMEOUT_SEC}",
         "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=2",
+        "-o",
         "StrictHostKeyChecking=accept-new",
     ]
 
@@ -48,32 +52,31 @@ def find_latest_remote_log(
     pattern: str,
     ssh_opts: list[str],
 ) -> str:
-    normalized_dirs = []
-    for d in remote_dirs:
-        if d.startswith("~/"):
-            normalized_dirs.append("$HOME/" + d[2:])
-        elif d == "~":
-            normalized_dirs.append("$HOME")
-        else:
-            normalized_dirs.append(d)
-    quoted_dirs = " ".join(shlex.quote(d) for d in normalized_dirs)
+    quoted_dirs = " ".join(shlex.quote(d) for d in remote_dirs)
     quoted_pattern = shlex.quote(pattern)
 
     remote_cmd = (
-        "set -euo pipefail; "
+        "set -eu; "
         f"pattern={quoted_pattern}; "
         f"for d in {quoted_dirs}; do "
-        '  for f in "$d"/"$pattern"; do '
-        '    [ -e "$f" ] || continue; '
-        '    mt=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0); '
-        '    printf "%s\t%s\n" "$mt" "$f"; '
-        "  done; "
+        '  [ -d "$d" ] || continue; '
+        '  find "$d" -maxdepth 1 -type f -name "$pattern" -printf "%T@\\t%p\\n" 2>/dev/null || true; '
         "done | sort -nr | head -n 1 | cut -f2-"
     )
 
     cmd = ["ssh", *ssh_opts, "-p", str(port), f"{user}@{host}", remote_cmd]
     result = _run(cmd)
     latest = result.stdout.strip()
+    if not latest:
+        fallback_cmd = (
+            "set -eu; "
+            f"pattern={quoted_pattern}; "
+            'root="/home/pi/TRC2026"; '
+            '[ -d "$root" ] || exit 0; '
+            'find "$root" -type f -name "$pattern" -printf "%T@\\t%p\\n" 2>/dev/null | sort -nr | head -n 1 | cut -f2-'
+        )
+        fallback = _run(["ssh", *ssh_opts, "-p", str(port), f"{user}@{host}", fallback_cmd]).stdout.strip()
+        latest = fallback
     if not latest:
         raise FileNotFoundError(
             "No remote file matched "
