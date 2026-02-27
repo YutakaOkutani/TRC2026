@@ -323,7 +323,9 @@ class SensorManager:
             if self.bno_last_valid_time > 0:
                 self.bno_stale_sec = now - self.bno_last_valid_time
             else:
-                self.bno_stale_sec = 0.0
+                # No accepted heading sample has ever been observed in this run.
+                # Mark as stale so logs clearly show "BNO unavailable" instead of 0.0.
+                self.bno_stale_sec = BNO_STALE_TIMEOUT + 1.0
             if self.bno_stale_sec > BNO_STALE_TIMEOUT:
                 angle_valid = False
             if not angle_valid:

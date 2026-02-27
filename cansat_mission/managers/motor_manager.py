@@ -127,9 +127,14 @@ class MotorManager:
         return azimuth
 
     def _phase3_heading(self, snapshot):
-        # Phase3 heading policy (explicit):
-        # 1) Prefer BNO heading for actual steering.
-        # 2) Use GPS heading only to update BNO alignment offset and as fallback.
+        # Phase3 heading policy (legacy-aligned with main(8).py):
+        # 1) Prefer magnetometer heading (azimuth from BNO mag XY).
+        # 2) Fall back to Euler heading (BNO), optionally GPS-aligned.
+        # 3) Fall back to GPS-derived course only when IMU heading is unavailable.
+        mag_heading = self._mag_heading_from_snapshot(snapshot)
+        if mag_heading is not None:
+            return mag_heading, "MAG"
+
         try:
             angle = float(snapshot.get("angle", 0.0))
         except (TypeError, ValueError):
@@ -147,9 +152,6 @@ class MotorManager:
             gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
             if gps_heading is not None:
                 return gps_heading, "GPS_FALLBACK"
-        mag_heading = self._mag_heading_from_snapshot(snapshot)
-        if mag_heading is not None:
-            return mag_heading, "MAG"
         if snapshot.get("angle_valid", False):
             return None, "BNO_PARSE_FAIL"
         if snapshot.get("gps_heading_valid", False):
@@ -304,11 +306,11 @@ class MotorManager:
                         self.set_motors(base, True, base, True, cmd_type="phase3_gps_forward")
                     else:
                         if diff > 0:
-                            # right turn: right fast(80), left slow(60)
-                            self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="phase3_gps_turn")
-                        else:
-                            # left turn: left fast(80), right slow(60)
+                            # Need clockwise/right turn: slow right wheel, fast left wheel.
                             self._set_forward_diff_turn("left", turn_fast, turn_slow, cmd_type="phase3_gps_turn")
+                        else:
+                            # Need counter-clockwise/left turn: slow left wheel, fast right wheel.
+                            self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="phase3_gps_turn")
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
