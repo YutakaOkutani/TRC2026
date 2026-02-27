@@ -9,6 +9,8 @@ from cansat_mission.constants import (
     GPS_BAUDRATE_CANDIDATES,
     GPS_BUFFER_CLEAR_INTERVAL,
     GPS_BUFFER_CLEAR_THRESHOLD,
+    GPS_COORD_LAT_OFFSET_DEG,
+    GPS_COORD_LNG_OFFSET_DEG,
     GPS_FIX_LOSS_TIMEOUT,
     GPS_MAX_HDOP,
     GPS_MAX_SPEED_MPS,
@@ -136,6 +138,11 @@ def gga_quality_ok(gps_qual, num_sats, hdop):
     return qual_ok, sats_ok, hdop_ok
 
 
+def apply_gps_coordinate_offset(lat, lng):
+    """Apply static coordinate offsets to absorb repeatable field bias."""
+    return float(lat) + float(GPS_COORD_LAT_OFFSET_DEG), float(lng) + float(GPS_COORD_LNG_OFFSET_DEG)
+
+
 def parse_gga_sentence(line):
     if not line or not line.startswith(NMEA_GGA_PREFIXES):
         return None
@@ -151,10 +158,11 @@ def parse_gga_sentence(line):
     if lat_val is None or lng_val is None:
         return None
 
+    lat_corr, lng_corr = apply_gps_coordinate_offset(lat_val, lng_val)
     return {
         "msg": msg,
-        "lat": float(lat_val),
-        "lng": float(lng_val),
+        "lat": lat_corr,
+        "lng": lng_corr,
         "gps_qual": getattr(msg, "gps_qual", None),
         "num_sats": getattr(msg, "num_sats", None),
         "hdop": getattr(msg, "horizontal_dil", None),

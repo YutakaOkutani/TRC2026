@@ -26,11 +26,11 @@ from cansat_mission.managers.motor_manager import get_manual_drive_pattern
 # EN (Enable) -> PWM (Speed)
 # PH (Phase)  -> High/Low (Direction)
 
-# Motor 1 (Right or Left)
+# Motor 1 (Left)
 PIN_EN1 = 12  # Enable (PWM Speed)
 PIN_PH1 = 13  # Phase (Direction)
 
-# Motor 2 (Left or Right)
+# Motor 2 (Right)
 PIN_EN2 = 19   # Enable (PWM Speed)
 PIN_PH2 = 17  # Phase (Direction)
 
@@ -128,7 +128,7 @@ def _apply_speed_scale(speed, motor_side):
 def set_motor(motor_side, speed, direction, ramp_time=0.6, step_interval=0.05):
     """
     Control motor duty and direction with a soft-start ramp.
-    :param motor_side: 'A' (Right) or 'B' (Left)
+    :param motor_side: 'A' (Left / MTR1) or 'B' (Right / MTR2)
     :param speed: PWM Duty Cycle (0 - 100)
     :param direction: 1 (Forward/High) or 0 (Reverse/Low)
     :param ramp_time: Time in seconds to ramp between duty changes.
@@ -250,12 +250,12 @@ def drive_backward(speed=DEFAULT_SPEED):
 
 
 def turn_left(speed=DEFAULT_SPEED):
-    """Pivot left: right motor forward, left motor reverse."""
+    """Pivot left: left motor reverse, right motor forward."""
     _apply_manual_drive_pattern("a", speed)
 
 
 def turn_right(speed=DEFAULT_SPEED):
-    """Pivot right: right motor reverse, left motor forward."""
+    """Pivot right: left motor forward, right motor reverse."""
     _apply_manual_drive_pattern("d", speed)
 
 

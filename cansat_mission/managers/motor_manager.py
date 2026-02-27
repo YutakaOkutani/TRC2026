@@ -52,6 +52,8 @@ from cansat_mission.constants import (
     PHASE2_TURN_INTERVAL,
     PHASE3_NO_HEADING_SPEED,
     PHASE3_HEADING_DEADBAND_DEG,
+    PHASE3_PIVOT_SPEED,
+    PHASE3_PIVOT_THRESHOLD_DEG,
     PHASE3_NO_HEADING_TURN_BIAS,
     PHASE3_NO_HEADING_TURN_INTERVAL,
     PHASES_SKIP_OBSTACLE,
@@ -71,13 +73,18 @@ from cansat_mission.constants import (
 MANUAL_DRIVE_PATTERNS = {
     "w": ("Forward", True, True),
     "s": ("Backward", False, False),
-    "a": ("Left", True, False),
-    "d": ("Right", False, True),
+    "a": ("Left", False, True),
+    "d": ("Right", True, False),
 }
 
 
 def get_manual_drive_pattern(cmd, speed):
-    """Return a normalized two-motor command for manual WASD control."""
+    """Return a normalized two-motor command for manual WASD control.
+
+    Motor ordering is fixed as:
+    - A: MTR1 (left)
+    - B: MTR2 (right)
+    """
     pattern = MANUAL_DRIVE_PATTERNS.get((cmd or "").lower())
     if pattern is None:
         return None
@@ -129,8 +136,6 @@ class MotorManager:
                     source = "BNO_ALIGNED" if getattr(self, "bno_heading_offset_valid", False) else "BNO_SEEDED"
                     return aligned, source
             return angle, "BNO"
-        if math.isfinite(angle) and abs(angle) > 1e-6:
-            return angle, "BNO_RAW"
         mag_heading = self._mag_heading_from_snapshot(snapshot)
         if mag_heading is not None:
             return mag_heading, "MAG"
@@ -267,7 +272,7 @@ class MotorManager:
                     else:
                         speed_l = self._clamp_percent(base + bias)
                         speed_r = self._clamp_percent(base - bias)
-                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase2_fig8")
+                    self.set_motors(speed_l, True, speed_r, True, cmd_type="phase2_fig8")
                 time.sleep(MOTOR_LOOP_INTERVAL)
                 continue
 
@@ -276,21 +281,39 @@ class MotorManager:
                 nav_heading, _heading_source = self._phase3_heading(snapshot)
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
-                    # Legacy-style GPS guidance: steer from relative heading error.
                     diff = self._angle_diff_deg(target_heading, nav_heading)
                     base = self._clamp_percent(BASE_SPEED)
-                    bias = self._clamp_percent(PHASE3_NO_HEADING_TURN_BIAS)
+                    min_bias = self._clamp_percent(PHASE3_NO_HEADING_TURN_BIAS)
+                    turn_mag = self._clamp_percent(abs(diff) * GPS_TURN_GAIN)
+                    bias = min(GPS_TURN_CLAMP, max(min_bias, turn_mag))
                     if abs(diff) <= PHASE3_HEADING_DEADBAND_DEG:
                         self.set_motors(base, True, base, True, cmd_type="phase3_gps_forward")
+                    elif abs(diff) >= PHASE3_PIVOT_THRESHOLD_DEG:
+                        pivot_speed = self._clamp_percent(PHASE3_PIVOT_SPEED)
+                        if diff > 0:
+                            self.set_motors(
+                                pivot_speed,
+                                True,
+                                pivot_speed,
+                                False,
+                                cmd_type="phase3_gps_pivot",
+                            )
+                        else:
+                            self.set_motors(
+                                pivot_speed,
+                                False,
+                                pivot_speed,
+                                True,
+                                cmd_type="phase3_gps_pivot",
+                            )
                     elif diff > 0:
-                        # Turn toward target while keeping forward motion.
                         speed_l = self._clamp_percent(base + bias)
                         speed_r = self._clamp_percent(base - bias)
-                        self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_gps_turn")
+                        self.set_motors(speed_l, True, speed_r, True, cmd_type="phase3_gps_turn")
                     else:
                         speed_l = self._clamp_percent(base - bias)
                         speed_r = self._clamp_percent(base + bias)
-                        self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_gps_turn")
+                        self.set_motors(speed_l, True, speed_r, True, cmd_type="phase3_gps_turn")
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
@@ -304,7 +327,7 @@ class MotorManager:
                     else:
                         speed_l = self._clamp_percent(base + bias)
                         speed_r = self._clamp_percent(base - bias)
-                    self.set_motors(speed_r, True, speed_l, True, cmd_type="phase3_no_heading_search")
+                    self.set_motors(speed_l, True, speed_r, True, cmd_type="phase3_no_heading_search")
             elif phase == Phase.PHASE4:
                 # Phase4 is camera-only: no BNO heading hold.
                 cone_prob = snapshot.get("cone_probability", 0.0)
@@ -331,7 +354,7 @@ class MotorManager:
                         turn_val = max(-PHASE4_TRACK_ROTATE_CLAMP, min(PHASE4_TRACK_ROTATE_CLAMP, turn_val))
                         speed_l = self._clamp_percent(PHASE4_ALIGN_ARC_BASE_SPEED + turn_val)
                         speed_r = self._clamp_percent(PHASE4_ALIGN_ARC_BASE_SPEED - turn_val)
-                        self.set_motors(speed_r, True, speed_l, True, cmd_type="phase4_camera_arc_align")
+                        self.set_motors(speed_l, True, speed_r, True, cmd_type="phase4_camera_arc_align")
                         time.sleep(MOTOR_LOOP_INTERVAL)
                         continue
                     turn_val = err * PHASE4_TRACK_ROTATE_GAIN
@@ -340,9 +363,9 @@ class MotorManager:
                     if rotate_speed < PHASE4_TRACK_MIN_ROTATE_SPEED:
                         rotate_speed = PHASE4_TRACK_MIN_ROTATE_SPEED
                     if turn_val >= 0:
-                        self.set_motors(rotate_speed, False, rotate_speed, True, cmd_type="phase4_camera_align")
-                    else:
                         self.set_motors(rotate_speed, True, rotate_speed, False, cmd_type="phase4_camera_align")
+                    else:
+                        self.set_motors(rotate_speed, False, rotate_speed, True, cmd_type="phase4_camera_align")
                 else:
                     self._update_phase45_filtered_cone_dir(cone_direction, False)
                     # Sweep search by alternating rotation direction at fixed intervals
@@ -354,17 +377,17 @@ class MotorManager:
                     if left_turn:
                         self.set_motors(
                             SEARCH_ROTATION_SPEED,
-                            True,
-                            SEARCH_ROTATION_SPEED,
                             False,
+                            SEARCH_ROTATION_SPEED,
+                            True,
                             cmd_type="phase4_search_sweep",
                         )
                     else:
                         self.set_motors(
                             SEARCH_ROTATION_SPEED,
-                            False,
-                            SEARCH_ROTATION_SPEED,
                             True,
+                            SEARCH_ROTATION_SPEED,
+                            False,
                             cmd_type="phase4_search_sweep",
                         )
             elif phase == Phase.PHASE5:
@@ -380,7 +403,7 @@ class MotorManager:
                 turn_total = max(-PHASE5_TURN_CLAMP, min(PHASE5_TURN_CLAMP, turn_cam))
                 speed_l = self._clamp_percent(PHASE5_BASE_SPEED + turn_total)
                 speed_r = self._clamp_percent(PHASE5_BASE_SPEED - turn_total)
-                self.set_motors(speed_r, True, speed_l, True, cmd_type="phase5_approach_camera")
+                self.set_motors(speed_l, True, speed_r, True, cmd_type="phase5_approach_camera")
 
             time.sleep(MOTOR_LOOP_INTERVAL)
 
@@ -475,6 +498,9 @@ class MotorManager:
         step_interval=MOTOR_RAMP_STEP,
         cmd_type="set_motors",
     ):
+        # Fixed motor mapping:
+        # - A => MTR1 => left
+        # - B => MTR2 => right
         motor_1_pwm = self.devices.get(DEVICE_MOTOR_1_PWM)
         motor_1_dir = self.devices.get(DEVICE_MOTOR_1_DIR)
         motor_2_pwm = self.devices.get(DEVICE_MOTOR_2_PWM)
