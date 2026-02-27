@@ -56,7 +56,14 @@ class Phase3Handler(BasePhaseHandler):
                         f"Head({nav_heading_source})={nav_heading:.1f}, Diff={heading_diff:+.1f}"
                     )
                 else:
-                    print(f"GPS Nav: Dist={dist:.1f}m, TargetDir={azimuth:.1f}, Head(INVALID)=INVALID")
+                    print(
+                        f"GPS Nav: Dist={dist:.1f}m, TargetDir={azimuth:.1f}, "
+                        f"Head(INVALID:{nav_heading_source}), "
+                        f"AngleValid={int(bool(snapshot.get('angle_valid', False)))}, "
+                        f"GPSHeadingValid={int(bool(snapshot.get('gps_heading_valid', False)))}, "
+                        f"GPSSpeed={float(snapshot.get('gps_speed_mps', 0.0)):.2f}m/s, "
+                        f"BNOStale={float(getattr(controller, 'bno_stale_sec', 0.0)):.2f}s"
+                    )
             if dist < GPS_CLOSE_DISTANCE:
                 print(f"Close enough ({dist:.1f}m): switching to Phase4")
                 controller.state.update_navigation(phase=int(Phase.PHASE4))

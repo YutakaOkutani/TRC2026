@@ -12,7 +12,6 @@ from cansat_mission.constants import (
     DEVICE_MOTOR_1_PWM,
     DEVICE_MOTOR_2_DIR,
     DEVICE_MOTOR_2_PWM,
-    GPS_HEADING_RELIABLE_SPEED_MPS,
     MOTOR_DIR_INVERT_1,
     MOTOR_DIR_INVERT_2,
     MOTOR_IDLE_SLEEP,
@@ -145,20 +144,17 @@ class MotorManager:
                     return aligned, source
             return angle, "BNO"
         if snapshot.get("gps_heading_valid", False):
-            # Reject low-speed GPS heading; course-over-ground is unstable when nearly stopped.
-            try:
-                gps_speed = float(snapshot.get("gps_speed_mps", 0.0))
-            except (TypeError, ValueError):
-                gps_speed = 0.0
-            if not math.isfinite(gps_speed) or gps_speed < GPS_HEADING_RELIABLE_SPEED_MPS:
-                return None, "GPS_LOW_SPEED"
             gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
             if gps_heading is not None:
                 return gps_heading, "GPS_FALLBACK"
         mag_heading = self._mag_heading_from_snapshot(snapshot)
         if mag_heading is not None:
             return mag_heading, "MAG"
-        return None, "INVALID"
+        if snapshot.get("angle_valid", False):
+            return None, "BNO_PARSE_FAIL"
+        if snapshot.get("gps_heading_valid", False):
+            return None, "GPS_PARSE_FAIL"
+        return None, "NO_HEADING_SOURCE"
 
     def _clamp_percent(self, value):
         return max(PWM_PERCENT_MIN, min(PWM_PERCENT_MAX, value))

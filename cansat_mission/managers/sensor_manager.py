@@ -283,12 +283,13 @@ class SensorManager:
             angle_val = 0.0
             if euler["valid"] and len(euler["value"]) >= 1:
                 angle_val = float(euler["value"][0])
+            angle_jump_ok = self._angle_jump_ok(angle_val)
             angle_ok = (
                 (not freeze)
                 and euler["valid"]
                 and math.isfinite(angle_val)
                 and 0.0 <= angle_val < 360.0
-                and self._angle_jump_ok(angle_val)
+                and angle_jump_ok
             )
 
             sys_ok = sys_status["valid"] and sys_error["valid"]
@@ -325,6 +326,17 @@ class SensorManager:
                 self.bno_stale_sec = 0.0
             if self.bno_stale_sec > BNO_STALE_TIMEOUT:
                 angle_valid = False
+            if not angle_valid:
+                invalid_count = int(getattr(self, "_bno_heading_invalid_count", 0)) + 1
+                self._bno_heading_invalid_count = invalid_count
+                if invalid_count % 50 == 0:
+                    print(
+                        "BNO heading invalid: "
+                        f"i2c_ok={int(i2c_ok)} freeze={int(freeze)} euler_valid={int(euler['valid'])} "
+                        f"angle={angle_val:.2f} jump_ok={int(angle_jump_ok)} stale={self.bno_stale_sec:.2f}s"
+                    )
+            else:
+                self._bno_heading_invalid_count = 0
 
             return {
                 "acc": acc_val,
