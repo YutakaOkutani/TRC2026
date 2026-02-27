@@ -36,7 +36,8 @@ PIN_PH2 = 17  # Phase (Direction)
 
 # PWM Parameters
 PWM_FREQ = 1000  # PWM Frequency in Hz
-DEFAULT_SPEED = 50  # Default duty for manual control (0-100)
+DEFAULT_SPEED = 100  # Default duty for manual control (0-100)
+SPEED_STEP = 5  # Duty adjustment step for interactive test (0-100)
 COMMAND_BUFFER_SEC = 0.25  # Delay before applying a new command to avoid regen spikes
 TURN_DIFF_RATIO = 0.35
 
@@ -326,10 +327,19 @@ def _get_command():
             return ''
 
 
+def _clamp_speed(speed):
+    return max(0.0, min(100.0, float(speed)))
+
+
 def main():
+    current_speed = float(DEFAULT_SPEED)
     try:
         setup()
-        print("Motor Control Ready (W/A/S/D or Arrow Keys, space=stop, q=quit)")
+        print(
+            "Motor Control Ready "
+            "(W/A/S/D or Arrow Keys, +=faster, -=slower, space=stop, q=quit)"
+        )
+        print(f"Current Duty: {current_speed:.0f}%")
         while True:
             cmd = _get_command()
 
@@ -349,21 +359,31 @@ def main():
                 stop()
                 continue
 
+            if cmd in ('+', '='):
+                current_speed = _clamp_speed(current_speed + SPEED_STEP)
+                print(f"Duty Up -> {current_speed:.0f}%")
+                continue
+
+            if cmd in ('-', '_'):
+                current_speed = _clamp_speed(current_speed - SPEED_STEP)
+                print(f"Duty Down -> {current_speed:.0f}%")
+                continue
+
             # Apply a short buffer before acting to reduce regen stress.
             time.sleep(COMMAND_BUFFER_SEC)
 
             if cmd == 'w':
-                print("Forward")
-                drive_forward()
+                print(f"Forward ({current_speed:.0f}%)")
+                drive_forward(current_speed)
             elif cmd == 's':
-                print("Backward")
-                drive_backward()
+                print(f"Backward ({current_speed:.0f}%)")
+                drive_backward(current_speed)
             elif cmd == 'a':
-                print("Left")
-                turn_left()
+                print(f"Left ({current_speed:.0f}%)")
+                turn_left(current_speed)
             elif cmd == 'd':
-                print("Right")
-                turn_right()
+                print(f"Right ({current_speed:.0f}%)")
+                turn_right(current_speed)
             else:
                 print(f"Unknown command '{cmd}'. Use W/A/S/D, space, or q.")
 
