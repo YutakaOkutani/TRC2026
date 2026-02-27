@@ -1,7 +1,6 @@
 import datetime
 import math
 import os
-import sys
 import time
 
 from cansat_mission.constants import (
@@ -113,6 +112,7 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.phase_elapsed_totals = {phase: 0.0 for phase in Phase}
         self.mission_end_reason = "RUNNING"
         self.mission_total_timeout_triggered = False
+        self._shutdown_requested = False
 
         self.phase_handlers = {
             Phase.PHASE0: Phase0Handler(),
@@ -124,6 +124,17 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
             Phase.PHASE6: Phase6Handler(),
             Phase.PHASE7: Phase7Handler(),
         }
+
+    def request_shutdown(self, reason="shutdown"):
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        if self.mission_end_reason == "RUNNING":
+            self.mission_end_reason = reason
+        try:
+            self.stop_motors()
+        except Exception as exc:
+            print(f"Emergency stop failed: {exc}")
 
     def initialize_phase(self, phase):
         phase_enum = Phase(phase)
@@ -213,19 +224,21 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         if allowed_phases is not None:
             allowed_set = {Phase(value) for value in allowed_phases}
         try:
-            while True:
+            while not self._shutdown_requested:
                 if allowed_set is not None:
                     current_phase = Phase(self.state.snapshot()["phase"])
                     if current_phase not in allowed_set:
                         print(f"Phase subset completed at phase {int(current_phase)}")
-                        self.stop_motors()
+                        self.request_shutdown("PHASE_SUBSET_COMPLETED")
                         return
                 self.loop_once()
                 time.sleep(MAIN_LOOP_INTERVAL)
         except KeyboardInterrupt:
             print("\nKeyboardInterrupt")
-            self.stop_motors()
-            sys.exit()
+            self.request_shutdown("KEYBOARD_INTERRUPT")
+            print("Emergency stop requested. Motors are stopping.")
+        finally:
+            self.request_shutdown("RUN_EXIT")
 
     def loop_once(self):
         snapshot = self.state.snapshot()

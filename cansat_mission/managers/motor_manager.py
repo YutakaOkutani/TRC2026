@@ -99,6 +99,9 @@ def get_manual_drive_pattern(cmd, speed):
 
 
 class MotorManager:
+    def _shutdown_active(self):
+        return bool(getattr(self, "_shutdown_requested", False))
+
     def _set_forward_diff_turn(self, fast_side, speed_fast, speed_slow, cmd_type):
         """Steer with differential forward speeds only (no reverse)."""
         speed_fast = self._clamp_percent(speed_fast)
@@ -216,7 +219,7 @@ class MotorManager:
         }
 
     def move_motor_thread(self):
-        while True:
+        while not self._shutdown_active():
             snapshot = self.state.snapshot()
             phase = Phase(snapshot["phase"])
             obstacle_dist = snapshot["obstacle_dist"]
@@ -428,8 +431,13 @@ class MotorManager:
                 self.set_motors(speed_l, True, speed_r, True, cmd_type="phase5_approach_camera")
 
             time.sleep(MOTOR_LOOP_INTERVAL)
+        self.stop_motors()
 
     def _ramp_pwm(self, pwm_dev, start_speed, target_speed, ramp_time, step_interval=MOTOR_RAMP_STEP):
+        if self._shutdown_active():
+            if pwm_dev is not None:
+                pwm_dev.value = 0
+            return 0.0
         if pwm_dev is None:
             return target_speed
         if ramp_time <= 0 or step_interval <= 0:
@@ -438,6 +446,9 @@ class MotorManager:
         steps = max(1, int(ramp_time / step_interval))
         step_duration = ramp_time / steps
         for step in range(1, steps + 1):
+            if self._shutdown_active():
+                pwm_dev.value = 0
+                return 0.0
             duty = start_speed + (target_speed - start_speed) * (step / steps)
             pwm_dev.value = max(PWM_DUTY_MIN, min(PWM_DUTY_MAX, duty / PWM_PERCENT_MAX))
             time.sleep(step_duration)
@@ -454,6 +465,12 @@ class MotorManager:
         ramp_time,
         step_interval=MOTOR_RAMP_STEP,
     ):
+        if self._shutdown_active():
+            if pwm_a is not None:
+                pwm_a.value = 0
+            if pwm_b is not None:
+                pwm_b.value = 0
+            return 0.0, 0.0
         if pwm_a is None and pwm_b is None:
             return start_a, start_b
         if ramp_time <= 0 or step_interval <= 0:
@@ -465,6 +482,12 @@ class MotorManager:
         steps = max(1, int(ramp_time / step_interval))
         step_duration = ramp_time / steps
         for step in range(1, steps + 1):
+            if self._shutdown_active():
+                if pwm_a is not None:
+                    pwm_a.value = 0
+                if pwm_b is not None:
+                    pwm_b.value = 0
+                return 0.0, 0.0
             duty_a = start_a + (target_a - start_a) * (step / steps)
             duty_b = start_b + (target_b - start_b) * (step / steps)
             if pwm_a is not None:
@@ -484,6 +507,9 @@ class MotorManager:
         ramp_time=MOTOR_RAMP_TIME,
         step_interval=MOTOR_RAMP_STEP,
     ):
+        if self._shutdown_active():
+            self.stop_motors()
+            return
         if motor_pwm is None or motor_dir is None:
             return
         state = self.motor_state.setdefault(motor_pwm, {"speed": 0.0, "direction": True})
@@ -520,6 +546,9 @@ class MotorManager:
         step_interval=MOTOR_RAMP_STEP,
         cmd_type="set_motors",
     ):
+        if self._shutdown_active():
+            self.stop_motors()
+            return
         # Fixed motor mapping:
         # - A => MTR1 => left
         # - B => MTR2 => right
