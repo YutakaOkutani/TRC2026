@@ -14,14 +14,42 @@ PC_IP = "100.100.219.60"
 PI_USER = "pi"
 PC_USER = "okku0"
 SSH_PORT = 22
+SSH_CONNECT_TIMEOUT_SEC = 8
+SSH_CMD_TIMEOUT_SEC = 30
+SCP_CMD_TIMEOUT_SEC = 120
 
 PI_LOG_DIRS = ("~/TRC2026/log", "~/TRC2026/tests/log")
 PC_DEST_DIR = "~/Downloads"
 LOG_PATTERN = "robust_log_*.csv"
+PI_TO_PC_IDENTITY_FILE = "~/.ssh/id_ed25519_pc"
+PC_TO_PI_IDENTITY_FILE = "~/.ssh/id_ed25519_pi"
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, check=True, text=True, capture_output=True)
+    timeout = SCP_CMD_TIMEOUT_SEC if cmd and cmd[0] == "scp" else SSH_CMD_TIMEOUT_SEC
+    return subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=timeout)
+
+
+def _ssh_common_opts(identity_file: Path) -> list[str]:
+    # Non-interactive and fail-fast to avoid hanging mission-end hooks.
+    return [
+        "-i",
+        str(identity_file),
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"ConnectTimeout={SSH_CONNECT_TIMEOUT_SEC}",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]
+
+
+def _identity_file_for_role(role: str) -> Path:
+    if role == "push":
+        return Path(PI_TO_PC_IDENTITY_FILE).expanduser()
+    return Path(PC_TO_PI_IDENTITY_FILE).expanduser()
 
 
 def get_local_ipv4s() -> set[str]:
@@ -94,7 +122,14 @@ def find_latest_local_log(local_dirs: tuple[str, ...], pattern: str) -> Path:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def find_latest_remote_log(host: str, user: str, port: int, remote_dirs: tuple[str, ...], pattern: str) -> str:
+def find_latest_remote_log(
+    host: str,
+    user: str,
+    port: int,
+    remote_dirs: tuple[str, ...],
+    pattern: str,
+    ssh_opts: list[str],
+) -> str:
     quoted_dirs = " ".join(shlex.quote(d) for d in remote_dirs)
     quoted_pattern = shlex.quote(pattern)
 
@@ -110,7 +145,7 @@ def find_latest_remote_log(host: str, user: str, port: int, remote_dirs: tuple[s
         "done | sort -nr | head -n 1 | cut -f2-"
     )
 
-    cmd = ["ssh", "-p", str(port), f"{user}@{host}", remote_cmd]
+    cmd = ["ssh", *ssh_opts, "-p", str(port), f"{user}@{host}", remote_cmd]
     result = _run(cmd)
     latest = result.stdout.strip()
     if not latest:
@@ -121,16 +156,30 @@ def find_latest_remote_log(host: str, user: str, port: int, remote_dirs: tuple[s
     return latest
 
 
-def push_to_remote(local_path: Path, host: str, user: str, port: int, remote_dest_dir: str) -> None:
+def push_to_remote(
+    local_path: Path,
+    host: str,
+    user: str,
+    port: int,
+    remote_dest_dir: str,
+    ssh_opts: list[str],
+) -> None:
     dst = f"{user}@{host}:{remote_dest_dir}"
-    cmd = ["scp", "-P", str(port), str(local_path), dst]
+    cmd = ["scp", *ssh_opts, "-P", str(port), str(local_path), dst]
     _run(cmd)
 
 
-def pull_from_remote(host: str, user: str, port: int, remote_path: str, local_dir: Path) -> Path:
+def pull_from_remote(
+    host: str,
+    user: str,
+    port: int,
+    remote_path: str,
+    local_dir: Path,
+    ssh_opts: list[str],
+) -> Path:
     local_dir.mkdir(parents=True, exist_ok=True)
     src = f"{user}@{host}:{remote_path}"
-    cmd = ["scp", "-P", str(port), src, str(local_dir)]
+    cmd = ["scp", *ssh_opts, "-P", str(port), src, str(local_dir)]
     _run(cmd)
     downloaded = local_dir / Path(remote_path).name
     if not downloaded.exists():
@@ -152,19 +201,33 @@ def main() -> int:
 
     try:
         role = args.force or detect_role()
+        identity_file = _identity_file_for_role(role)
+        if not identity_file.exists():
+            raise FileNotFoundError(f"Identity file not found: {identity_file}")
+        ssh_opts = _ssh_common_opts(identity_file)
         tag = f", reason={args.reason}" if args.reason else ""
-        print(f"[INFO] Role: {role} (auto={args.force is None}, os={platform.system()}, ips={sorted(get_local_ipv4s())}{tag})")
+        print(
+            f"[INFO] Role: {role} (auto={args.force is None}, os={platform.system()}, "
+            f"ips={sorted(get_local_ipv4s())}, key={identity_file}{tag})"
+        )
 
         if role == "push":
             latest_local = find_latest_local_log(PI_LOG_DIRS, LOG_PATTERN)
-            push_to_remote(latest_local, PC_IP, PC_USER, SSH_PORT, PC_DEST_DIR)
+            print(f"[INFO] Local latest: {latest_local}")
+            print(f"[INFO] Sending to: {PC_USER}@{PC_IP}:{PC_DEST_DIR}")
+            push_to_remote(latest_local, PC_IP, PC_USER, SSH_PORT, PC_DEST_DIR, ssh_opts)
             print(f"[INFO] Sent latest log: {latest_local} -> {PC_USER}@{PC_IP}:{PC_DEST_DIR}")
         else:
-            latest_remote = find_latest_remote_log(PI_IP, PI_USER, SSH_PORT, PI_LOG_DIRS, LOG_PATTERN)
+            latest_remote = find_latest_remote_log(PI_IP, PI_USER, SSH_PORT, PI_LOG_DIRS, LOG_PATTERN, ssh_opts)
             local_dest = Path(PC_DEST_DIR).expanduser().resolve()
-            downloaded = pull_from_remote(PI_IP, PI_USER, SSH_PORT, latest_remote, local_dest)
+            print(f"[INFO] Remote latest: {latest_remote}")
+            print(f"[INFO] Pulling to: {local_dest}")
+            downloaded = pull_from_remote(PI_IP, PI_USER, SSH_PORT, latest_remote, local_dest, ssh_opts)
             print(f"[INFO] Pulled latest log: {latest_remote} -> {downloaded}")
         return 0
+    except subprocess.TimeoutExpired as exc:
+        print(f"[ERROR] Command timed out after {exc.timeout}s: {exc.cmd}", file=sys.stderr)
+        return 1
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         stdout = (exc.stdout or "").strip()
