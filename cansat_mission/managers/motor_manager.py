@@ -73,8 +73,8 @@ from cansat_mission.constants import (
 MANUAL_DRIVE_PATTERNS = {
     "w": ("Forward", True, True),
     "s": ("Backward", False, False),
-    "a": ("Left", False, True),
-    "d": ("Right", True, False),
+    "a": ("Left", True, True),
+    "d": ("Right", True, True),
 }
 
 
@@ -99,6 +99,15 @@ def get_manual_drive_pattern(cmd, speed):
 
 
 class MotorManager:
+    def _set_forward_diff_turn(self, fast_side, speed_fast, speed_slow, cmd_type):
+        """Steer with differential forward speeds only (no reverse)."""
+        speed_fast = self._clamp_percent(speed_fast)
+        speed_slow = self._clamp_percent(speed_slow)
+        if fast_side == "left":
+            self.set_motors(speed_fast, True, speed_slow, True, cmd_type=cmd_type)
+        else:
+            self.set_motors(speed_slow, True, speed_fast, True, cmd_type=cmd_type)
+
     def _mag_heading_from_snapshot(self, snapshot):
         mag = snapshot.get("mag")
         if not isinstance(mag, (list, tuple)) or len(mag) < 2:
@@ -238,9 +247,9 @@ class MotorManager:
                 print(f"Obstacle Detected! {obstacle_dist:.1f}cm")
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
-                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, False, cmd_type="obstacle_backup")
-                time.sleep(OBSTACLE_BACKUP_TIME)
-                self.set_motors(OBSTACLE_SPEED, False, OBSTACLE_SPEED, True, cmd_type="obstacle_turn")
+                turn_fast = self._clamp_percent(OBSTACLE_SPEED)
+                turn_slow = self._clamp_percent(OBSTACLE_SPEED * 0.35)
+                self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="obstacle_forward_turn")
                 time.sleep(OBSTACLE_TURN_TIME)
                 self.stop_motors()
                 time.sleep(OBSTACLE_PAUSE_TIME)
@@ -293,20 +302,19 @@ class MotorManager:
                         self.set_motors(base, True, base, True, cmd_type="phase3_gps_forward")
                     elif abs(diff) >= PHASE3_PIVOT_THRESHOLD_DEG:
                         pivot_speed = self._clamp_percent(PHASE3_PIVOT_SPEED)
+                        pivot_slow = self._clamp_percent(max(0.0, pivot_speed * 0.1))
                         if diff > 0:
-                            self.set_motors(
+                            self._set_forward_diff_turn(
+                                "left",
                                 pivot_speed,
-                                True,
-                                pivot_speed,
-                                False,
+                                pivot_slow,
                                 cmd_type="phase3_gps_pivot",
                             )
                         else:
-                            self.set_motors(
+                            self._set_forward_diff_turn(
+                                "right",
                                 pivot_speed,
-                                False,
-                                pivot_speed,
-                                True,
+                                pivot_slow,
                                 cmd_type="phase3_gps_pivot",
                             )
                     elif diff > 0:
@@ -365,10 +373,21 @@ class MotorManager:
                     rotate_speed = self._clamp_percent(abs(turn_val))
                     if rotate_speed < PHASE4_TRACK_MIN_ROTATE_SPEED:
                         rotate_speed = PHASE4_TRACK_MIN_ROTATE_SPEED
+                    rotate_slow = self._clamp_percent(max(0.0, rotate_speed * 0.1))
                     if turn_val >= 0:
-                        self.set_motors(rotate_speed, True, rotate_speed, False, cmd_type="phase4_camera_align")
+                        self._set_forward_diff_turn(
+                            "left",
+                            rotate_speed,
+                            rotate_slow,
+                            cmd_type="phase4_camera_align",
+                        )
                     else:
-                        self.set_motors(rotate_speed, False, rotate_speed, True, cmd_type="phase4_camera_align")
+                        self._set_forward_diff_turn(
+                            "right",
+                            rotate_speed,
+                            rotate_slow,
+                            cmd_type="phase4_camera_align",
+                        )
                 else:
                     self._update_phase45_filtered_cone_dir(cone_direction, False)
                     # Sweep search by alternating rotation direction at fixed intervals
@@ -377,20 +396,20 @@ class MotorManager:
                     if getattr(self, "time_start_searching_cone", 0.0):
                         elapsed = time.time() - self.time_start_searching_cone
                     left_turn = int(elapsed // PHASE4_SEARCH_SWEEP_INTERVAL) % 2 == 0
+                    sweep_fast = self._clamp_percent(SEARCH_ROTATION_SPEED)
+                    sweep_slow = self._clamp_percent(max(0.0, SEARCH_ROTATION_SPEED * 0.35))
                     if left_turn:
-                        self.set_motors(
-                            SEARCH_ROTATION_SPEED,
-                            False,
-                            SEARCH_ROTATION_SPEED,
-                            True,
+                        self._set_forward_diff_turn(
+                            "right",
+                            sweep_fast,
+                            sweep_slow,
                             cmd_type="phase4_search_sweep",
                         )
                     else:
-                        self.set_motors(
-                            SEARCH_ROTATION_SPEED,
-                            True,
-                            SEARCH_ROTATION_SPEED,
-                            False,
+                        self._set_forward_diff_turn(
+                            "left",
+                            sweep_fast,
+                            sweep_slow,
                             cmd_type="phase4_search_sweep",
                         )
             elif phase == Phase.PHASE5:

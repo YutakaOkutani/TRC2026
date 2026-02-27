@@ -38,6 +38,7 @@ PIN_PH2 = 17  # Phase (Direction)
 PWM_FREQ = 1000  # PWM Frequency in Hz
 DEFAULT_SPEED = 50  # Default duty for manual control (0-100)
 COMMAND_BUFFER_SEC = 0.25  # Delay before applying a new command to avoid regen spikes
+TURN_DIFF_RATIO = 0.35
 
 # gpiozero devices (created in setup())
 pin_factory = None
@@ -250,13 +251,19 @@ def drive_backward(speed=DEFAULT_SPEED):
 
 
 def turn_left(speed=DEFAULT_SPEED):
-    """Pivot left: left motor reverse, right motor forward."""
-    _apply_manual_drive_pattern("a", speed)
+    """Steer left with differential forward speeds (no reverse)."""
+    fast = max(0.0, min(100.0, float(speed)))
+    slow = max(0.0, min(100.0, fast * TURN_DIFF_RATIO))
+    # A: left(MTR1), B: right(MTR2)
+    set_motors(slow, 1, fast, 1)
 
 
 def turn_right(speed=DEFAULT_SPEED):
-    """Pivot right: left motor forward, right motor reverse."""
-    _apply_manual_drive_pattern("d", speed)
+    """Steer right with differential forward speeds (no reverse)."""
+    fast = max(0.0, min(100.0, float(speed)))
+    slow = max(0.0, min(100.0, fast * TURN_DIFF_RATIO))
+    # A: left(MTR1), B: right(MTR2)
+    set_motors(fast, 1, slow, 1)
 
 
 def _read_key():
