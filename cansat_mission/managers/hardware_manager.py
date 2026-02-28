@@ -41,6 +41,19 @@ from cansat_mission.constants import (
 
 
 class HardwareManager:
+    def _release_camera_detector(self):
+        detector = self.devices.get(DEVICE_DETECTOR)
+        if detector is None:
+            return
+        try:
+            close_fn = getattr(detector, "close", None)
+            if callable(close_fn):
+                close_fn()
+        except Exception as exc:
+            print(f"Camera: Detector close error {exc}.")
+        finally:
+            self.devices[DEVICE_DETECTOR] = None
+
     def _setup_bno_device(self):
         try:
             bno = bno055.BNO055()
@@ -59,6 +72,7 @@ class HardwareManager:
     def _setup_camera_detector(self):
         print("Camera: Initializing...")
         try:
+            self._release_camera_detector()
             detector = dc.detector()
             roi_img = None
             if os.path.exists(ROI_PATH_1):

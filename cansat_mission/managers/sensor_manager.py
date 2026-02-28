@@ -221,12 +221,16 @@ class SensorManager:
         except Exception as exc:
             print(f"BNO055: Reinit error {exc}.")
 
-    def _try_reinit_camera(self):
+    def _try_reinit_camera(self, force=False, reason=None):
         now = time.time()
-        if now - self.camera_last_reinit < CAMERA_REINIT_INTERVAL:
+        if (not force) and now - self.camera_last_reinit < CAMERA_REINIT_INTERVAL:
             return
         self.camera_last_reinit = now
+        if reason:
+            print(f"Camera: Reinit requested ({reason}).")
         try:
+            if hasattr(self, "_release_camera_detector"):
+                self._release_camera_detector()
             detector = dc.detector()
             detector.set_roi_img(self.roi_img)
             self.devices[DEVICE_DETECTOR] = detector
@@ -417,12 +421,30 @@ class SensorManager:
                 self._last_logged_cone_method = cone_method
             self.camera_fail_count = 0
             self.camera_dead_since = None
-        except Exception:
+        except Exception as exc:
             self.camera_fail_count += 1
+            err_text = str(exc)
+            detector_error = str(getattr(detector, "last_capture_error", "") or "")
+            err_summary = detector_error or err_text or "camera_error"
+            if self.camera_fail_count == 1 or self.camera_fail_count >= CAMERA_FAIL_LIMIT:
+                print(f"Camera capture failure: {err_summary}")
+            should_force_reinit = (
+                "Input/output error" in err_summary
+                or "camera capture failed" in err_summary
+                or "init failed" in err_summary.lower()
+            )
+            if should_force_reinit:
+                if hasattr(self, "_release_camera_detector"):
+                    self._release_camera_detector()
+                self._try_reinit_camera(force=True, reason=err_summary)
             if self.camera_fail_count >= CAMERA_FAIL_LIMIT:
-                self.devices[DEVICE_DETECTOR] = None
+                if hasattr(self, "_release_camera_detector"):
+                    self._release_camera_detector()
+                else:
+                    self.devices[DEVICE_DETECTOR] = None
                 if self.camera_dead_since is None:
                     self.camera_dead_since = time.time()
+                self._try_reinit_camera(reason="camera_fail_limit")
             self.state.update_cone(
                 cone_direction=CONE_CENTER_POSITION,
                 cone_probability=0.0,

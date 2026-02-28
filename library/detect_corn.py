@@ -39,6 +39,7 @@ class detector:
         self.camera_warmup_sec = 0.8
         self.capture_retry_count = 3
         self.capture_retry_sleep = 0.2
+        self.last_capture_error = None
 
         # ROI histogram (None = default red mode)
         self.__roi_hist = None
@@ -70,15 +71,7 @@ class detector:
 
     def __init_camera(self):
         try:
-            if self.picam2 is not None:
-                try:
-                    self.picam2.stop()
-                except Exception:
-                    pass
-                try:
-                    self.picam2.close()
-                except Exception:
-                    pass
+            self.close()
 
             self.picam2 = Picamera2()
             config = self.picam2.create_preview_configuration(
@@ -94,21 +87,38 @@ class detector:
             self.picam2 = None
             return False
 
+    def close(self):
+        if self.picam2 is not None:
+            try:
+                self.picam2.stop()
+            except Exception:
+                pass
+            try:
+                self.picam2.close()
+            except Exception:
+                pass
+            self.picam2 = None
+
     def __get_camera_img(self):
         if self.picam2 is None and not self.__init_camera():
+            self.last_capture_error = "camera init failed"
             return None
 
+        last_exc = None
         for attempt in range(self.capture_retry_count):
             try:
                 raw = self.picam2.capture_array()
+                self.last_capture_error = None
                 # Standardize detector input orientation for this vehicle build (camera is mounted upside down).
                 raw = cv2.rotate(raw, cv2.ROTATE_180)
                 return cv2.blur(raw, (5, 5))
             except Exception as exc:
+                last_exc = exc
                 print(f"[Detector] Capture Error (attempt {attempt + 1}/{self.capture_retry_count}): {exc}")
                 time.sleep(self.capture_retry_sleep)
 
         self.__init_camera()
+        self.last_capture_error = str(last_exc) if last_exc is not None else "camera capture failed"
         return None
 
     def __red_mask(self, bgr_img):
