@@ -2,7 +2,6 @@ import math
 import time
 
 from cansat_mission.constants import (
-    APPROACH_TURN_GAIN,
     BASE_SPEED,
     CONE_CENTER_POSITION,
     CONE_PROBABILITY_THRESHOLD,
@@ -33,18 +32,11 @@ from cansat_mission.constants import (
     PARACHUTE_MOTOR_PULSE,
     PARACHUTE_SEPARATION_SPEED,
     PHASE4_SEARCH_SWEEP_INTERVAL,
-    PHASE4_ALIGN_ARC_BASE_SPEED,
-    PHASE4_ALIGN_ARC_DEADBAND,
-    PHASE4_ALIGN_ARC_TURN_GAIN,
     PHASE4_ALIGN_FORWARD_SPEED,
     PHASE4_ALIGN_STOP_DEADBAND,
-    PHASE4_TRACK_MIN_ROTATE_SPEED,
-    PHASE4_TRACK_ROTATE_CLAMP,
-    PHASE4_TRACK_ROTATE_GAIN,
     PHASE45_CONE_DIR_FILTER_ALPHA,
     PHASE5_BASE_SPEED,
     PHASE5_STEER_DEADBAND,
-    PHASE5_TURN_CLAMP,
     PHASE2_SPEED,
     PHASE2_STAGE_STRAIGHT,
     PHASE2_TURN_BIAS,
@@ -116,6 +108,15 @@ class MotorManager:
             self.set_motors(speed_fast, True, speed_slow, True, cmd_type=cmd_type)
         else:
             self.set_motors(speed_slow, True, speed_fast, True, cmd_type=cmd_type)
+
+    def _set_forward_pivot_turn(self, turn_side, speed_outer, cmd_type, speed_inner=0.0):
+        """Turn with one wheel driving forward and the inner wheel stopped."""
+        speed_outer = self._clamp_percent(speed_outer)
+        speed_inner = self._clamp_percent(speed_inner)
+        if turn_side == "left":
+            self.set_motors(speed_inner, True, speed_outer, True, cmd_type=cmd_type)
+        else:
+            self.set_motors(speed_outer, True, speed_inner, True, cmd_type=cmd_type)
 
     def _mag_heading_from_snapshot(self, snapshot):
         mag = snapshot.get("mag")
@@ -331,7 +332,7 @@ class MotorManager:
                     else:
                         self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="phase3_no_heading_search")
             elif phase == Phase.PHASE4:
-                # Phase4 is camera-only: no BNO heading hold.
+                # Phase4 is camera-only: keep all turning forward-only to avoid reverse torque.
                 cone_prob = snapshot.get("cone_probability", 0.0)
                 cone_reached = snapshot.get("cone_is_reached", False)
                 cone_seen = cone_reached or (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4)
@@ -351,57 +352,30 @@ class MotorManager:
                         )
                         time.sleep(MOTOR_LOOP_INTERVAL)
                         continue
-                    if abs_err <= PHASE4_ALIGN_ARC_DEADBAND:
-                        turn_val = err * PHASE4_ALIGN_ARC_TURN_GAIN
-                        turn_val = max(-PHASE4_TRACK_ROTATE_CLAMP, min(PHASE4_TRACK_ROTATE_CLAMP, turn_val))
-                        speed_l = self._clamp_percent(PHASE4_ALIGN_ARC_BASE_SPEED + turn_val)
-                        speed_r = self._clamp_percent(PHASE4_ALIGN_ARC_BASE_SPEED - turn_val)
-                        self.set_motors(speed_l, True, speed_r, True, cmd_type="phase4_camera_arc_align")
-                        time.sleep(MOTOR_LOOP_INTERVAL)
-                        continue
-                    turn_val = err * PHASE4_TRACK_ROTATE_GAIN
-                    turn_val = max(-PHASE4_TRACK_ROTATE_CLAMP, min(PHASE4_TRACK_ROTATE_CLAMP, turn_val))
-                    rotate_speed = self._clamp_percent(abs(turn_val))
-                    if rotate_speed < PHASE4_TRACK_MIN_ROTATE_SPEED:
-                        rotate_speed = PHASE4_TRACK_MIN_ROTATE_SPEED
-                    rotate_slow = self._clamp_percent(max(0.0, rotate_speed * 0.1))
-                    if turn_val >= 0:
-                        self._set_forward_diff_turn(
-                            "left",
-                            rotate_speed,
-                            rotate_slow,
-                            cmd_type="phase4_camera_align",
-                        )
-                    else:
-                        self._set_forward_diff_turn(
-                            "right",
-                            rotate_speed,
-                            rotate_slow,
-                            cmd_type="phase4_camera_align",
-                        )
+                    turn_side = "right" if err > 0 else "left"
+                    self._set_forward_pivot_turn(
+                        turn_side,
+                        PHASE4_ALIGN_FORWARD_SPEED,
+                        cmd_type="phase4_camera_pivot_align",
+                    )
                 else:
                     self._update_phase45_filtered_cone_dir(cone_direction, False)
-                    # Sweep search by alternating rotation direction at fixed intervals
-                    # (approx. half-turn each segment; tune interval on hardware).
+                    # Sweep search by alternating forward-only pivot direction.
                     elapsed = 0.0
                     if getattr(self, "time_start_searching_cone", 0.0):
                         elapsed = time.time() - self.time_start_searching_cone
                     left_turn = int(elapsed // PHASE4_SEARCH_SWEEP_INTERVAL) % 2 == 0
-                    sweep_fast = self._clamp_percent(SEARCH_ROTATION_SPEED)
-                    sweep_slow = self._clamp_percent(max(0.0, SEARCH_ROTATION_SPEED * 0.35))
                     if left_turn:
-                        self._set_forward_diff_turn(
-                            "right",
-                            sweep_fast,
-                            sweep_slow,
-                            cmd_type="phase4_search_sweep",
+                        self._set_forward_pivot_turn(
+                            "left",
+                            SEARCH_ROTATION_SPEED,
+                            cmd_type="phase4_search_pivot",
                         )
                     else:
-                        self._set_forward_diff_turn(
-                            "left",
-                            sweep_fast,
-                            sweep_slow,
-                            cmd_type="phase4_search_sweep",
+                        self._set_forward_pivot_turn(
+                            "right",
+                            SEARCH_ROTATION_SPEED,
+                            cmd_type="phase4_search_pivot",
                         )
             elif phase == Phase.PHASE5:
                 cone_prob = snapshot.get("cone_probability", 0.0)
@@ -411,12 +385,20 @@ class MotorManager:
                 steer_dir = filtered_dir if filtered_dir is not None else CONE_CENTER_POSITION
                 err = steer_dir - CONE_CENTER_POSITION
                 if abs(err) <= PHASE5_STEER_DEADBAND:
-                    err = 0.0
-                turn_cam = err * APPROACH_TURN_GAIN
-                turn_total = max(-PHASE5_TURN_CLAMP, min(PHASE5_TURN_CLAMP, turn_cam))
-                speed_l = self._clamp_percent(PHASE5_BASE_SPEED + turn_total)
-                speed_r = self._clamp_percent(PHASE5_BASE_SPEED - turn_total)
-                self.set_motors(speed_l, True, speed_r, True, cmd_type="phase5_approach_camera")
+                    self.set_motors(
+                        PHASE5_BASE_SPEED,
+                        True,
+                        PHASE5_BASE_SPEED,
+                        True,
+                        cmd_type="phase5_approach_forward",
+                    )
+                else:
+                    turn_side = "right" if err > 0 else "left"
+                    self._set_forward_pivot_turn(
+                        turn_side,
+                        PHASE5_BASE_SPEED,
+                        cmd_type="phase5_approach_pivot",
+                    )
 
             time.sleep(MOTOR_LOOP_INTERVAL)
         self.stop_motors()
