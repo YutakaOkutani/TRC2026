@@ -2,6 +2,7 @@ import math
 import time
 
 from cansat_mission.constants import (
+    APPROACH_TURN_GAIN,
     BASE_SPEED,
     CONE_CENTER_POSITION,
     CONE_PROBABILITY_THRESHOLD,
@@ -37,6 +38,7 @@ from cansat_mission.constants import (
     PHASE45_CONE_DIR_FILTER_ALPHA,
     PHASE5_BASE_SPEED,
     PHASE5_STEER_DEADBAND,
+    PHASE5_TURN_CLAMP,
     PHASE2_SPEED,
     PHASE2_STAGE_STRAIGHT,
     PHASE2_TURN_BIAS,
@@ -360,23 +362,13 @@ class MotorManager:
                     )
                 else:
                     self._update_phase45_filtered_cone_dir(cone_direction, False)
-                    # Sweep search by alternating forward-only pivot direction.
-                    elapsed = 0.0
-                    if getattr(self, "time_start_searching_cone", 0.0):
-                        elapsed = time.time() - self.time_start_searching_cone
-                    left_turn = int(elapsed // PHASE4_SEARCH_SWEEP_INTERVAL) % 2 == 0
-                    if left_turn:
-                        self._set_forward_pivot_turn(
-                            "left",
-                            SEARCH_ROTATION_SPEED,
-                            cmd_type="phase4_search_pivot",
-                        )
-                    else:
-                        self._set_forward_pivot_turn(
-                            "right",
-                            SEARCH_ROTATION_SPEED,
-                            cmd_type="phase4_search_pivot",
-                        )
+                    # Keep rotating in one direction so the rover can sweep through 180 deg
+                    # instead of dithering around the initial heading.
+                    self._set_forward_pivot_turn(
+                        "left",
+                        SEARCH_ROTATION_SPEED,
+                        cmd_type="phase4_search_pivot",
+                    )
             elif phase == Phase.PHASE5:
                 cone_prob = snapshot.get("cone_probability", 0.0)
                 cone_reached = snapshot.get("cone_is_reached", False)
@@ -393,12 +385,29 @@ class MotorManager:
                         cmd_type="phase5_approach_forward",
                     )
                 else:
-                    turn_side = "right" if err > 0 else "left"
-                    self._set_forward_pivot_turn(
-                        turn_side,
-                        PHASE5_BASE_SPEED,
-                        cmd_type="phase5_approach_pivot",
+                    turn_total = self._clamp_percent(
+                        min(PHASE5_TURN_CLAMP, abs(err) * APPROACH_TURN_GAIN)
                     )
+                    inner_speed = self._clamp_percent(
+                        max(PHASE5_BASE_SPEED - turn_total, PHASE5_BASE_SPEED * 0.55)
+                    )
+                    outer_speed = self._clamp_percent(PHASE5_BASE_SPEED + turn_total)
+                    if err > 0:
+                        self.set_motors(
+                            outer_speed,
+                            True,
+                            inner_speed,
+                            True,
+                            cmd_type="phase5_approach_steer_right",
+                        )
+                    else:
+                        self.set_motors(
+                            inner_speed,
+                            True,
+                            outer_speed,
+                            True,
+                            cmd_type="phase5_approach_steer_left",
+                        )
 
             time.sleep(MOTOR_LOOP_INTERVAL)
         self.stop_motors()
