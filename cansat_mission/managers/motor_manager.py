@@ -34,6 +34,7 @@ from cansat_mission.constants import (
     PARACHUTE_SEPARATION_SPEED,
     PHASE4_SEARCH_SWEEP_INTERVAL,
     PHASE4_ALIGN_FORWARD_SPEED,
+    PHASE4_ALIGN_PIVOT_SPEED,
     PHASE4_ALIGN_STOP_DEADBAND,
     PHASE45_CONE_DIR_FILTER_ALPHA,
     PHASE5_BASE_SPEED,
@@ -357,7 +358,7 @@ class MotorManager:
                     turn_side = "right" if err > 0 else "left"
                     self._set_forward_pivot_turn(
                         turn_side,
-                        PHASE4_ALIGN_FORWARD_SPEED,
+                        PHASE4_ALIGN_PIVOT_SPEED,
                         cmd_type="phase4_camera_pivot_align",
                     )
                 else:
