@@ -106,6 +106,8 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.phase4_detect_confirm_marker = None
         self.bno_heading_offset_deg = float(GPS_HEADING_OFFSET)
         self.bno_heading_offset_valid = False
+        self.mag_heading_offset_deg = 0.0
+        self.mag_heading_offset_valid = False
         self.mission_start_time = None
         self.phase_entry_time = None
         self.last_phase_observed = None
@@ -296,12 +298,39 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
             self.bno_heading_offset_deg = self._normalize_heading_deg(observed_offset)
             self.bno_heading_offset_valid = True
 
+    def _update_mag_heading_offset_from_gps(self, gps_heading, mag_heading):
+        gps_heading = self._normalize_heading_deg(gps_heading)
+        mag_heading = self._normalize_heading_deg(mag_heading)
+        if gps_heading is None or mag_heading is None:
+            return
+
+        observed_offset = self._angle_diff_deg(gps_heading, mag_heading)
+        if self.mag_heading_offset_valid:
+            offset_delta = self._angle_diff_deg(observed_offset, self.mag_heading_offset_deg)
+            max_step = max(1.0, float(PHASE3_BNO_GPS_OFFSET_MAX_STEP_DEG))
+            offset_delta = max(-max_step, min(max_step, offset_delta))
+            alpha = max(0.0, min(1.0, float(PHASE3_BNO_GPS_OFFSET_ALPHA)))
+            self.mag_heading_offset_deg = self._normalize_heading_deg(
+                self.mag_heading_offset_deg + offset_delta * alpha
+            )
+        else:
+            self.mag_heading_offset_deg = self._normalize_heading_deg(observed_offset)
+            self.mag_heading_offset_valid = True
+
     def _bno_heading_aligned_to_gps(self, snapshot):
         bno_heading = self._normalize_heading_deg(snapshot.get("angle"))
         if bno_heading is None:
             return None
         offset = self.bno_heading_offset_deg if self.bno_heading_offset_valid else GPS_HEADING_OFFSET
         return self._normalize_heading_deg(bno_heading + offset)
+
+    def _mag_heading_aligned_to_gps(self, mag_heading):
+        mag_heading = self._normalize_heading_deg(mag_heading)
+        if mag_heading is None:
+            return None
+        if not self.mag_heading_offset_valid:
+            return mag_heading
+        return self._normalize_heading_deg(mag_heading + self.mag_heading_offset_deg)
 
     def _weighted_heading(self, snapshot):
         weights = []

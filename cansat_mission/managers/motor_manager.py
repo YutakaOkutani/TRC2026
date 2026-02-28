@@ -148,6 +148,13 @@ class MotorManager:
         # 3) Fall back to GPS-derived course only when IMU heading is unavailable.
         mag_heading = self._mag_heading_from_snapshot(snapshot)
         if mag_heading is not None:
+            if snapshot.get("gps_heading_valid", False) and hasattr(self, "_update_mag_heading_offset_from_gps"):
+                self._update_mag_heading_offset_from_gps(snapshot.get("gps_heading"), mag_heading)
+            if hasattr(self, "_mag_heading_aligned_to_gps"):
+                aligned = self._mag_heading_aligned_to_gps(mag_heading)
+                if aligned is not None:
+                    source = "MAG_ALIGNED" if getattr(self, "mag_heading_offset_valid", False) else "MAG"
+                    return aligned, source
             return mag_heading, "MAG"
 
         try:
