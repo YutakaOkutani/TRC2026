@@ -44,8 +44,12 @@ from cansat_mission.constants import (
     PHASE2_STAGE_STRAIGHT,
     PHASE2_TURN_BIAS,
     PHASE2_TURN_INTERVAL,
+    PHASE2_RAMP_TIME,
+    PHASE3_FORWARD_RAMP_TIME,
     PHASE3_HEADING_DEADBAND_DEG,
+    PHASE3_TURN_FULL_ERROR_DEG,
     PHASE3_TURN_FAST_SPEED,
+    PHASE3_TURN_RAMP_TIME,
     PHASE3_TURN_SLOW_SPEED,
     PHASE3_NO_HEADING_TURN_INTERVAL,
     PHASES_SKIP_OBSTACLE,
@@ -103,14 +107,14 @@ class MotorManager:
     def _shutdown_active(self):
         return bool(getattr(self, "_shutdown_requested", False))
 
-    def _set_forward_diff_turn(self, fast_side, speed_fast, speed_slow, cmd_type):
+    def _set_forward_diff_turn(self, fast_side, speed_fast, speed_slow, cmd_type, ramp_time=MOTOR_RAMP_TIME):
         """Steer with differential forward speeds only (no reverse)."""
         speed_fast = self._clamp_percent(speed_fast)
         speed_slow = self._clamp_percent(speed_slow)
         if fast_side == "left":
-            self.set_motors(speed_fast, True, speed_slow, True, cmd_type=cmd_type)
+            self.set_motors(speed_fast, True, speed_slow, True, ramp_time=ramp_time, cmd_type=cmd_type)
         else:
-            self.set_motors(speed_slow, True, speed_fast, True, cmd_type=cmd_type)
+            self.set_motors(speed_slow, True, speed_fast, True, ramp_time=ramp_time, cmd_type=cmd_type)
 
     def _set_forward_pivot_turn(self, turn_side, speed_outer, cmd_type, speed_inner=0.0):
         """Turn with one wheel driving forward and the inner wheel stopped."""
@@ -209,6 +213,20 @@ class MotorManager:
         heading, _ = self._phase3_heading(snapshot)
         return heading
 
+    def _phase3_turn_speeds(self, diff_deg):
+        base = self._clamp_percent(BASE_SPEED)
+        fast = self._clamp_percent(PHASE3_TURN_FAST_SPEED)
+        slow = self._clamp_percent(PHASE3_TURN_SLOW_SPEED)
+        abs_diff = abs(float(diff_deg))
+        deadband = max(0.0, float(PHASE3_HEADING_DEADBAND_DEG))
+        full_error = max(deadband + 1.0, float(PHASE3_TURN_FULL_ERROR_DEG))
+        if abs_diff <= deadband:
+            return base, base
+        ratio = min(1.0, max(0.0, (abs_diff - deadband) / (full_error - deadband)))
+        outer_speed = self._clamp_percent(base + (fast - base) * ratio)
+        inner_speed = self._clamp_percent(base - (base - slow) * ratio)
+        return outer_speed, inner_speed
+
     def _reset_phase45_camera_track(self):
         self.phase45_filtered_cone_dir = None
         self.phase45_last_seen_time = None
@@ -296,7 +314,14 @@ class MotorManager:
 
             if phase == Phase.PHASE2:
                 if self.phase2_stage == PHASE2_STAGE_STRAIGHT:
-                    self.set_motors(PHASE2_SPEED, True, PHASE2_SPEED, True, cmd_type="phase2_straight")
+                    self.set_motors(
+                        PHASE2_SPEED,
+                        True,
+                        PHASE2_SPEED,
+                        True,
+                        ramp_time=PHASE2_RAMP_TIME,
+                        cmd_type="phase2_straight",
+                    )
                 else:
                     elapsed = 0.0
                     if self.phase2_stage_start is not None:
@@ -310,7 +335,14 @@ class MotorManager:
                     else:
                         speed_l = self._clamp_percent(base + bias)
                         speed_r = self._clamp_percent(base - bias)
-                    self.set_motors(speed_l, True, speed_r, True, cmd_type="phase2_fig8")
+                    self.set_motors(
+                        speed_l,
+                        True,
+                        speed_r,
+                        True,
+                        ramp_time=PHASE2_RAMP_TIME,
+                        cmd_type="phase2_fig8",
+                    )
                 time.sleep(MOTOR_LOOP_INTERVAL)
                 continue
 
@@ -322,25 +354,57 @@ class MotorManager:
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
                     diff = self._angle_diff_deg(target_heading, nav_heading)
-                    base = self._clamp_percent(BASE_SPEED)
                     if abs(diff) <= PHASE3_HEADING_DEADBAND_DEG:
-                        self.set_motors(base, True, base, True, cmd_type="phase3_gps_forward")
+                        base = self._clamp_percent(BASE_SPEED)
+                        self.set_motors(
+                            base,
+                            True,
+                            base,
+                            True,
+                            ramp_time=PHASE3_FORWARD_RAMP_TIME,
+                            cmd_type="phase3_gps_forward",
+                        )
                     else:
+                        outer_speed, inner_speed = self._phase3_turn_speeds(diff)
                         if diff > 0:
                             # Need clockwise/right turn: slow right wheel, fast left wheel.
-                            self._set_forward_diff_turn("left", turn_fast, turn_slow, cmd_type="phase3_gps_turn")
+                            self._set_forward_diff_turn(
+                                "left",
+                                outer_speed,
+                                inner_speed,
+                                cmd_type="phase3_gps_turn",
+                                ramp_time=PHASE3_TURN_RAMP_TIME,
+                            )
                         else:
                             # Need counter-clockwise/left turn: slow left wheel, fast right wheel.
-                            self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="phase3_gps_turn")
+                            self._set_forward_diff_turn(
+                                "right",
+                                outer_speed,
+                                inner_speed,
+                                cmd_type="phase3_gps_turn",
+                                ramp_time=PHASE3_TURN_RAMP_TIME,
+                            )
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
                     elapsed = time.time() - self.phase3_no_heading_start
                     left_turn = int(elapsed // PHASE3_NO_HEADING_TURN_INTERVAL) % 2 == 0
                     if left_turn:
-                        self._set_forward_diff_turn("left", turn_fast, turn_slow, cmd_type="phase3_no_heading_search")
+                        self._set_forward_diff_turn(
+                            "left",
+                            turn_fast,
+                            turn_slow,
+                            cmd_type="phase3_no_heading_search",
+                            ramp_time=PHASE3_TURN_RAMP_TIME,
+                        )
                     else:
-                        self._set_forward_diff_turn("right", turn_fast, turn_slow, cmd_type="phase3_no_heading_search")
+                        self._set_forward_diff_turn(
+                            "right",
+                            turn_fast,
+                            turn_slow,
+                            cmd_type="phase3_no_heading_search",
+                            ramp_time=PHASE3_TURN_RAMP_TIME,
+                        )
             elif phase == Phase.PHASE4:
                 # Phase4 is camera-only: keep all turning forward-only to avoid reverse torque.
                 cone_prob = snapshot.get("cone_probability", 0.0)
