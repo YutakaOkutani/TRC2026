@@ -22,6 +22,13 @@ def clear_screen():
         os.system("clear")
 
 
+def _coordinate_display(fix, value_key, text_key):
+    text_value = fix.get(text_key)
+    if text_value:
+        return text_value
+    return f"{float(fix[value_key]):.8f}"
+
+
 def read_raw_nmea(duration_seconds=10.0):
     print("=== RAW GPS INPUT PROBE ===")
     print(f"Duration: {duration_seconds}s")
@@ -85,8 +92,8 @@ def main():
             print("Stable GPS Fix Acquired")
             print(f"  Serial          : {fix.get('port')} @ {fix.get('baud')}")
             print(f"  Timestamp       : {fix.get('timestamp', '')}")
-            print(f"  Latitude        : {fix['lat']:.6f}")
-            print(f"  Longitude       : {fix['lng']:.6f}")
+            print(f"  Latitude        : {_coordinate_display(fix, 'lat', 'lat_text')}")
+            print(f"  Longitude       : {_coordinate_display(fix, 'lng', 'lng_text')}")
             print(f"  Altitude (GGA)  : {fix['altitude']} m")
             print(f"  Fix Quality     : {fix.get('gps_qual')}")
             print(f"  Satellites      : {fix.get('num_sats')}")

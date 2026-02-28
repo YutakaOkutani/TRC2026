@@ -1,4 +1,5 @@
 import time
+from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
 
 import pynmea2
@@ -143,6 +144,40 @@ def apply_gps_coordinate_offset(lat, lng):
     return float(lat) + float(GPS_COORD_LAT_OFFSET_DEG), float(lng) + float(GPS_COORD_LNG_OFFSET_DEG)
 
 
+def _decimal_coordinate_from_dm(dm_value, direction, degree_digits, offset_deg=0.0):
+    """Convert NMEA ddmm.mmmm text into a decimal-degree string without truncating source precision."""
+    if not dm_value or "." not in dm_value:
+        return None
+
+    try:
+        deg_text = dm_value[:degree_digits]
+        min_text = dm_value[degree_digits:]
+        degrees = Decimal(deg_text)
+        minutes = Decimal(min_text)
+        decimal_value = degrees + (minutes / Decimal("60"))
+        if direction in ("S", "W"):
+            decimal_value = -decimal_value
+        decimal_value += Decimal(str(offset_deg))
+    except (InvalidOperation, ValueError):
+        return None
+
+    frac_digits = max(0, len(min_text.partition(".")[2]))
+    output_places = max(6, frac_digits + 2)
+    quantum = Decimal(1).scaleb(-output_places)
+    with localcontext() as ctx:
+        ctx.prec = max(28, output_places + 8)
+        quantized = decimal_value.quantize(quantum)
+    return format(quantized, f".{output_places}f")
+
+
+def format_latitude_from_nmea(dm_value, direction, offset_deg=0.0):
+    return _decimal_coordinate_from_dm(dm_value, direction, degree_digits=2, offset_deg=offset_deg)
+
+
+def format_longitude_from_nmea(dm_value, direction, offset_deg=0.0):
+    return _decimal_coordinate_from_dm(dm_value, direction, degree_digits=3, offset_deg=offset_deg)
+
+
 def parse_gga_sentence(line):
     if not line or not line.startswith(NMEA_GGA_PREFIXES):
         return None
@@ -163,6 +198,8 @@ def parse_gga_sentence(line):
         "msg": msg,
         "lat": lat_corr,
         "lng": lng_corr,
+        "lat_text": format_latitude_from_nmea(getattr(msg, "lat", None), getattr(msg, "lat_dir", None), GPS_COORD_LAT_OFFSET_DEG),
+        "lng_text": format_longitude_from_nmea(getattr(msg, "lon", None), getattr(msg, "lon_dir", None), GPS_COORD_LNG_OFFSET_DEG),
         "gps_qual": getattr(msg, "gps_qual", None),
         "num_sats": getattr(msg, "num_sats", None),
         "hdop": getattr(msg, "horizontal_dil", None),
@@ -279,6 +316,8 @@ class RobustGPSReader:
         return {
             "lat": lat,
             "lng": lng,
+            "lat_text": parsed.get("lat_text"),
+            "lng_text": parsed.get("lng_text"),
             "gps_qual": gps_qual,
             "num_sats": num_sats,
             "hdop": hdop,
