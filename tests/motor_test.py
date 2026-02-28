@@ -256,7 +256,7 @@ def turn_left(speed=DEFAULT_SPEED):
     fast = max(0.0, min(100.0, float(speed)))
     slow = max(0.0, min(100.0, fast * MANUAL_TURN_SPEED_RATIO))
     # A: MTR1, B: MTR2
-    set_motors(fast, 1, slow, 1)
+    set_motors(slow, 1, fast, 1)
 
 
 def turn_right(speed=DEFAULT_SPEED):
@@ -264,7 +264,7 @@ def turn_right(speed=DEFAULT_SPEED):
     fast = max(0.0, min(100.0, float(speed)))
     slow = max(0.0, min(100.0, fast * MANUAL_TURN_SPEED_RATIO))
     # A: MTR1, B: MTR2
-    set_motors(slow, 1, fast, 1)
+    set_motors(fast, 1, slow, 1)
 
 
 def _read_key():

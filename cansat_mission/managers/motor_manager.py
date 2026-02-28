@@ -92,9 +92,9 @@ def get_manual_drive_pattern(cmd, speed):
     speed_b = speed_fast
     cmd_key = (cmd or "").lower()
     if cmd_key == "a":
-        speed_b = speed_slow
-    elif cmd_key == "d":
         speed_a = speed_slow
+    elif cmd_key == "d":
+        speed_b = speed_slow
     return {
         "label": label,
         "speed_a": speed_a,
