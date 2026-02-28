@@ -303,6 +303,10 @@ class detector:
             w = max(1, int(s[cv2.CC_STAT_WIDTH]))
             h = max(1, int(s[cv2.CC_STAT_HEIGHT]))
             cx, cy = centroids[idx]
+            left = int(s[cv2.CC_STAT_LEFT])
+            top = int(s[cv2.CC_STAT_TOP])
+            right = left + w
+            bottom = top + h
             aspect = float(w) / float(h)
             aspect_diff = abs(aspect - self.cone_ratio)
             aspect_score_std = 1.0 - min(aspect_diff / max(self.ratio_thresh, 1e-6), 1.0)
@@ -310,10 +314,10 @@ class detector:
             aspect_score_far = 1.0 - min(abs(aspect - 0.24) / 0.18, 1.0)
             aspect_score = max(aspect_score_std, 0.95 * aspect_score_far)
             bbox = [
-                int(s[cv2.CC_STAT_LEFT]),
-                int(s[cv2.CC_STAT_TOP]),
-                int(s[cv2.CC_STAT_WIDTH]),
-                int(s[cv2.CC_STAT_HEIGHT]),
+                left,
+                top,
+                w,
+                h,
             ]
             contour_metrics = self.__contour_shape_metrics(labels, idx, bbox, area)
             cone_shape_score = contour_metrics["cone_shape_score"]
@@ -334,12 +338,31 @@ class detector:
                 + 0.03 * vertical_center_score
             )
             occ = area / img_size
+            edge_touch_count = 0
+            if left <= 1:
+                edge_touch_count += 1
+            if top <= 1:
+                edge_touch_count += 1
+            if right >= (self.camera_width - 1):
+                edge_touch_count += 1
+            if bottom >= (self.camera_height - 1):
+                edge_touch_count += 1
             if occ < 0.08:
                 score *= 0.60 + 0.40 * cone_shape_score
             if hue_redness_score < 0.45:
                 score *= 0.70 + 0.30 * hue_redness_score
             quality_floor = min(cone_shape_score, sv_score, hue_redness_score)
             score *= 0.52 + 0.48 * quality_floor
+            if occ < self.reached_occupancy_thresh:
+                if edge_touch_count >= 3:
+                    score *= 0.25
+                elif edge_touch_count == 2:
+                    score *= 0.45 if aspect > 1.20 else 0.62
+                elif edge_touch_count == 1 and aspect > 1.80 and cone_shape_score < 0.55:
+                    score *= 0.78
+            if aspect > 1.55 and cone_shape_score < 0.55:
+                # Wide edge-connected blobs tend to be sky/horizon after channel swap.
+                score *= 0.72
             if (
                 cone_shape_score < self.min_shape_score_strict
                 or sv_score < self.min_sv_score_strict
@@ -370,6 +393,7 @@ class detector:
                 "sv_score": sv_score,
                 "hue_redness_score": hue_redness_score,
                 "vertical_center_score": vertical_center_score,
+                "edge_touch_count": edge_touch_count,
                 "aspect": aspect,
                 "labels": labels,
             }
@@ -461,11 +485,11 @@ class detector:
         overall_score = (
             (2.0 if reached else 0.0)
             + prob
-            + min(frame_red_occupancy / 0.6, 1.0)
+            + 0.20 * min(frame_red_occupancy / 0.6, 1.0)
             + (0.1 if self.__roi_hist is not None and best_mode and "hybrid" in best_mode else 0.0)
         )
 
-        return {
+        result = {
             "variant_name": variant_name,
             "bgr_img": bgr_img,
             "projected_img": proj if proj is not None else red_mask_raw,
@@ -482,6 +506,9 @@ class detector:
             "overall_score": overall_score,
             "edge_touch_count": edge_touch,
         }
+        if best_component is not None:
+            result.update(best_component)
+        return result
 
     def detect_cone(self):
         self.is_detected = False
@@ -527,6 +554,7 @@ class detector:
             "sv": float(best.get("sv_score", 0.0)),
             "hue": float(best.get("hue_redness_score", 0.0)),
             "occ": float(best.get("occupancy", 0.0)),
+            "edge_touch": float(best.get("edge_touch_count", 0.0)),
         }
 
         if self.is_reached:
