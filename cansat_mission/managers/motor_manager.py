@@ -15,7 +15,6 @@ from cansat_mission.constants import (
     MOTOR_DIR_INVERT_1,
     MOTOR_DIR_INVERT_2,
     MANUAL_TURN_SPEED_RATIO,
-    CAMERA_MOTOR_RAMP_TIME,
     MOTOR_IDLE_SLEEP,
     MOTOR_LOOP_INTERVAL,
     MOTOR_RAMP_STEP,
@@ -113,14 +112,14 @@ class MotorManager:
         else:
             self.set_motors(speed_slow, True, speed_fast, True, cmd_type=cmd_type)
 
-    def _set_forward_pivot_turn(self, turn_side, speed_outer, cmd_type, speed_inner=0.0, ramp_time=MOTOR_RAMP_TIME):
+    def _set_forward_pivot_turn(self, turn_side, speed_outer, cmd_type, speed_inner=0.0):
         """Turn with one wheel driving forward and the inner wheel stopped."""
         speed_outer = self._clamp_percent(speed_outer)
         speed_inner = self._clamp_percent(speed_inner)
         if turn_side == "left":
-            self.set_motors(speed_inner, True, speed_outer, True, ramp_time=ramp_time, cmd_type=cmd_type)
+            self.set_motors(speed_inner, True, speed_outer, True, cmd_type=cmd_type)
         else:
-            self.set_motors(speed_outer, True, speed_inner, True, ramp_time=ramp_time, cmd_type=cmd_type)
+            self.set_motors(speed_outer, True, speed_inner, True, cmd_type=cmd_type)
 
     def _mag_heading_from_snapshot(self, snapshot):
         mag = snapshot.get("mag")
@@ -359,7 +358,6 @@ class MotorManager:
                             True,
                             PHASE4_ALIGN_FORWARD_SPEED,
                             True,
-                            ramp_time=CAMERA_MOTOR_RAMP_TIME,
                             cmd_type="phase4_camera_center_forward",
                         )
                         time.sleep(MOTOR_LOOP_INTERVAL)
@@ -368,7 +366,6 @@ class MotorManager:
                     self._set_forward_pivot_turn(
                         turn_side,
                         PHASE4_ALIGN_PIVOT_SPEED,
-                        ramp_time=CAMERA_MOTOR_RAMP_TIME,
                         cmd_type="phase4_camera_pivot_align",
                     )
                 else:
@@ -378,7 +375,6 @@ class MotorManager:
                     self._set_forward_pivot_turn(
                         "left",
                         SEARCH_ROTATION_SPEED,
-                        ramp_time=CAMERA_MOTOR_RAMP_TIME,
                         cmd_type="phase4_search_pivot",
                     )
             elif phase == Phase.PHASE5:
@@ -394,7 +390,6 @@ class MotorManager:
                         True,
                         PHASE5_BASE_SPEED,
                         True,
-                        ramp_time=CAMERA_MOTOR_RAMP_TIME,
                         cmd_type="phase5_approach_forward",
                     )
                 else:
@@ -411,7 +406,6 @@ class MotorManager:
                             True,
                             inner_speed,
                             True,
-                            ramp_time=CAMERA_MOTOR_RAMP_TIME,
                             cmd_type="phase5_approach_steer_right",
                         )
                     else:
@@ -420,7 +414,6 @@ class MotorManager:
                             True,
                             outer_speed,
                             True,
-                            ramp_time=CAMERA_MOTOR_RAMP_TIME,
                             cmd_type="phase5_approach_steer_left",
                         )
 
