@@ -12,6 +12,7 @@ from gpiozero import PWMOutputDevice, DigitalOutputDevice
 from gpiozero.pins.lgpio import LGPIOFactory
 
 from cansat_mission.constants import (
+    MANUAL_TURN_SPEED_RATIO,
     MOTOR_DIR_INVERT_1,
     MOTOR_DIR_INVERT_2,
     MOTOR_SPEED_OFFSET_1,
@@ -39,7 +40,6 @@ PWM_FREQ = 1000  # PWM Frequency in Hz
 DEFAULT_SPEED = 100  # Default duty for manual control (0-100)
 SPEED_STEP = 5  # Duty adjustment step for interactive test (0-100)
 COMMAND_BUFFER_SEC = 0.25  # Delay before applying a new command to avoid regen spikes
-TURN_DIFF_RATIO = 0.35
 
 # gpiozero devices (created in setup())
 pin_factory = None
@@ -254,17 +254,17 @@ def drive_backward(speed=DEFAULT_SPEED):
 def turn_left(speed=DEFAULT_SPEED):
     """Steer left with differential forward speeds (no reverse)."""
     fast = max(0.0, min(100.0, float(speed)))
-    slow = max(0.0, min(100.0, fast * TURN_DIFF_RATIO))
-    # A: left(MTR1), B: right(MTR2)
-    set_motors(slow, 1, fast, 1)
+    slow = max(0.0, min(100.0, fast * MANUAL_TURN_SPEED_RATIO))
+    # A: MTR1, B: MTR2
+    set_motors(fast, 1, slow, 1)
 
 
 def turn_right(speed=DEFAULT_SPEED):
     """Steer right with differential forward speeds (no reverse)."""
     fast = max(0.0, min(100.0, float(speed)))
-    slow = max(0.0, min(100.0, fast * TURN_DIFF_RATIO))
-    # A: left(MTR1), B: right(MTR2)
-    set_motors(fast, 1, slow, 1)
+    slow = max(0.0, min(100.0, fast * MANUAL_TURN_SPEED_RATIO))
+    # A: MTR1, B: MTR2
+    set_motors(slow, 1, fast, 1)
 
 
 def _read_key():

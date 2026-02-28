@@ -14,6 +14,7 @@ from cansat_mission.constants import (
     DEVICE_MOTOR_2_PWM,
     MOTOR_DIR_INVERT_1,
     MOTOR_DIR_INVERT_2,
+    MANUAL_TURN_SPEED_RATIO,
     MOTOR_IDLE_SLEEP,
     MOTOR_LOOP_INTERVAL,
     MOTOR_RAMP_STEP,
@@ -85,11 +86,20 @@ def get_manual_drive_pattern(cmd, speed):
     if pattern is None:
         return None
     label, forward_a, forward_b = pattern
+    speed_fast = float(speed)
+    speed_slow = speed_fast * MANUAL_TURN_SPEED_RATIO
+    speed_a = speed_fast
+    speed_b = speed_fast
+    cmd_key = (cmd or "").lower()
+    if cmd_key == "a":
+        speed_b = speed_slow
+    elif cmd_key == "d":
+        speed_a = speed_slow
     return {
         "label": label,
-        "speed_a": float(speed),
+        "speed_a": speed_a,
         "forward_a": bool(forward_a),
-        "speed_b": float(speed),
+        "speed_b": speed_b,
         "forward_b": bool(forward_b),
     }
 
