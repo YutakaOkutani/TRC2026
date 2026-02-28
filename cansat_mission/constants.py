@@ -27,7 +27,7 @@ TARGET_LNG = 140.858045
 MISSION_TIMEOUT_TOTAL = 18 * 60
 TIMEOUT_PHASE_0 = 5 * 60
 TIMEOUT_PHASE_1 = 30
-TIMEOUT_PHASE_2 = 2 * 60
+TIMEOUT_PHASE_2 = 30
 TIMEOUT_PHASE_3 = 5 * 60
 TIMEOUT_PHASE_4 = 60
 TIMEOUT_PHASE_5 = 45
@@ -217,7 +217,9 @@ BNO_FUSION_OK_STATES = (5, 6)
 
 # PHASE2関連定数
 PHASE2_STRAIGHT_TIME = 6.0
-PHASE2_FIG8_TIME = 25.0
+# Keep the initial straight run intact, but shorten figure-8 calibration so
+# Phase2 exits earlier when magnetometer calibration does not improve.
+PHASE2_FIG8_TIME = 15.0
 PHASE2_TURN_INTERVAL = 3.0
 PHASE2_SPEED = 80
 PHASE2_TURN_BIAS = 32
