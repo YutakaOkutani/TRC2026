@@ -217,6 +217,14 @@ BNO_CALIB_MAG_MIN = 2
 BNO_STALE_TIMEOUT = 2.0
 BNO_FREEZE_EPS = 0.001
 BNO_FUSION_OK_STATES = (5, 6)
+PHASE0_SENSOR_STALE_TIMEOUT = 1.5
+
+# BMP180関連定数
+BMP_SEA_LEVEL_PRESSURE_PA = 101325.0
+BMP_PRESSURE_MIN_VALID = 30000.0
+BMP_PRESSURE_MAX_VALID = 120000.0
+BMP_ALTITUDE_MIN_VALID = -500.0
+BMP_ALTITUDE_MAX_VALID = 10000.0
 
 # PHASE2関連定数
 PHASE2_STRAIGHT_TIME = 6.0
@@ -335,6 +343,10 @@ LOG_HEADER = [
     "ObstacleDist",
     "AngleValid",
     "BNOStaleSec",
+    "BNOAccValid",
+    "BNOAccStaleSec",
+    "BMPValid",
+    "BMPStaleSec",
     "MotorCmdType",
     "MotorCmdUpdatedElapsedSec",
     "Motor1CmdSpeed",

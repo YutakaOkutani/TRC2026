@@ -85,9 +85,13 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
             "mag": list(DEFAULT_VECTOR3),
             "angle": 0.0,
         }
+        self.bno_last_acc_time = 0.0
         self.bno_last_valid_time = 0.0
         self.bno_stale_sec = 0.0
+        self.bno_acc_stale_sec = 0.0
         self.bno_calib = dict(DEFAULT_BNO_CALIB)
+        self.bmp_last_valid_time = 0.0
+        self.bmp_stale_sec = 0.0
         self.phase2_start_time = None
         self.phase2_stage = PHASE2_STAGE_STRAIGHT
         self.phase2_stage_start = None
@@ -100,6 +104,7 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.camera_phase4_start = None
         self.camera_phase5_start = None
         self.phase5_entry_marker = None
+        self.phase0_wait_log_counter = 0
         self.obstacle_detect_count = 0
         self.phase3_no_heading_start = None
         self.phase4_detect_confirm_count = 0

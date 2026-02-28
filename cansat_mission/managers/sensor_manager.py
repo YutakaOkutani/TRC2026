@@ -10,6 +10,11 @@ from library import bno055
 from library import detect_corn as dc
 
 from cansat_mission.constants import (
+    BMP_ALTITUDE_MAX_VALID,
+    BMP_ALTITUDE_MIN_VALID,
+    BMP_PRESSURE_MAX_VALID,
+    BMP_PRESSURE_MIN_VALID,
+    BMP_SEA_LEVEL_PRESSURE_PA,
     BNO_ACC_MAX,
     BNO_ANGLE_JUMP_MAX,
     BNO_CALIB_MAG_MIN,
@@ -144,6 +149,20 @@ class SensorManager:
             f"{self._coerce_float(current_data.get('obstacle_dist', 0.0)):.2f}",
             self._coerce_int(bool(current_data.get("angle_valid", False))),
             f"{self._coerce_float(getattr(self, 'bno_stale_sec', 0.0)):.2f}",
+            self._coerce_int(
+                bool(
+                    getattr(self, "bno_last_acc_time", 0.0) > 0.0
+                    and getattr(self, "bno_acc_stale_sec", 0.0) <= BNO_STALE_TIMEOUT
+                )
+            ),
+            f"{self._coerce_float(getattr(self, 'bno_acc_stale_sec', 0.0)):.2f}",
+            self._coerce_int(
+                bool(
+                    getattr(self, "bmp_last_valid_time", 0.0) > 0.0
+                    and getattr(self, "bmp_stale_sec", 0.0) <= BNO_STALE_TIMEOUT
+                )
+            ),
+            f"{self._coerce_float(getattr(self, 'bmp_stale_sec', 0.0)):.2f}",
             str(motor_cmd.get("type", "")),
             f"{motor_cmd_updated_elapsed_sec:.2f}",
             f"{self._coerce_float(motor_cmd.get('motor1_speed', 0.0)):.2f}",
@@ -196,6 +215,29 @@ class SensorManager:
             return False
         return True
 
+    def _scalar_within(self, value, min_value, max_value):
+        try:
+            scalar = float(value)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(scalar):
+            return False
+        return min_value <= scalar <= max_value
+
+    def _mark_bno_acc_stale(self):
+        now = time.time()
+        if getattr(self, "bno_last_acc_time", 0.0) > 0.0:
+            self.bno_acc_stale_sec = max(0.0, now - self.bno_last_acc_time)
+        else:
+            self.bno_acc_stale_sec = BNO_STALE_TIMEOUT + 1.0
+
+    def _mark_bmp_stale(self):
+        now = time.time()
+        if getattr(self, "bmp_last_valid_time", 0.0) > 0.0:
+            self.bmp_stale_sec = max(0.0, now - self.bmp_last_valid_time)
+        else:
+            self.bmp_stale_sec = BNO_STALE_TIMEOUT + 1.0
+
     def _angle_jump_ok(self, angle):
         # Bootstrap the jump filter: before the first accepted sample (or after long
         # dropout), there is no reliable previous heading to compare against.
@@ -243,6 +285,7 @@ class SensorManager:
     def get_bno_data(self):
         bno_instance = self.devices.get(DEVICE_BNO)
         if bno_instance is None:
+            self._mark_bno_acc_stale()
             return None
         try:
             acc = bno_instance.getAcc()
@@ -302,6 +345,7 @@ class SensorManager:
 
             if acc_ok:
                 self.bno_last_valid["acc"] = list(acc["value"])
+                self.bno_last_acc_time = time.time()
             if gyro_ok:
                 self.bno_last_valid["gyro"] = list(gyro["value"])
             if mag_ok:
@@ -310,11 +354,15 @@ class SensorManager:
                 self.bno_last_valid["angle"] = angle_val
                 self.bno_last_valid_time = time.time()
 
-            acc_val = list(self.bno_last_valid["acc"])
+            now = time.time()
+            self._mark_bno_acc_stale()
+            acc_val = list(self.bno_last_valid["acc"]) if self.bno_last_acc_time > 0.0 else None
             gyro_val = list(self.bno_last_valid["gyro"])
             mag_val = list(self.bno_last_valid["mag"])
             angle_val = float(self.bno_last_valid["angle"])
-            fall = math.sqrt(acc_val[0] ** 2 + acc_val[1] ** 2 + acc_val[2] ** 2)
+            fall = None
+            if acc_val is not None:
+                fall = math.sqrt(acc_val[0] ** 2 + acc_val[1] ** 2 + acc_val[2] ** 2)
 
             calib_ok = calib["valid"] and calib["value"][3] >= BNO_CALIB_MAG_MIN
             # Allow heading use when Euler/system status is healthy even if magnetometer
@@ -323,7 +371,6 @@ class SensorManager:
             # sane Euler heading if it passes local consistency checks.
             angle_valid = angle_ok
             self.bno_calib = calib if calib else DEFAULT_BNO_CALIB
-            now = time.time()
             if self.bno_last_valid_time > 0:
                 self.bno_stale_sec = now - self.bno_last_valid_time
             else:
@@ -349,6 +396,7 @@ class SensorManager:
                 "gyro": gyro_val,
                 "mag": mag_val,
                 "fall": fall,
+                "acc_valid": self.bno_last_acc_time > 0.0 and self.bno_acc_stale_sec <= BNO_STALE_TIMEOUT,
                 "angle": angle_val,
                 "valid": acc_ok and gyro_ok and mag_ok,
                 "angle_valid": angle_valid,
@@ -361,15 +409,30 @@ class SensorManager:
             self.bno_fail_count += 1
             if self.bno_fail_count >= BNO_FAIL_LIMIT:
                 self._try_reinit_bno()
+            self._mark_bno_acc_stale()
             return None
 
     def get_bmp_data(self):
         bmp_instance = self.devices.get(DEVICE_BMP)
         if bmp_instance is None:
+            self._mark_bmp_stale()
             return None
         try:
-            return {"alt": bmp_instance.getAltitude(), "pres": bmp_instance.getPressure()}
+            pres = float(bmp_instance.getPressure())
+            if not self._scalar_within(pres, BMP_PRESSURE_MIN_VALID, BMP_PRESSURE_MAX_VALID):
+                self._mark_bmp_stale()
+                return None
+
+            alt = 44330.0 * (1.0 - math.pow(pres / BMP_SEA_LEVEL_PRESSURE_PA, 1.0 / 5.255))
+            if not self._scalar_within(alt, BMP_ALTITUDE_MIN_VALID, BMP_ALTITUDE_MAX_VALID):
+                self._mark_bmp_stale()
+                return None
+
+            self.bmp_last_valid_time = time.time()
+            self.bmp_stale_sec = 0.0
+            return {"alt": alt, "pres": pres, "valid": True, "stale_sec": 0.0}
         except Exception:
+            self._mark_bmp_stale()
             return None
 
     def get_sonar_data(self):

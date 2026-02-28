@@ -11,6 +11,7 @@ from cansat_mission.constants import (
     DROP_ALTITUDE_DIFF_THRESHOLD,
     IMPACT_FALL_THRESHOLD,
     LED_INTERVAL_PHASE0,
+    PHASE0_SENSOR_STALE_TIMEOUT,
     Phase,
     TIMEOUT_PHASE_0,
 )
@@ -25,37 +26,66 @@ class Phase0Handler(BasePhaseHandler):
         entry_marker = getattr(controller, "phase_entry_time", None)
         if getattr(controller, "phase0_entry_marker", None) != entry_marker:
             controller.phase0_entry_marker = entry_marker
-            controller.phase0_initial_alt = snapshot["alt"]
+            controller.phase0_initial_alt = None
+            controller.phase0_wait_log_counter = 0
             print("phase0 : falling")
-            print(f"Start Altitude: {controller.phase0_initial_alt:.2f}m")
 
         controller.toggle_led(led_red, controller.led_blink_timer, interval=LED_INTERVAL_PHASE0)
         if led_green:
             led_green.off()
 
-        initial_alt = controller.phase0_initial_alt if controller.phase0_initial_alt is not None else snapshot["alt"]
-        is_impact = snapshot["fall"] > IMPACT_FALL_THRESHOLD
-        altitude_diff = initial_alt - snapshot["alt"]
-        is_drop = altitude_diff > DROP_ALTITUDE_DIFF_THRESHOLD
+        now = time.time()
+        bmp_stale_sec = float(getattr(controller, "bmp_stale_sec", TIMEOUT_PHASE_0 + 1.0))
+        bno_acc_stale_sec = float(getattr(controller, "bno_acc_stale_sec", TIMEOUT_PHASE_0 + 1.0))
+        bmp_valid = (
+            getattr(controller, "bmp_last_valid_time", 0.0) > 0.0
+            and bmp_stale_sec <= PHASE0_SENSOR_STALE_TIMEOUT
+        )
+        acc_valid = (
+            getattr(controller, "bno_last_acc_time", 0.0) > 0.0
+            and bno_acc_stale_sec <= PHASE0_SENSOR_STALE_TIMEOUT
+            and snapshot["fall"] is not None
+        )
+
+        if bmp_valid and controller.phase0_initial_alt is None:
+            controller.phase0_initial_alt = snapshot["alt"]
+            print(f"Start Altitude: {controller.phase0_initial_alt:.2f}m")
+
+        initial_alt = controller.phase0_initial_alt
+        altitude_diff = 0.0
+        if bmp_valid and initial_alt is not None:
+            altitude_diff = initial_alt - snapshot["alt"]
+        is_drop = bmp_valid and initial_alt is not None and altitude_diff > DROP_ALTITUDE_DIFF_THRESHOLD
+        is_impact = acc_valid and snapshot["fall"] > IMPACT_FALL_THRESHOLD
+
+        if not bmp_valid or not acc_valid:
+            controller.phase0_wait_log_counter = int(getattr(controller, "phase0_wait_log_counter", 0)) + 1
+            if controller.phase0_wait_log_counter % 25 == 0:
+                print(
+                    "Phase0 sensor wait: "
+                    f"bmp_valid={int(bmp_valid)} bmp_stale={bmp_stale_sec:.2f}s "
+                    f"acc_valid={int(acc_valid)} acc_stale={bno_acc_stale_sec:.2f}s "
+                    f"alt={snapshot['alt']:.2f} fall={float(snapshot['fall'] or 0.0):.2f}"
+                )
 
         if is_drop:
             print(f"Detected Drop: {altitude_diff:.2f}m")
             controller.state.update_navigation(phase=int(Phase.PHASE1))
-            controller.time_phase1_start = time.time()
+            controller.time_phase1_start = now
             return
 
         if is_impact:
             print(f"Detected Impact: {snapshot['fall']:.2f}m/s^2")
             controller.state.update_navigation(phase=int(Phase.PHASE1))
-            controller.time_phase1_start = time.time()
+            controller.time_phase1_start = now
             return
 
         if controller.time_phase1_start is None:
-            phase0_start = entry_marker if entry_marker is not None else time.time()
-            if time.time() - phase0_start > TIMEOUT_PHASE_0:
+            phase0_start = entry_marker if entry_marker is not None else now
+            if now - phase0_start > TIMEOUT_PHASE_0:
                 print("Phase0 TIMEOUT: Force proceed (Sensor failure?)")
                 controller.state.update_navigation(phase=int(Phase.PHASE1))
-                controller.time_phase1_start = time.time()
+                controller.time_phase1_start = now
 
 
 def _print_direct_run_help():
