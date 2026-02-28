@@ -137,7 +137,7 @@ MOTOR_RAMP_STEP = 0.05
 MOTOR_DIR_INVERT_1 = False
 MOTOR_DIR_INVERT_2 = False
 # モーター個体差補正 (PWM指令値に乗算)
-MOTOR_SPEED_SCALE_1 = 0.85
+MOTOR_SPEED_SCALE_1 = 0.75
 MOTOR_SPEED_SCALE_2 = 1.00
 # モーター個体差補正 (PWM指令値に加算, scale適用後)
 # 例: MTR1がまだ速いなら MOTOR_SPEED_OFFSET_1 = -2.0 のように下げる

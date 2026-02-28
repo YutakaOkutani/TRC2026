@@ -4,7 +4,8 @@
 
 ```plaintext
 ├── analyzer/                           # ログ解析コードが入ったフォルダ
-│   ├── analyzer.py                      # ログ解析コード    
+│   ├── analyzer.py                      # ログ解析コード
+│   ├── fetch_latest_robust_log.py       # 最新のrobust_log_*.csvをPCの~/Downloadsに移動するコード     
 ├── cansat_mission/                     # ミッションコードが入ったフォルダ
 │   ├── managers/                        # センサーやモーターなどのハードウェアを管理するコード
 │       ├── __init__.py                     # マネージャコード用のディレクトリ
@@ -49,6 +50,8 @@
 │   ├── open_parachute.py                # 開傘衝撃試験用テストコード（landing_impact.py と同じ内容。ログファイルを分けるために別ファイルにしている）
 │   ├── orchestrator_phase1_to_phase7.py # フェーズ1からフェーズ7までのE2E試験用コード
 │   ├── orchestrator_phase2_to_phase3.py # フェーズ2からフェーズ3のGPS, IMU誘導デバッグ用コード
+│   ├── orchestrator_phase2_to_phase7.py # フェーズ2からフェーズ7のデバッグ用コード
+│   ├── orchestrator_phase3_to_phase4.py # フェーズ3からフェーズ4のデバッグ用コード
 │   ├── orchestrator_phase4_to_phase7.py # フェーズ4からフェーズ7のカメラ誘導デバッグ用コード
 ├── .gitignore                          # Git管理から除外するファイルのリスト
 ├── main.py                             # 本番用コード
