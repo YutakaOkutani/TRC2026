@@ -50,6 +50,8 @@ from cansat_mission.constants import (
     PHASE3_GPS_FALLBACK_DEADBAND_DEG,
     PHASE3_GPS_FALLBACK_TURN_SCALE,
     PHASE3_HEADING_DEADBAND_DEG,
+    PHASE3_MAG_STUCK_MIN_DELTA_DEG,
+    PHASE3_MAG_STUCK_TIMEOUT_SEC,
     PHASE3_TURN_RAMP_TIME,
     PHASE3_TURN_INNER_SPEED,
     PHASE3_TURN_OUTER_SPEED,
@@ -145,13 +147,45 @@ class MotorManager:
         azimuth %= 360.0
         return azimuth
 
+    def _mag_heading_is_stuck(self, mag_heading):
+        now = time.time()
+        last_heading = getattr(self, "_phase3_last_mag_heading", None)
+        last_change = float(getattr(self, "_phase3_last_mag_heading_change", 0.0))
+        if last_heading is None:
+            self._phase3_last_mag_heading = mag_heading
+            self._phase3_last_mag_heading_change = now
+            self._phase3_mag_stuck_reported = False
+            return False
+
+        delta = abs(self._angle_diff_deg(mag_heading, last_heading))
+        if delta >= float(PHASE3_MAG_STUCK_MIN_DELTA_DEG):
+            self._phase3_last_mag_heading = mag_heading
+            self._phase3_last_mag_heading_change = now
+            self._phase3_mag_stuck_reported = False
+            return False
+
+        last_cmd = str(getattr(self, "last_motor_command", {}).get("type", ""))
+        actively_turning = last_cmd == "phase3_gps_turn"
+        stuck = actively_turning and (now - last_change) >= float(PHASE3_MAG_STUCK_TIMEOUT_SEC)
+        if stuck and not getattr(self, "_phase3_mag_stuck_reported", False):
+            print(
+                "Phase3 magnetometer heading appears stuck; "
+                f"mag_heading={mag_heading:.1f} last_cmd={last_cmd} "
+                f"stuck_for={now - last_change:.2f}s"
+            )
+            self._phase3_mag_stuck_reported = True
+        return stuck
+
     def _phase3_heading(self, snapshot):
         # Phase3 heading policy (legacy-aligned with main(8).py):
         # 1) Prefer magnetometer heading (azimuth from BNO mag XY).
         # 2) Fall back to Euler heading (BNO), optionally GPS-aligned.
         # 3) Fall back to GPS-derived course only when IMU heading is unavailable.
         mag_heading = self._mag_heading_from_snapshot(snapshot)
+        mag_stuck = False
         if mag_heading is not None:
+            mag_stuck = self._mag_heading_is_stuck(mag_heading)
+        if mag_heading is not None and not mag_stuck:
             if snapshot.get("gps_heading_valid", False) and hasattr(self, "_update_mag_heading_offset_from_gps"):
                 self._update_mag_heading_offset_from_gps(snapshot, snapshot.get("gps_heading"), mag_heading)
             if hasattr(self, "_mag_heading_aligned_to_gps"):
@@ -160,6 +194,12 @@ class MotorManager:
                     source = "MAG_ALIGNED" if getattr(self, "mag_heading_offset_valid", False) else "MAG"
                     return aligned, source
             return mag_heading, "MAG"
+        if mag_heading is not None and snapshot.get("gps_heading_valid", False):
+            gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
+            if gps_heading is not None:
+                return gps_heading, "GPS_FALLBACK_MAG_STUCK"
+        if mag_stuck:
+            return None, "MAG_STUCK"
 
         try:
             angle = float(snapshot.get("angle", 0.0))
