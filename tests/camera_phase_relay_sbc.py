@@ -2,6 +2,7 @@ import argparse
 import base64
 import json
 import math
+import signal
 import socket
 import struct
 import sys
@@ -78,6 +79,7 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         self.mission_end_reason = "RUNNING"
         self.shutdown_reason = None
         self._shutdown_packet_sent = False
+        self._shutdown_requested = False
         self.phase6_exit_started_at = None
         self._last_logged_cone_method = None
 
@@ -152,6 +154,18 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
             Phase.PHASE6: Phase6Handler(),
             Phase.PHASE7: Phase7Handler(),
         }
+
+    def request_shutdown(self, reason="SBC_STOP"):
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        self.shutdown_reason = self.shutdown_reason or str(reason)
+        self.stop_event.set()
+        try:
+            self.stop_motors()
+        except Exception as exc:
+            print(f"Emergency stop failed: {exc}")
+
     def _angle_diff_deg(self, target_deg, current_deg):
         diff = target_deg - current_deg
         if diff > 180.0:
@@ -334,10 +348,9 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
                             self.shutdown_reason = self.mission_end_reason if self.mission_end_reason != "RUNNING" else "PHASE7_REACHED"
                         print(f"Final phase reached. Auto exit in {self.args.phase6_hold_sec:.1f}s")
                     elif time.time() - self.phase6_exit_started_at >= self.args.phase6_hold_sec:
-                        self.stop_event.set()
+                        self.request_shutdown(self.shutdown_reason or "PHASE6_HOLD_COMPLETE")
                 elif self.args.exit_on_goal:
-                    self.shutdown_reason = self.shutdown_reason or "EXIT_ON_GOAL"
-                    self.stop_event.set()
+                    self.request_shutdown(self.shutdown_reason or "EXIT_ON_GOAL")
                 time.sleep(0.1)
 
     def camera_debug_loop(self):
@@ -502,10 +515,9 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
             while not self.stop_event.is_set():
                 time.sleep(1.0)
         except KeyboardInterrupt:
-            self.shutdown_reason = "CTRL_C"
-            self.stop_event.set()
+            self.request_shutdown("CTRL_C")
         finally:
-            self.stop_motors()
+            self.request_shutdown(self.shutdown_reason or "RUN_EXIT")
 
 
 def parse_args():
@@ -532,7 +544,21 @@ def main():
     args.tx_hz = max(1.0, args.tx_hz)
     args.video_every = max(1, args.video_every)
     args.phase6_hold_sec = max(0.0, float(args.phase6_hold_sec))
-    RelayController(args).run()
+    controller = RelayController(args)
+
+    def _handle_signal(signum, _frame):
+        try:
+            signame = signal.Signals(signum).name
+        except Exception:
+            signame = f"SIGNAL_{signum}"
+        print(f"\nReceived {signame}. Emergency stop requested.")
+        controller.request_shutdown(signame)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _handle_signal)
+
+    controller.run()
 
 
 if __name__ == "__main__":

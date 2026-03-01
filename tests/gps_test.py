@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import argparse
 from pathlib import Path
 
 # Allow running this file directly (e.g. `python tests/gps_test.py`) by adding
@@ -65,13 +66,29 @@ def read_raw_nmea(duration_seconds=10.0):
     print("=== END RAW PROBE ===")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="GPS startup diagnostic tool")
+    parser.add_argument("--raw-probe-seconds", type=float, default=10.0)
+    parser.add_argument("--skip-raw-probe", action="store_true")
+    parser.add_argument("--update-interval", type=float, default=UPDATE_INTERVAL_SECONDS)
+    return parser.parse_args()
+
+
 def main():
-    read_raw_nmea(duration_seconds=10.0)
+    args = parse_args()
+    update_interval = max(0.5, float(args.update_interval))
+
+    if not args.skip_raw_probe:
+        read_raw_nmea(duration_seconds=max(0.0, float(args.raw_probe_seconds)))
 
     gps_reader = RobustGPSReader()
     last_print_time = 0.0
     first_fix_printed = False
 
+    if args.skip_raw_probe:
+        print("GPS monitor started without raw probe. This is the closest startup condition to mission code.")
+    else:
+        print("GPS monitor started after raw probe. Compare this against --skip-raw-probe to test startup warm-up effect.")
     print("GPS monitor (cansat_mission.gps_utils). Waiting for stable fix... Ctrl+C to exit.")
     try:
         while True:
@@ -80,7 +97,7 @@ def main():
                 continue
 
             current_time = time.time()
-            if current_time - last_print_time < UPDATE_INTERVAL_SECONDS:
+            if current_time - last_print_time < update_interval:
                 continue
             last_print_time = current_time
 
@@ -105,7 +122,7 @@ def main():
                     print(f"  HDOP            : {hdop}")
             print("-" * 40)
             print(f"Raw: {fix.get('raw', '')}")
-            print(f"({UPDATE_INTERVAL_SECONDS}秒ごとに更新。 Ctrl+Cで終了)")
+            print(f"({update_interval}秒ごとに更新。 Ctrl+Cで終了)")
             print("=" * 40)
     except KeyboardInterrupt:
         print("\nプログラムを終了します。")

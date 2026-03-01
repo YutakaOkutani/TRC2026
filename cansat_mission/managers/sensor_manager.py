@@ -40,6 +40,7 @@ from cansat_mission.constants import (
     GPS_ACTIVE_DETECT,
     GPS_BUFFER_CLEAR_INTERVAL,
     GPS_BUFFER_CLEAR_THRESHOLD,
+    GPS_DIAGNOSTIC_LOG_INTERVAL,
     GPS_FIX_LOSS_TIMEOUT,
     GPS_HEADING_BASELINE_MIN_DIST,
     GPS_HEADING_HOLD_SEC,
@@ -529,16 +530,41 @@ class SensorManager:
         last_heading = None
         last_heading_time = 0.0
         stable_count = 0
+        diag_last_log = 0.0
+        diag = {
+            "status": "OPENING",
+            "raw_lines": 0,
+            "gga_lines": 0,
+            "qual_fail": 0,
+            "speed_fail": 0,
+            "empty_reads": 0,
+            "last_line": "",
+            "last_fix_qual": 0,
+            "last_sats": 0,
+            "last_hdop": 0.0,
+        }
         while True:
             try:
                 if serial_obj is None or not serial_obj.is_open:
+                    diag["status"] = "REOPENING"
                     serial_obj, _, _ = open_gps_serial()
                     time.sleep(GPS_RECONNECT_SLEEP)
                     continue
                 now = time.time()
+                if now - diag_last_log >= GPS_DIAGNOSTIC_LOG_INTERVAL:
+                    print(
+                        "GPS diag: "
+                        f"status={diag['status']} raw={diag['raw_lines']} gga={diag['gga_lines']} "
+                        f"qual_fail={diag['qual_fail']} speed_fail={diag['speed_fail']} "
+                        f"empty={diag['empty_reads']} stable={stable_count}/{GPS_STABLE_FIX_COUNT} "
+                        f"fix={diag['last_fix_qual']} sats={diag['last_sats']} hdop={diag['last_hdop']:.2f} "
+                        f"last={diag['last_line'] or 'none'}"
+                    )
+                    diag_last_log = now
                 if last_valid_fix_time > 0 and now - last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
                     stable_count = 0
                     recent_valid_fixes = []
+                    diag["status"] = "FIX_LOST"
                     self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False, gps_speed_mps=0.0)
                 if serial_obj.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL:
                     try:
@@ -550,11 +576,17 @@ class SensorManager:
                     stable_count = 0
                 line_bytes = serial_obj.readline()
                 if not line_bytes:
+                    diag["status"] = "NO_BYTES"
+                    diag["empty_reads"] += 1
                     continue
                 line = line_bytes.decode("utf-8", errors="ignore").strip()
+                diag["raw_lines"] += 1
+                diag["last_line"] = line[:120]
                 parsed = parse_gga_sentence(line)
                 if parsed is None:
+                    diag["status"] = "NON_GGA"
                     continue
+                diag["gga_lines"] += 1
                 lat = parsed["lat"]
                 lng = parsed["lng"]
                 gps_qual = parsed["gps_qual"]
@@ -566,6 +598,9 @@ class SensorManager:
                     self.state.update_gps(lat=lat, lng=lng)
                 qual_ok, sats_ok, hdop_ok = gga_quality_ok(gps_qual, num_sats, hdop)
                 gps_fix_qual_val, gps_sats_val, gps_hdop_val = coerce_gga_metrics(gps_qual, num_sats, hdop)
+                diag["last_fix_qual"] = gps_fix_qual_val
+                diag["last_sats"] = gps_sats_val
+                diag["last_hdop"] = gps_hdop_val
                 self.state.update_gps(
                     gps_fix_qual=gps_fix_qual_val,
                     gps_sats=gps_sats_val,
@@ -574,6 +609,8 @@ class SensorManager:
 
                 if not (qual_ok and sats_ok and hdop_ok and (lat != 0.0 or lng != 0.0)):
                     stable_count = 0
+                    diag["status"] = "GGA_REJECTED"
+                    diag["qual_fail"] += 1
                     self.state.update_gps(gps_speed_mps=0.0)
                     continue
 
@@ -588,10 +625,13 @@ class SensorManager:
                             speed_ok = False
                 if not speed_ok:
                     stable_count = 0
+                    diag["status"] = "SPEED_REJECTED"
+                    diag["speed_fail"] += 1
                     self.state.update_gps(gps_speed_mps=0.0)
                     continue
 
                 stable_count += 1
+                diag["status"] = "STABILIZING"
                 last_fix_time = now
                 if stable_count >= GPS_STABLE_FIX_COUNT:
                     gps_heading = None
@@ -636,6 +676,7 @@ class SensorManager:
                         gps_sats=gps_sats_val,
                         gps_hdop=gps_hdop_val,
                     )
+                    diag["status"] = "ACTIVE"
                     last_valid_fix_time = now
                     last_valid_latlng = (lat, lng)
                 else:
@@ -648,6 +689,7 @@ class SensorManager:
                     pass
                 serial_obj = None
                 print("GPS serial error; attempting reconnect.")
+                diag["status"] = "SERIAL_ERROR"
                 time.sleep(GPS_RECONNECT_SLEEP)
 
     def camera_thread(self):

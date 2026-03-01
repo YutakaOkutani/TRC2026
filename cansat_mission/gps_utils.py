@@ -18,6 +18,8 @@ from cansat_mission.constants import (
     GPS_MIN_FIX_QUAL,
     GPS_MIN_SATELLITES,
     GPS_PROBE_SECONDS,
+    GPS_STARTUP_READ_SIZE,
+    GPS_STARTUP_SYNC_SECONDS,
     GPS_SERIAL_DISCOVERY_TIMEOUT,
     GPS_SERIAL_PORT,
     GPS_SERIAL_PORT_CANDIDATES,
@@ -57,6 +59,53 @@ def probe_nmea(serial_obj, probe_seconds=GPS_PROBE_SECONDS):
     return False, last_line
 
 
+def warmup_serial_for_nmea(serial_obj, warmup_seconds=GPS_STARTUP_SYNC_SECONDS, read_size=GPS_STARTUP_READ_SIZE):
+    start = time.time()
+    total_bytes = 0
+    approx_sentences = 0
+    last_text = ""
+    carry = ""
+
+    while time.time() - start < warmup_seconds:
+        try:
+            chunk = serial_obj.read(read_size)
+        except Exception:
+            return {
+                "ok": False,
+                "total_bytes": total_bytes,
+                "approx_sentences": approx_sentences,
+                "last_text": last_text,
+            }
+        if not chunk:
+            continue
+
+        total_bytes += len(chunk)
+        text = chunk.decode("utf-8", errors="ignore")
+        if not text:
+            continue
+
+        approx_sentences += text.count("$")
+        last_text = (last_text + text)[-160:]
+        carry += text.replace("\r", "\n")
+        while "\n" in carry:
+            line, carry = carry.split("\n", 1)
+            line = line.strip()
+            if _is_parseable_nmea(line):
+                return {
+                    "ok": True,
+                    "total_bytes": total_bytes,
+                    "approx_sentences": approx_sentences,
+                    "last_text": line,
+                }
+
+    return {
+        "ok": False,
+        "total_bytes": total_bytes,
+        "approx_sentences": approx_sentences,
+        "last_text": last_text.strip(),
+    }
+
+
 def _unique_port_candidates():
     ports = [GPS_SERIAL_PORT] + [port for port in GPS_SERIAL_PORT_CANDIDATES if port != GPS_SERIAL_PORT]
     unique = []
@@ -85,6 +134,29 @@ def open_gps_serial(log=print):
                     serial_obj.reset_input_buffer()
                 except Exception:
                     pass
+                is_primary_candidate = port == GPS_SERIAL_PORT and baud == GPS_BAUDRATE
+                if is_primary_candidate:
+                    warmup = warmup_serial_for_nmea(serial_obj)
+                    if warmup["ok"]:
+                        serial_obj.timeout = GPS_SERIAL_TIMEOUT
+                        if log:
+                            log(
+                                "GPS serial opened: "
+                                f"{port} @ {baud} after startup sync "
+                                f"({warmup['total_bytes']} bytes, ~{warmup['approx_sentences']} sentences)"
+                            )
+                        return serial_obj, port, baud
+                    if log:
+                        log(
+                            "GPS startup sync failed: "
+                            f"{port} @ {baud} "
+                            f"({warmup['total_bytes']} bytes, ~{warmup['approx_sentences']} sentences, "
+                            f"last: {warmup['last_text'] or 'none'})"
+                        )
+                    try:
+                        serial_obj.reset_input_buffer()
+                    except Exception:
+                        pass
                 ok, last_line = probe_nmea(serial_obj)
                 if ok:
                     serial_obj.timeout = GPS_SERIAL_TIMEOUT
