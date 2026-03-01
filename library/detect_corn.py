@@ -53,6 +53,11 @@ class detector:
         self.min_shape_score_strict = 0.34
         self.min_sv_score_strict = 0.26
         self.min_hue_redness_strict = 0.42
+        self.swap_rb_min_prob = 0.60
+        self.swap_rb_min_shape = 0.58
+        self.swap_rb_min_hue = 0.60
+        self.swap_rb_min_sv = 0.35
+        self.swap_rb_score_margin = 0.18
 
     def set_roi_img(self, roi):
         if roi is None:
@@ -527,13 +532,31 @@ class detector:
         if raw_img is None:
             return False
 
-        # Try both channel assumptions. Some deployments behave like RGB even with BGR888 config.
+        # Prefer the configured BGR path for this vehicle build.
+        # Keep swap_rb only as a narrow rescue path when it is much stronger.
         variant_bgr = raw_img
         variant_swap_rb = cv2.cvtColor(raw_img, cv2.COLOR_RGB2BGR)
 
         cand1 = self.__build_candidate(variant_bgr, "as_is")
         cand2 = self.__build_candidate(variant_swap_rb, "swap_rb")
-        best = cand1 if cand1["overall_score"] >= cand2["overall_score"] else cand2
+        best = cand1
+        swap_prob = float(cand2.get("probability", 0.0))
+        swap_shape = float(cand2.get("cone_shape_score", 0.0))
+        swap_hue = float(cand2.get("hue_redness_score", 0.0))
+        swap_sv = float(cand2.get("sv_score", 0.0))
+        swap_edge_touch = int(cand2.get("edge_touch_count", 0))
+        score_margin = float(cand2.get("overall_score", 0.0)) - float(cand1.get("overall_score", 0.0))
+        allow_swap_rb = (
+            cand1.get("is_reached", False) is False
+            and swap_edge_touch <= 1
+            and swap_prob >= self.swap_rb_min_prob
+            and swap_shape >= self.swap_rb_min_shape
+            and swap_hue >= self.swap_rb_min_hue
+            and swap_sv >= self.swap_rb_min_sv
+            and score_margin >= self.swap_rb_score_margin
+        )
+        if allow_swap_rb:
+            best = cand2
 
         self.input_img = best["bgr_img"]
         self.projected_img = best["projected_img"]
@@ -555,6 +578,8 @@ class detector:
             "hue": float(best.get("hue_redness_score", 0.0)),
             "occ": float(best.get("occupancy", 0.0)),
             "edge_touch": float(best.get("edge_touch_count", 0.0)),
+            "swap_margin": float(score_margin),
+            "swap_used": 1.0 if best is cand2 else 0.0,
         }
 
         if self.is_reached:

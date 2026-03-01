@@ -13,18 +13,31 @@ from cansat_mission.constants import (
     CAMERA_DEAD_TIMEOUT,
     CAMERA_PHASE4_MAX_ATTEMPTS,
     CONE_CENTER_POSITION,
+    CONE_PHASE4_CONFIRM_FRAMES,
     CONE_PHASE4_CENTER_TOLERANCE,
     CONE_PROBABILITY_THRESHOLD,
     CONE_PROBABILITY_THRESHOLD_PHASE4,
     DEVICE_LED_GREEN,
     DEVICE_LED_RED,
+    GPS_ACTIVE_DETECT,
+    GPS_PHASE45_MAX_DISTANCE,
     Phase,
     TIMEOUT_PHASE_4,
 )
+from cansat_mission.navigation import calc_distance_and_azimuth
 from cansat_mission.phases.base import BasePhaseHandler
 
 
 class Phase4Handler(BasePhaseHandler):
+    def _fallback_to_phase3(self, controller, current_snapshot, reason):
+        fallback_dir = current_snapshot["angle"] if current_snapshot["angle_valid"] else current_snapshot["direction"]
+        print(reason)
+        controller.state.update_navigation(direction=fallback_dir, phase=int(Phase.PHASE3))
+        controller.searching_flag = False
+        controller.phase4_detect_confirm_count = 0
+        controller.phase4_detect_confirm_marker = None
+        controller.time_phase3_start = time.time()
+
     def execute(self, controller, snapshot):
         led_red = controller.devices.get(DEVICE_LED_RED)
         led_green = controller.devices.get(DEVICE_LED_GREEN)
@@ -37,6 +50,25 @@ class Phase4Handler(BasePhaseHandler):
             led_red.off()
         if led_green:
             led_green.on()
+        if (
+            hasattr(controller, "target_lat")
+            and hasattr(controller, "target_lng")
+            and current_snapshot.get("gps_detect") == GPS_ACTIVE_DETECT
+        ):
+            dist_m, azimuth = calc_distance_and_azimuth(
+                current_snapshot["lat"],
+                current_snapshot["lng"],
+                controller.target_lat,
+                controller.target_lng,
+            )
+            controller.state.update_navigation(distance=dist_m, azimuth=azimuth)
+            if dist_m > GPS_PHASE45_MAX_DISTANCE:
+                self._fallback_to_phase3(
+                    controller,
+                    current_snapshot,
+                    f"Phase4 GPS fallback: target is {dist_m:.1f}m away (> {GPS_PHASE45_MAX_DISTANCE:.1f}m)",
+                )
+                return
         if not controller.searching_flag:
             controller.searching_flag = True
             controller.time_start_searching_cone = time.time()
@@ -57,11 +89,7 @@ class Phase4Handler(BasePhaseHandler):
             controller.camera_phase4_attempts >= CAMERA_PHASE4_MAX_ATTEMPTS
             or (controller.camera_phase4_start is not None and time.time() - controller.camera_phase4_start >= TIMEOUT_PHASE_4)
         ):
-            print("Camera DEAD: Fallback to Phase3 (GPS/Straight)")
-            fallback_dir = current_snapshot["angle"] if current_snapshot["angle_valid"] else current_snapshot["direction"]
-            controller.state.update_navigation(direction=fallback_dir, phase=int(Phase.PHASE3))
-            controller.searching_flag = False
-            controller.time_phase3_start = time.time()
+            self._fallback_to_phase3(controller, current_snapshot, "Camera DEAD: Fallback to Phase3 (GPS/Straight)")
             return
         # Phase4開始時は比較的近距離(数m)のため、Phase5より厳しめの
         # probability と centered 条件で Phase5 へ直接渡す。
@@ -82,11 +110,21 @@ class Phase4Handler(BasePhaseHandler):
             return
 
         if strict_detect:
-            print(f"Phase4 -> Phase5: immediate cone detect (prob={cone_prob:.2f}, dir={cone_dir_val:.2f})")
-            controller.searching_flag = False
-            controller.phase4_detect_confirm_count = 0
-            controller.phase4_detect_confirm_marker = None
-            controller.state.update_navigation(phase=int(Phase.PHASE5))
+            controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
+            if controller.phase4_detect_confirm_count >= CONE_PHASE4_CONFIRM_FRAMES:
+                print(
+                    f"Phase4 -> Phase5: confirmed cone detect x{controller.phase4_detect_confirm_count} "
+                    f"(prob={cone_prob:.2f}, dir={cone_dir_val:.2f})"
+                )
+                controller.searching_flag = False
+                controller.phase4_detect_confirm_count = 0
+                controller.phase4_detect_confirm_marker = None
+                controller.state.update_navigation(phase=int(Phase.PHASE5))
+            elif controller.led_blink_timer % 5 == 0:
+                print(
+                    f"Phase4: holding visual confirm {controller.phase4_detect_confirm_count}/{CONE_PHASE4_CONFIRM_FRAMES} "
+                    f"(prob={cone_prob:.2f}, dir={cone_dir_val:.2f})"
+                )
             return
 
         controller.phase4_detect_confirm_count = 0

@@ -32,6 +32,8 @@ from cansat_mission.constants import (
     DEVICE_MOTOR_2_PWM,
     DEVICE_SONAR,
     GPS_HEADING_OFFSET,
+    TARGET_LAT,
+    TARGET_LNG,
     HEADING_MAG_CALIB_MAX,
     HEADING_SOURCE_BNO,
     HEADING_SOURCE_GPS,
@@ -66,6 +68,8 @@ DEFAULT_START_PHASE = 4
 class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
     def __init__(self, args):
         self.args = args
+        self.target_lat = float(getattr(args, "target_lat", TARGET_LAT))
+        self.target_lng = float(getattr(args, "target_lng", TARGET_LNG))
         self.state = CanSatState()
         self.state.update_navigation(phase=int(args.start_phase))
         self.phase_entry_time = time.time()
@@ -492,6 +496,8 @@ def parse_args():
     parser.add_argument("--start-phase", type=int, default=DEFAULT_START_PHASE, choices=[4, 5, 6, 7])
     parser.add_argument("--exit-on-goal", action="store_true")
     parser.add_argument("--phase6-hold-sec", type=float, default=5.0)
+    parser.add_argument("--target-lat", type=float, default=TARGET_LAT)
+    parser.add_argument("--target-lng", type=float, default=TARGET_LNG)
     parser.add_argument("--preview-rotate-180", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--preview-swap-rb", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--camera-control-invert-x", action=argparse.BooleanOptionalAction, default=False)

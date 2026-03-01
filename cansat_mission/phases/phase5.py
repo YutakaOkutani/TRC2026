@@ -17,16 +17,25 @@ from cansat_mission.constants import (
     CONE_PROBABILITY_THRESHOLD_PHASE5,
     DEVICE_LED_GREEN,
     DEVICE_LED_RED,
+    GPS_ACTIVE_DETECT,
+    GPS_PHASE45_MAX_DISTANCE,
     LED_INTERVAL_PHASE5,
     Phase,
     TIMEOUT_PHASE_5,
 )
+from cansat_mission.navigation import calc_distance_and_azimuth
 from cansat_mission.phases.base import BasePhaseHandler
 
 PHASE5_REACH_CONFIRM_FRAMES = 8
 
 
 class Phase5Handler(BasePhaseHandler):
+    def _fallback_to_phase3(self, controller, current_snapshot, reason):
+        fallback_dir = current_snapshot["angle"] if current_snapshot["angle_valid"] else current_snapshot["direction"]
+        print(reason)
+        controller.state.update_navigation(direction=fallback_dir, phase=int(Phase.PHASE3))
+        controller.time_phase3_start = time.time()
+
     def execute(self, controller, snapshot):
         led_red = controller.devices.get(DEVICE_LED_RED)
         led_green = controller.devices.get(DEVICE_LED_GREEN)
@@ -58,6 +67,25 @@ class Phase5Handler(BasePhaseHandler):
                 led_green.on()
 
         current_snapshot = controller.state.snapshot()
+        if (
+            hasattr(controller, "target_lat")
+            and hasattr(controller, "target_lng")
+            and current_snapshot.get("gps_detect") == GPS_ACTIVE_DETECT
+        ):
+            dist_m, azimuth = calc_distance_and_azimuth(
+                current_snapshot["lat"],
+                current_snapshot["lng"],
+                controller.target_lat,
+                controller.target_lng,
+            )
+            controller.state.update_navigation(distance=dist_m, azimuth=azimuth)
+            if dist_m > GPS_PHASE45_MAX_DISTANCE:
+                self._fallback_to_phase3(
+                    controller,
+                    current_snapshot,
+                    f"Phase5 GPS fallback: target is {dist_m:.1f}m away (> {GPS_PHASE45_MAX_DISTANCE:.1f}m)",
+                )
+                return
         is_reach = current_snapshot["cone_is_reached"]
         # 近距離時はprobabilityが落ちても、到達判定が立っていれば見失い扱いにしない
         cone_prob = current_snapshot["cone_probability"]
@@ -71,9 +99,7 @@ class Phase5Handler(BasePhaseHandler):
             controller.camera_phase5_attempts >= CAMERA_PHASE5_MAX_ATTEMPTS
             or (controller.camera_phase5_start is not None and now - controller.camera_phase5_start >= TIMEOUT_PHASE_5)
         ):
-            print("Camera DEAD: Fallback to Phase3 (GPS/Straight)")
-            fallback_dir = current_snapshot["angle"] if current_snapshot["angle_valid"] else current_snapshot["direction"]
-            controller.state.update_navigation(direction=fallback_dir, phase=int(Phase.PHASE3))
+            self._fallback_to_phase3(controller, current_snapshot, "Camera DEAD: Fallback to Phase3 (GPS/Straight)")
             return
 
         if not is_det:
