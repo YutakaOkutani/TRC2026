@@ -46,6 +46,8 @@ from cansat_mission.constants import (
     PHASE2_TURN_INTERVAL,
     PHASE2_RAMP_TIME,
     PHASE3_FORWARD_RAMP_TIME,
+    PHASE3_GPS_FALLBACK_DEADBAND_DEG,
+    PHASE3_GPS_FALLBACK_TURN_SCALE,
     PHASE3_HEADING_DEADBAND_DEG,
     PHASE3_TURN_FULL_ERROR_DEG,
     PHASE3_TURN_FAST_SPEED,
@@ -152,7 +154,7 @@ class MotorManager:
         mag_heading = self._mag_heading_from_snapshot(snapshot)
         if mag_heading is not None:
             if snapshot.get("gps_heading_valid", False) and hasattr(self, "_update_mag_heading_offset_from_gps"):
-                self._update_mag_heading_offset_from_gps(snapshot.get("gps_heading"), mag_heading)
+                self._update_mag_heading_offset_from_gps(snapshot, snapshot.get("gps_heading"), mag_heading)
             if hasattr(self, "_mag_heading_aligned_to_gps"):
                 aligned = self._mag_heading_aligned_to_gps(mag_heading)
                 if aligned is not None:
@@ -213,18 +215,21 @@ class MotorManager:
         heading, _ = self._phase3_heading(snapshot)
         return heading
 
-    def _phase3_turn_speeds(self, diff_deg):
+    def _phase3_turn_speeds(self, diff_deg, deadband_deg=PHASE3_HEADING_DEADBAND_DEG, turn_scale=1.0):
         base = self._clamp_percent(BASE_SPEED)
         fast = self._clamp_percent(PHASE3_TURN_FAST_SPEED)
         slow = self._clamp_percent(PHASE3_TURN_SLOW_SPEED)
         abs_diff = abs(float(diff_deg))
-        deadband = max(0.0, float(PHASE3_HEADING_DEADBAND_DEG))
+        deadband = max(0.0, float(deadband_deg))
         full_error = max(deadband + 1.0, float(PHASE3_TURN_FULL_ERROR_DEG))
+        scale = max(0.0, min(1.0, float(turn_scale)))
+        effective_fast = base + (fast - base) * scale
+        effective_slow = base - (base - slow) * scale
         if abs_diff <= deadband:
             return base, base
         ratio = min(1.0, max(0.0, (abs_diff - deadband) / (full_error - deadband)))
-        outer_speed = self._clamp_percent(base + (fast - base) * ratio)
-        inner_speed = self._clamp_percent(base - (base - slow) * ratio)
+        outer_speed = self._clamp_percent(base + (effective_fast - base) * ratio)
+        inner_speed = self._clamp_percent(base - (base - effective_slow) * ratio)
         return outer_speed, inner_speed
 
     def _reset_phase45_camera_track(self):
@@ -348,13 +353,18 @@ class MotorManager:
 
             if phase == Phase.PHASE3:
                 target_heading = direction
-                nav_heading, _heading_source = self._phase3_heading(snapshot)
+                nav_heading, heading_source = self._phase3_heading(snapshot)
                 turn_fast = self._clamp_percent(PHASE3_TURN_FAST_SPEED)
                 turn_slow = self._clamp_percent(PHASE3_TURN_SLOW_SPEED)
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
                     diff = self._angle_diff_deg(target_heading, nav_heading)
-                    if abs(diff) <= PHASE3_HEADING_DEADBAND_DEG:
+                    heading_deadband = PHASE3_HEADING_DEADBAND_DEG
+                    turn_scale = 1.0
+                    if heading_source == "GPS_FALLBACK":
+                        heading_deadband = max(heading_deadband, PHASE3_GPS_FALLBACK_DEADBAND_DEG)
+                        turn_scale = PHASE3_GPS_FALLBACK_TURN_SCALE
+                    if abs(diff) <= heading_deadband:
                         base = self._clamp_percent(BASE_SPEED)
                         self.set_motors(
                             base,
@@ -365,7 +375,11 @@ class MotorManager:
                             cmd_type="phase3_gps_forward",
                         )
                     else:
-                        outer_speed, inner_speed = self._phase3_turn_speeds(diff)
+                        outer_speed, inner_speed = self._phase3_turn_speeds(
+                            diff,
+                            deadband_deg=heading_deadband,
+                            turn_scale=turn_scale,
+                        )
                         if diff > 0:
                             # Need clockwise/right turn: slow right wheel, fast left wheel.
                             self._set_forward_diff_turn(
