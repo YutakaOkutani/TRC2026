@@ -64,7 +64,11 @@ class detector:
         self.min_shape_score_strict = 0.26
         self.min_sv_score_strict = 0.18
         self.min_hue_redness_strict = 0.34
-        self.variant_selection_margin = 0.04
+        self.variant_selection_margin = 0.12
+        self.allow_swap_rb_rescue = False
+        self.upper_sky_reject_top_frac = 0.38
+        self.upper_sky_reject_width_frac = 0.18
+        self.lower_frame_bonus_start = 0.52
 
     def __roi_focus_mask(self, bgr_img, label):
         alpha_mask = None
@@ -449,13 +453,15 @@ class detector:
             center_score = 1.0 - min(abs((cx / self.camera_width) - 0.5) / 0.5, 1.0)
             cy_norm = float(cy) / float(self.camera_height)
             vertical_center_score = 1.0 - min(abs(cy_norm - 0.5) / 0.5, 1.0)
+            lower_frame_bonus = max(0.0, min((cy_norm - self.lower_frame_bonus_start) / 0.30, 1.0))
             score = (
                 0.28 * area_score
                 + 0.42 * shape_score
                 + 0.12 * center_score
                 + 0.10 * sv_score
                 + 0.05 * hue_redness_score
-                + 0.03 * vertical_center_score
+                + 0.01 * vertical_center_score
+                + 0.08 * lower_frame_bonus
             )
             occ = area / img_size
             edge_touch_count = 0
@@ -519,6 +525,7 @@ class detector:
                 "sv_score": sv_score,
                 "hue_redness_score": hue_redness_score,
                 "vertical_center_score": vertical_center_score,
+                "lower_frame_bonus": lower_frame_bonus,
                 "edge_touch_count": edge_touch_count,
                 "width_frac": width_frac,
                 "height_frac": height_frac,
@@ -645,14 +652,25 @@ class detector:
 
         if best_component is not None:
             top = int(best_component["bbox"][1])
+            height = int(best_component["bbox"][3])
             width_frac = float(best_component.get("width_frac", 0.0))
+            height_frac = float(best_component.get("height_frac", 0.0))
             aspect = float(best_component.get("aspect", 0.0))
             cone_shape_score = float(best_component.get("cone_shape_score", 0.0))
             hue_redness_score = float(best_component.get("hue_redness_score", 0.0))
             sv_score = float(best_component.get("sv_score", 0.0))
             bbox_top_frac = float(top) / float(self.camera_height)
+            bbox_bottom_frac = float(top + height) / float(self.camera_height)
             if bbox_top_frac < 0.22 and width_frac > 0.38 and aspect > 1.10 and cone_shape_score < 0.62:
                 prob *= 0.45
+            if (
+                bbox_top_frac < self.upper_sky_reject_top_frac
+                and bbox_bottom_frac < 0.72
+                and width_frac > self.upper_sky_reject_width_frac
+                and height_frac < 0.55
+                and cone_shape_score < 0.72
+            ):
+                prob *= 0.18
             if bp_mask is not None:
                 if best_mode == "hue" and roi_support_ratio < self.roi_hist_min_support_ratio:
                     prob *= 0.35
@@ -662,12 +680,15 @@ class detector:
                     prob *= 0.78
                 elif best_mode in ("backproj", "hybrid_overlap", "hybrid_union"):
                     prob = max(prob, min(0.36, 0.18 + 2.8 * occupancy))
+                if best_mode == "backproj" and roi_support_ratio < 0.20:
+                    prob *= 0.22
                 # Proven detector behavior is occupancy-first on backprojection.
                 # Rescue that path when ROI support is real and sky-like penalties are not triggered.
                 if (
                     best_mode == "backproj"
                     and occupancy >= self.backproj_rescue_min_occupancy
-                    and roi_support_ratio >= 0.12
+                    and roi_support_ratio >= 0.24
+                    and bbox_bottom_frac >= 0.45
                     and hue_redness_score >= 0.42
                     and sv_score >= 0.20
                 ):
@@ -720,19 +741,21 @@ class detector:
         if raw_img is None:
             return False
 
-        # Prefer the configured BGR path for this vehicle build.
-        # Keep swap_rb only as a narrow rescue path when it is much stronger.
+        # This vehicle path is configured as BGR888. swap_rb tends to turn evening sky
+        # into false cone candidates, so keep it disabled unless explicitly re-enabled.
         variant_bgr = raw_img
-        variant_swap_rb = cv2.cvtColor(raw_img, cv2.COLOR_RGB2BGR)
-
         cand1 = self.__build_candidate(variant_bgr, "as_is")
-        cand2 = self.__build_candidate(variant_swap_rb, "swap_rb")
         cand1_select = self.__variant_selection_score(cand1)
-        cand2_select = self.__variant_selection_score(cand2)
-        score_margin = cand2_select - cand1_select
         best = cand1
-        if score_margin >= self.variant_selection_margin:
-            best = cand2
+        cand2 = None
+        cand2_select = -1.0
+        score_margin = 0.0
+        if self.allow_swap_rb_rescue:
+            cand2 = self.__build_candidate(cv2.cvtColor(raw_img, cv2.COLOR_RGB2BGR), "swap_rb")
+            cand2_select = self.__variant_selection_score(cand2)
+            score_margin = cand2_select - cand1_select
+            if score_margin >= self.variant_selection_margin:
+                best = cand2
 
         self.input_img = best["bgr_img"]
         self.projected_img = best["projected_img"]
@@ -756,11 +779,11 @@ class detector:
             "edge_touch": float(best.get("edge_touch_count", 0.0)),
             "roi_support": float(best.get("roi_support_ratio", 0.0)),
             "swap_margin": float(score_margin),
-            "swap_used": 1.0 if best is cand2 else 0.0,
+            "swap_used": 1.0 if (cand2 is not None and best is cand2) else 0.0,
             "as_is_prob": float(cand1.get("probability", 0.0)),
-            "swap_prob": float(cand2.get("probability", 0.0)),
+            "swap_prob": float(cand2.get("probability", 0.0)) if cand2 is not None else 0.0,
             "as_is_shape": float(cand1.get("cone_shape_score", 0.0)),
-            "swap_shape": float(cand2.get("cone_shape_score", 0.0)),
+            "swap_shape": float(cand2.get("cone_shape_score", 0.0)) if cand2 is not None else 0.0,
             "as_is_select": float(cand1_select),
             "swap_select": float(cand2_select),
             "roi_pos_count": float(self.roi_positive_count),

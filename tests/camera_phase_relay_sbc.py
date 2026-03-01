@@ -283,6 +283,7 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         shape = float(scores.get("shape", 0.0))
         sv = float(scores.get("sv", 0.0))
         hue = float(scores.get("hue", 0.0))
+        roi_support = float(scores.get("roi_support", 0.0))
         swap_used = int(scores.get("swap_used", 0.0))
         as_is_prob = float(scores.get("as_is_prob", 0.0))
         swap_prob = float(scores.get("swap_prob", 0.0))
@@ -310,7 +311,7 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
                 reject_hints.append("confirm/center")
         lines = [
             f"prob {prob:.2f}  thr {phase_thr:.2f}  {pass_mark}",
-            f"shape {shape:.2f}  sv {sv:.2f}  hue {hue:.2f}",
+            f"shape {shape:.2f}  sv {sv:.2f}  hue {hue:.2f}  roi {roi_support:.2f}",
             f"as {as_is_prob:.2f}/{as_is_shape:.2f}/{as_is_select:.2f}  sw {swap_prob:.2f}/{swap_shape:.2f}/{swap_select:.2f}",
             f"variant {'swap_rb' if swap_used else 'as_is'}",
             f"det {bool(getattr(detector, 'is_detected', False)) if detector else False}  method {method}",
