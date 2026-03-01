@@ -81,7 +81,7 @@ class HardwareManager:
             if not path or path in seen_paths or not os.path.exists(path):
                 continue
             seen_paths.add(path)
-            img = cv2.imread(path)
+            img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
             if img is None:
                 print(f"WARNING: Failed to load ROI image: {path}")
                 continue

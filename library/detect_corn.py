@@ -40,6 +40,7 @@ class detector:
         self.capture_retry_count = 3
         self.capture_retry_sleep = 0.2
         self.last_capture_error = None
+        self.backproj_dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 21))
 
         # ROI histogram (None = default red mode)
         self.__roi_hist = None
@@ -49,6 +50,7 @@ class detector:
         self.roi_positive_weight = 0.0
         self.roi_negative_weight = 0.0
         self.negative_backproj_scale = 0.85
+        self.roi_hist_min_support_ratio = 0.18
 
         # Default red HSV ranges (OpenCV H: 0-179)
         self.default_hsv_ranges = [
@@ -60,6 +62,41 @@ class detector:
         self.min_sv_score_strict = 0.26
         self.min_hue_redness_strict = 0.42
         self.variant_selection_margin = 0.04
+
+    def __roi_focus_mask(self, bgr_img, label):
+        alpha_mask = None
+        if bgr_img is not None and getattr(bgr_img, "ndim", 0) == 3 and bgr_img.shape[2] == 4:
+            alpha = bgr_img[:, :, 3]
+            bgr = cv2.cvtColor(bgr_img, cv2.COLOR_BGRA2BGR)
+            alpha_mask = ((alpha.astype(np.uint8) >= 200).astype(np.uint8) * 255)
+        else:
+            bgr = bgr_img
+
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        if label == "negative":
+            return hsv, alpha_mask
+
+        red_mask = None
+        for lo, hi in self.default_hsv_ranges:
+            part = cv2.inRange(hsv, lo, hi)
+            red_mask = part if red_mask is None else cv2.bitwise_or(red_mask, part)
+
+        if red_mask is None:
+            return hsv, None
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel)
+        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel)
+
+        coverage = float(np.count_nonzero(red_mask)) / float(red_mask.size) if red_mask.size > 0 else 0.0
+        if coverage < 0.005:
+            return hsv, alpha_mask
+
+        if alpha_mask is not None:
+            red_mask = cv2.bitwise_and(red_mask, alpha_mask)
+            if np.count_nonzero(red_mask) == 0:
+                return hsv, alpha_mask
+        return hsv, red_mask
 
     def set_roi_img(self, roi):
         if roi is None:
@@ -100,8 +137,13 @@ class detector:
             pos_weight = 0.0
             neg_weight = 0.0
             for ref in refs:
-                roi_hsv = cv2.cvtColor(ref["image"], cv2.COLOR_BGR2HSV)
-                hist = cv2.calcHist([roi_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+                roi_hsv, roi_mask = self.__roi_focus_mask(ref["image"], ref["label"])
+                hist = cv2.calcHist([roi_hsv], [0, 1], roi_mask, [180, 256], [0, 180, 0, 256])
+                if np.max(hist) <= 0:
+                    hist = cv2.calcHist([roi_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+                hist_sum = float(hist.sum())
+                if hist_sum > 0.0:
+                    hist = hist / hist_sum
                 weight = max(0.05, float(ref["weight"]))
                 if ref["label"] == "negative":
                     hist_neg += hist * weight
@@ -209,6 +251,7 @@ class detector:
         proj = cv2.GaussianBlur(proj, (9, 9), 0)
         proj_u8 = cv2.normalize(proj, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         _, bp_bin = cv2.threshold(proj_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        bp_bin = cv2.morphologyEx(bp_bin, cv2.MORPH_DILATE, self.backproj_dilate_kernel)
         return proj_u8, bp_bin
 
     def __postprocess_mask(self, mask):
@@ -519,6 +562,8 @@ class detector:
 
         red_mask = self.__postprocess_mask(red_mask_raw)
         bp_mask = self.__postprocess_mask(bp_mask_raw) if bp_mask_raw is not None else None
+        roi_support_ratio = 0.0
+        roi_support_mask = None
 
         # Prefer overlap when ROI histogram is available, but fall back gracefully.
         if bp_mask is not None:
@@ -526,6 +571,9 @@ class detector:
             union = cv2.bitwise_or(red_mask, bp_mask)
             overlap = self.__postprocess_mask(overlap)
             union = self.__postprocess_mask(union)
+            roi_support_mask = overlap if overlap is not None else None
+            if roi_support_mask is not None and np.count_nonzero(red_mask) > 0:
+                roi_support_ratio = float(np.count_nonzero(roi_support_mask)) / float(np.count_nonzero(red_mask))
 
             candidates = [
                 ("hybrid_overlap", overlap),
@@ -546,8 +594,12 @@ class detector:
             # Slight preference for hue-based masks in close range because shape can collapse.
             if mode_name.startswith("hue"):
                 comp_score += 0.02
+                if bp_mask is not None:
+                    comp_score -= 0.12
             elif mode_name.startswith("hybrid_overlap"):
-                comp_score += 0.01
+                comp_score += 0.05
+            elif mode_name.startswith("backproj"):
+                comp_score += 0.03
             if comp_score > best_mode_score:
                 best_mode_score = comp_score
                 best_mode = mode_name
@@ -586,6 +638,22 @@ class detector:
         if cone_dir is None:
             cone_dir = 0.5
 
+        if best_component is not None:
+            top = int(best_component["bbox"][1])
+            width_frac = float(best_component.get("width_frac", 0.0))
+            aspect = float(best_component.get("aspect", 0.0))
+            cone_shape_score = float(best_component.get("cone_shape_score", 0.0))
+            bbox_top_frac = float(top) / float(self.camera_height)
+            if bbox_top_frac < 0.22 and width_frac > 0.38 and aspect > 1.10 and cone_shape_score < 0.62:
+                prob *= 0.45
+            if bp_mask is not None:
+                if best_mode == "hue" and roi_support_ratio < self.roi_hist_min_support_ratio:
+                    prob *= 0.35
+                elif roi_support_ratio < 0.08:
+                    prob *= 0.55
+                elif roi_support_ratio < self.roi_hist_min_support_ratio:
+                    prob *= 0.78
+
         # Candidate quality to resolve RGB/BGR ambiguity across camera setups.
         overall_score = (
             (2.0 if reached else 0.0)
@@ -610,6 +678,7 @@ class detector:
             "debug_method": f"{variant_name}:{best_mode or 'none'}",
             "overall_score": overall_score,
             "edge_touch_count": edge_touch,
+            "roi_support_ratio": roi_support_ratio,
         }
         if best_component is not None:
             result.update(best_component)
@@ -666,6 +735,7 @@ class detector:
             "hue": float(best.get("hue_redness_score", 0.0)),
             "occ": float(best.get("occupancy", 0.0)),
             "edge_touch": float(best.get("edge_touch_count", 0.0)),
+            "roi_support": float(best.get("roi_support_ratio", 0.0)),
             "swap_margin": float(score_margin),
             "swap_used": 1.0 if best is cand2 else 0.0,
             "as_is_prob": float(cand1.get("probability", 0.0)),
