@@ -61,11 +61,19 @@ class detector:
             self.__roi_hist = None
             return
         try:
-            roi_hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([roi_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+            roi_list = roi if isinstance(roi, (list, tuple)) else [roi]
+            valid_rois = [img for img in roi_list if img is not None]
+            if not valid_rois:
+                print("[Detector] Warning: ROI image list is empty. Using default color range.")
+                self.__roi_hist = None
+                return
+            hist = np.zeros((180, 256), dtype=np.float32)
+            for roi_img in valid_rois:
+                roi_hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
+                hist += cv2.calcHist([roi_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
             cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
             self.__roi_hist = hist
-            print("[Detector] ROI Histogram set successfully.")
+            print(f"[Detector] ROI Histogram set successfully from {len(valid_rois)} image(s).")
         except Exception as exc:
             print(f"[Detector] Error setting ROI: {exc}. Using default color.")
             self.__roi_hist = None
@@ -473,6 +481,8 @@ class detector:
             # Slight preference for hue-based masks in close range because shape can collapse.
             if mode_name.startswith("hue"):
                 comp_score += 0.02
+            elif mode_name.startswith("hybrid_overlap"):
+                comp_score += 0.01
             if comp_score > best_mode_score:
                 best_mode_score = comp_score
                 best_mode = mode_name
@@ -516,7 +526,7 @@ class detector:
             (2.0 if reached else 0.0)
             + prob
             + 0.20 * min(frame_red_occupancy / 0.6, 1.0)
-            + (0.1 if self.__roi_hist is not None and best_mode and "hybrid" in best_mode else 0.0)
+            + (0.04 if self.__roi_hist is not None and best_mode and "hybrid" in best_mode else 0.0)
         )
 
         result = {

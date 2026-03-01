@@ -110,6 +110,14 @@ ROI_CAPTURE_DIR = os.path.expanduser("~/library/log")
 ROI_PATH_1 = os.path.join(ROI_CAPTURE_DIR, "captured_roi_img.png")
 # 後方互換のため残すが、実体は同一ファイルを指す
 ROI_PATH_2 = ROI_PATH_1
+ROI_GLOB_PATTERNS = (
+    "captured_roi_img*.png",
+    "captured_roi_img*.jpg",
+    "captured_roi_img*.jpeg",
+    "roi_cone*.png",
+    "roi_cone*.jpg",
+    "roi_cone*.jpeg",
+)
 
 # モーター制御関連定数
 SEARCH_ROTATION_SPEED = 45
