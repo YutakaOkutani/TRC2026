@@ -355,18 +355,61 @@ class MotorManager:
                 nav_heading, heading_source = self._phase3_heading(snapshot)
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
+                    if heading_source != "GPS_FALLBACK":
+                        self.phase3_gps_fallback_turn_sign = 0
+                        self.phase3_gps_fallback_turn_until = 0.0
+                        self.phase3_gps_fallback_cooldown_until = 0.0
                     diff = self._angle_diff_deg(target_heading, nav_heading)
                     heading_deadband = PHASE3_HEADING_DEADBAND_DEG
                     turn_scale = 1.0
                     if heading_source == "GPS_FALLBACK":
-                        # GPS course-over-ground is much more delayed than the compass-like
-                        # heading used in main(8).py. Keep it as a coarse fallback only.
+                        # main(8).py never used GPS course-over-ground as a continuous
+                        # heading source. Treat it only as an occasional coarse nudge;
+                        # otherwise it causes large serpentine arcs at low rover speeds.
                         heading_deadband = max(
                             heading_deadband,
                             PHASE3_GPS_FALLBACK_DEADBAND_DEG,
                             PHASE3_TURN_FULL_ERROR_DEG,
                         )
                         turn_scale = PHASE3_GPS_FALLBACK_TURN_SCALE
+                        now = time.time()
+                        burst_until = float(getattr(self, "phase3_gps_fallback_turn_until", 0.0))
+                        cooldown_until = float(getattr(self, "phase3_gps_fallback_cooldown_until", 0.0))
+                        active_sign = int(getattr(self, "phase3_gps_fallback_turn_sign", 0))
+                        requested_sign = 1 if diff > 0 else -1
+
+                        if abs(diff) <= heading_deadband:
+                            self.phase3_gps_fallback_turn_sign = 0
+                            self.phase3_gps_fallback_turn_until = 0.0
+                        elif now < burst_until:
+                            if active_sign != requested_sign:
+                                base = self._clamp_percent(BASE_SPEED)
+                                self.set_motors(
+                                    base,
+                                    True,
+                                    base,
+                                    True,
+                                    ramp_time=PHASE3_FORWARD_RAMP_TIME,
+                                    cmd_type="phase3_gps_forward",
+                                )
+                                time.sleep(MOTOR_LOOP_INTERVAL)
+                                continue
+                        elif now < cooldown_until:
+                            base = self._clamp_percent(BASE_SPEED)
+                            self.set_motors(
+                                base,
+                                True,
+                                base,
+                                True,
+                                ramp_time=PHASE3_FORWARD_RAMP_TIME,
+                                cmd_type="phase3_gps_forward",
+                            )
+                            time.sleep(MOTOR_LOOP_INTERVAL)
+                            continue
+                        else:
+                            self.phase3_gps_fallback_turn_sign = requested_sign
+                            self.phase3_gps_fallback_turn_until = now + 1.2
+                            self.phase3_gps_fallback_cooldown_until = now + 7.0
                     if abs(diff) <= heading_deadband:
                         base = self._clamp_percent(BASE_SPEED)
                         self.set_motors(
@@ -402,6 +445,9 @@ class MotorManager:
                                 ramp_time=PHASE3_TURN_RAMP_TIME,
                             )
                 else:
+                    self.phase3_gps_fallback_turn_sign = 0
+                    self.phase3_gps_fallback_turn_until = 0.0
+                    self.phase3_gps_fallback_cooldown_until = 0.0
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
                     # Legacy Phase3 was straight-dominant; alternating left/right search here
