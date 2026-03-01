@@ -275,7 +275,10 @@ class SensorManager:
             if hasattr(self, "_release_camera_detector"):
                 self._release_camera_detector()
             detector = dc.detector()
-            detector.set_roi_img(self.roi_img)
+            roi_reference = getattr(self, "roi_references", None)
+            if not roi_reference:
+                roi_reference = getattr(self, "roi_img", None)
+            detector.set_roi_img(roi_reference)
             self.devices[DEVICE_DETECTOR] = detector
             self.camera_fail_count = 0
             self.camera_dead_since = None

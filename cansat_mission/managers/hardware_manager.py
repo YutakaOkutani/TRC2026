@@ -43,6 +43,27 @@ from cansat_mission.constants import (
 
 
 class HardwareManager:
+    def _classify_roi_reference(self, path):
+        name = os.path.basename(path).lower()
+        label = "positive"
+        if any(token in name for token in ("false_", "fake_", "grass", "sky", "bg_")):
+            label = "negative"
+
+        weight = 1.0
+        if "close" in name or "closeup" in name:
+            weight *= 0.45
+        if "3m" in name:
+            weight *= 1.00
+        if "5m" in name:
+            weight *= 1.20
+        if "sky" in name:
+            weight *= 1.35
+        if "grass" in name:
+            weight *= 1.15
+        if "backlit" in name:
+            weight *= 1.10
+        return label, weight
+
     def _load_roi_images(self):
         roi_images = []
         seen_paths = set()
@@ -64,8 +85,14 @@ class HardwareManager:
             if img is None:
                 print(f"WARNING: Failed to load ROI image: {path}")
                 continue
-            roi_images.append(img)
-            print(f"Loaded ROI image: {path}")
+            label, weight = self._classify_roi_reference(path)
+            roi_images.append({
+                "path": path,
+                "image": img,
+                "label": label,
+                "weight": float(weight),
+            })
+            print(f"Loaded ROI image: {path} ({label}, weight={weight:.2f})")
         return roi_images
 
     def _release_camera_detector(self):
@@ -104,11 +131,14 @@ class HardwareManager:
             roi_images = self._load_roi_images()
             roi_img = roi_images[0] if roi_images else None
             if roi_images:
-                print(f"Camera: using {len(roi_images)} ROI image(s)")
+                pos_count = sum(1 for item in roi_images if item["label"] == "positive")
+                neg_count = sum(1 for item in roi_images if item["label"] == "negative")
+                print(f"Camera: using {len(roi_images)} ROI image(s) (positive={pos_count}, negative={neg_count})")
             else:
                 print(f"WARNING: ROI image not found at fixed path: {ROI_PATH_1}")
                 print("Switching to DEFAULT RED detection.")
             self.roi_img = roi_img
+            self.roi_references = list(roi_images)
             detector.set_roi_img(roi_images if roi_images else roi_img)
             self.devices[DEVICE_DETECTOR] = detector
             print("Camera: OK (Initialized)")

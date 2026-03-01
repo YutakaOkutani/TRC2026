@@ -43,6 +43,12 @@ class detector:
 
         # ROI histogram (None = default red mode)
         self.__roi_hist = None
+        self.__roi_hist_negative = None
+        self.roi_positive_count = 0
+        self.roi_negative_count = 0
+        self.roi_positive_weight = 0.0
+        self.roi_negative_weight = 0.0
+        self.negative_backproj_scale = 0.85
 
         # Default red HSV ranges (OpenCV H: 0-179)
         self.default_hsv_ranges = [
@@ -59,24 +65,76 @@ class detector:
         if roi is None:
             print("[Detector] Warning: ROI image is None. Using default color range.")
             self.__roi_hist = None
+            self.__roi_hist_negative = None
             return
         try:
             roi_list = roi if isinstance(roi, (list, tuple)) else [roi]
-            valid_rois = [img for img in roi_list if img is not None]
-            if not valid_rois:
+            refs = []
+            for item in roi_list:
+                if item is None:
+                    continue
+                if isinstance(item, dict):
+                    img = item.get("image")
+                    if img is None:
+                        continue
+                    refs.append({
+                        "image": img,
+                        "label": str(item.get("label", "positive")),
+                        "weight": float(item.get("weight", 1.0)),
+                    })
+                else:
+                    refs.append({
+                        "image": item,
+                        "label": "positive",
+                        "weight": 1.0,
+                    })
+            if not refs:
                 print("[Detector] Warning: ROI image list is empty. Using default color range.")
                 self.__roi_hist = None
+                self.__roi_hist_negative = None
                 return
-            hist = np.zeros((180, 256), dtype=np.float32)
-            for roi_img in valid_rois:
-                roi_hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
-                hist += cv2.calcHist([roi_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
-            cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
-            self.__roi_hist = hist
-            print(f"[Detector] ROI Histogram set successfully from {len(valid_rois)} image(s).")
+            hist_pos = np.zeros((180, 256), dtype=np.float32)
+            hist_neg = np.zeros((180, 256), dtype=np.float32)
+            pos_count = 0
+            neg_count = 0
+            pos_weight = 0.0
+            neg_weight = 0.0
+            for ref in refs:
+                roi_hsv = cv2.cvtColor(ref["image"], cv2.COLOR_BGR2HSV)
+                hist = cv2.calcHist([roi_hsv], [0, 1], None, [180, 256], [0, 180, 0, 256])
+                weight = max(0.05, float(ref["weight"]))
+                if ref["label"] == "negative":
+                    hist_neg += hist * weight
+                    neg_count += 1
+                    neg_weight += weight
+                else:
+                    hist_pos += hist * weight
+                    pos_count += 1
+                    pos_weight += weight
+            if pos_count <= 0:
+                print("[Detector] Warning: No positive ROI images. Using default color range.")
+                self.__roi_hist = None
+                self.__roi_hist_negative = None
+                return
+            cv2.normalize(hist_pos, hist_pos, 0, 255, cv2.NORM_MINMAX)
+            self.__roi_hist = hist_pos
+            self.__roi_hist_negative = None
+            if neg_count > 0 and np.max(hist_neg) > 0:
+                cv2.normalize(hist_neg, hist_neg, 0, 255, cv2.NORM_MINMAX)
+                self.__roi_hist_negative = hist_neg
+            self.roi_positive_count = pos_count
+            self.roi_negative_count = neg_count
+            self.roi_positive_weight = pos_weight
+            self.roi_negative_weight = neg_weight
+            print(
+                "[Detector] ROI Histogram set successfully "
+                f"(positive={pos_count}, negative={neg_count}, "
+                f"pos_w={pos_weight:.2f}, neg_w={neg_weight:.2f})."
+            )
         except Exception as exc:
             print(f"[Detector] Error setting ROI: {exc}. Using default color.")
             self.__roi_hist = None
+            self.__roi_hist_negative = None
 
     def __init_camera(self):
         try:
@@ -141,10 +199,17 @@ class detector:
     def __back_projection_mask(self, hsv_img):
         if self.__roi_hist is None:
             return None, None
-        proj = cv2.calcBackProject([hsv_img], [0, 1], self.__roi_hist, [0, 180, 0, 256], 1)
+        proj_pos = cv2.calcBackProject([hsv_img], [0, 1], self.__roi_hist, [0, 180, 0, 256], 1).astype(np.float32)
+        proj = proj_pos
+        if self.__roi_hist_negative is not None:
+            proj_neg = cv2.calcBackProject(
+                [hsv_img], [0, 1], self.__roi_hist_negative, [0, 180, 0, 256], 1
+            ).astype(np.float32)
+            proj = cv2.max(proj_pos - (self.negative_backproj_scale * proj_neg), 0.0)
         proj = cv2.GaussianBlur(proj, (9, 9), 0)
-        _, bp_bin = cv2.threshold(proj, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return proj, bp_bin
+        proj_u8 = cv2.normalize(proj, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        _, bp_bin = cv2.threshold(proj_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return proj_u8, bp_bin
 
     def __postprocess_mask(self, mask):
         if mask is None:
@@ -609,6 +674,10 @@ class detector:
             "swap_shape": float(cand2.get("cone_shape_score", 0.0)),
             "as_is_select": float(cand1_select),
             "swap_select": float(cand2_select),
+            "roi_pos_count": float(self.roi_positive_count),
+            "roi_neg_count": float(self.roi_negative_count),
+            "roi_pos_weight": float(self.roi_positive_weight),
+            "roi_neg_weight": float(self.roi_negative_weight),
         }
 
         if self.is_reached:

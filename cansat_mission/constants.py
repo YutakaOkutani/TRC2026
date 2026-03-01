@@ -117,6 +117,12 @@ ROI_GLOB_PATTERNS = (
     "roi_cone*.png",
     "roi_cone*.jpg",
     "roi_cone*.jpeg",
+    "false_*.png",
+    "false_*.jpg",
+    "false_*.jpeg",
+    "fake_*.png",
+    "fake_*.jpg",
+    "fake_*.jpeg",
 )
 
 # モーター制御関連定数
