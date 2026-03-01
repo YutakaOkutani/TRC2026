@@ -53,11 +53,7 @@ class detector:
         self.min_shape_score_strict = 0.34
         self.min_sv_score_strict = 0.26
         self.min_hue_redness_strict = 0.42
-        self.swap_rb_min_prob = 0.60
-        self.swap_rb_min_shape = 0.58
-        self.swap_rb_min_hue = 0.60
-        self.swap_rb_min_sv = 0.35
-        self.swap_rb_score_margin = 0.18
+        self.variant_selection_margin = 0.04
 
     def set_roi_img(self, roi):
         if roi is None:
@@ -358,6 +354,8 @@ class detector:
                 score *= 0.70 + 0.30 * hue_redness_score
             quality_floor = min(cone_shape_score, sv_score, hue_redness_score)
             score *= 0.52 + 0.48 * quality_floor
+            width_frac = float(w) / float(self.camera_width)
+            height_frac = float(h) / float(self.camera_height)
             if occ < self.reached_occupancy_thresh:
                 if edge_touch_count >= 3:
                     score *= 0.25
@@ -368,6 +366,10 @@ class detector:
             if aspect > 1.55 and cone_shape_score < 0.55:
                 # Wide edge-connected blobs tend to be sky/horizon after channel swap.
                 score *= 0.72
+            if edge_touch_count >= 2 and width_frac > 0.45 and cone_shape_score < 0.60:
+                score *= 0.45 if width_frac > 0.65 else 0.62
+            if width_frac > 0.55 and aspect > 1.25 and contour_metrics["taper_contrast_score"] < 0.25:
+                score *= 0.58
             if (
                 cone_shape_score < self.min_shape_score_strict
                 or sv_score < self.min_sv_score_strict
@@ -399,6 +401,8 @@ class detector:
                 "hue_redness_score": hue_redness_score,
                 "vertical_center_score": vertical_center_score,
                 "edge_touch_count": edge_touch_count,
+                "width_frac": width_frac,
+                "height_frac": height_frac,
                 "aspect": aspect,
                 "labels": labels,
             }
@@ -407,6 +411,27 @@ class detector:
             if best is None or item["score"] > best["score"]:
                 best = item
         return best
+
+    def __variant_selection_score(self, candidate):
+        if candidate is None:
+            return -1.0
+        prob = float(candidate.get("probability", 0.0))
+        shape = float(candidate.get("cone_shape_score", 0.0))
+        hue = float(candidate.get("hue_redness_score", 0.0))
+        sv = float(candidate.get("sv_score", 0.0))
+        edge_touch = float(candidate.get("edge_touch_count", 0.0))
+        width_frac = float(candidate.get("width_frac", 0.0))
+        aspect = float(candidate.get("aspect", 0.0))
+        reached = bool(candidate.get("is_reached", False))
+
+        score = prob + 0.34 * shape + 0.18 * hue + 0.12 * sv
+        if reached:
+            score += 1.5
+        if edge_touch >= 2.0 and width_frac > 0.45 and not reached:
+            score -= 0.38 + 0.35 * max(0.0, width_frac - 0.45)
+        if aspect > 1.25 and shape < 0.60 and not reached:
+            score -= 0.14
+        return score
 
     def __close_range_reached(self, red_mask):
         img_size = float(self.camera_width * self.camera_height)
@@ -539,23 +564,11 @@ class detector:
 
         cand1 = self.__build_candidate(variant_bgr, "as_is")
         cand2 = self.__build_candidate(variant_swap_rb, "swap_rb")
+        cand1_select = self.__variant_selection_score(cand1)
+        cand2_select = self.__variant_selection_score(cand2)
+        score_margin = cand2_select - cand1_select
         best = cand1
-        swap_prob = float(cand2.get("probability", 0.0))
-        swap_shape = float(cand2.get("cone_shape_score", 0.0))
-        swap_hue = float(cand2.get("hue_redness_score", 0.0))
-        swap_sv = float(cand2.get("sv_score", 0.0))
-        swap_edge_touch = int(cand2.get("edge_touch_count", 0))
-        score_margin = float(cand2.get("overall_score", 0.0)) - float(cand1.get("overall_score", 0.0))
-        allow_swap_rb = (
-            cand1.get("is_reached", False) is False
-            and swap_edge_touch <= 1
-            and swap_prob >= self.swap_rb_min_prob
-            and swap_shape >= self.swap_rb_min_shape
-            and swap_hue >= self.swap_rb_min_hue
-            and swap_sv >= self.swap_rb_min_sv
-            and score_margin >= self.swap_rb_score_margin
-        )
-        if allow_swap_rb:
+        if score_margin >= self.variant_selection_margin:
             best = cand2
 
         self.input_img = best["bgr_img"]
@@ -580,6 +593,12 @@ class detector:
             "edge_touch": float(best.get("edge_touch_count", 0.0)),
             "swap_margin": float(score_margin),
             "swap_used": 1.0 if best is cand2 else 0.0,
+            "as_is_prob": float(cand1.get("probability", 0.0)),
+            "swap_prob": float(cand2.get("probability", 0.0)),
+            "as_is_shape": float(cand1.get("cone_shape_score", 0.0)),
+            "swap_shape": float(cand2.get("cone_shape_score", 0.0)),
+            "as_is_select": float(cand1_select),
+            "swap_select": float(cand2_select),
         }
 
         if self.is_reached:

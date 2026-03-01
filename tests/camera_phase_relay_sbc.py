@@ -210,7 +210,20 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         self._setup_gpio_devices(include_sonar=False)
 
     def _extract_detector_box(self, detector):
-        if detector is None or getattr(detector, "binarized_img", None) is None:
+        if detector is None:
+            return None, None
+        bbox = getattr(detector, "detected", None)
+        centroid = getattr(detector, "centroids", None)
+        if bbox is not None:
+            bbox = [int(v) for v in bbox]
+        if centroid is not None:
+            try:
+                centroid = [int(centroid[0]), int(centroid[1])]
+            except Exception:
+                centroid = None
+        if bbox is not None or centroid is not None:
+            return bbox, centroid
+        if getattr(detector, "binarized_img", None) is None:
             return None, None
         try:
             nlabels, _, stats, centroids = cv2.connectedComponentsWithStats(detector.binarized_img.astype("uint8"))
@@ -256,6 +269,13 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         shape = float(scores.get("shape", 0.0))
         sv = float(scores.get("sv", 0.0))
         hue = float(scores.get("hue", 0.0))
+        swap_used = int(scores.get("swap_used", 0.0))
+        as_is_prob = float(scores.get("as_is_prob", 0.0))
+        swap_prob = float(scores.get("swap_prob", 0.0))
+        as_is_shape = float(scores.get("as_is_shape", 0.0))
+        swap_shape = float(scores.get("swap_shape", 0.0))
+        as_is_select = float(scores.get("as_is_select", 0.0))
+        swap_select = float(scores.get("swap_select", 0.0))
         method = str(getattr(detector, "debug_method", "unknown")) if detector is not None else "detector_unavailable"
         if phase == Phase.PHASE4:
             phase_thr = CONE_PROBABILITY_THRESHOLD_PHASE4
@@ -277,6 +297,8 @@ class RelayController(HardwareManager, MotorManager, SensorManager, LedManager):
         lines = [
             f"prob {prob:.2f}  thr {phase_thr:.2f}  {pass_mark}",
             f"shape {shape:.2f}  sv {sv:.2f}  hue {hue:.2f}",
+            f"as {as_is_prob:.2f}/{as_is_shape:.2f}/{as_is_select:.2f}  sw {swap_prob:.2f}/{swap_shape:.2f}/{swap_select:.2f}",
+            f"variant {'swap_rb' if swap_used else 'as_is'}",
             f"det {bool(getattr(detector, 'is_detected', False)) if detector else False}  method {method}",
         ]
         if reject_hints:
