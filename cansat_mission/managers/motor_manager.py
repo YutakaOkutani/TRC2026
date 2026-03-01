@@ -177,49 +177,50 @@ class MotorManager:
         return stuck
 
     def _phase3_heading(self, snapshot):
-        # Phase3 heading policy (legacy-aligned with main(8).py):
-        # 1) Prefer magnetometer heading (azimuth from BNO mag XY).
-        # 2) Fall back to Euler heading (BNO), optionally GPS-aligned.
-        # 3) Fall back to GPS-derived course only when IMU heading is unavailable.
-        mag_heading = self._mag_heading_from_snapshot(snapshot)
-        mag_stuck = False
-        if mag_heading is not None:
-            mag_stuck = self._mag_heading_is_stuck(mag_heading)
-        if mag_heading is not None and not mag_stuck:
-            if snapshot.get("gps_heading_valid", False) and hasattr(self, "_update_mag_heading_offset_from_gps"):
-                self._update_mag_heading_offset_from_gps(snapshot, snapshot.get("gps_heading"), mag_heading)
-            if hasattr(self, "_mag_heading_aligned_to_gps"):
-                aligned = self._mag_heading_aligned_to_gps(mag_heading)
-                if aligned is not None:
-                    source = "MAG_ALIGNED" if getattr(self, "mag_heading_offset_valid", False) else "MAG"
-                    return aligned, source
-            return mag_heading, "MAG"
-        if mag_heading is not None and snapshot.get("gps_heading_valid", False):
+        # Phase3 policy:
+        # - Use GPS-derived course first when available.
+        # - Use IMU only after GPS has provided an offset/alignment anchor.
+        # Raw mag-only steering was the main source of large snakes and in-place spins.
+        gps_heading = None
+        if snapshot.get("gps_heading_valid", False):
             gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
-            if gps_heading is not None:
-                return gps_heading, "GPS_FALLBACK_MAG_STUCK"
-        if mag_stuck:
-            return None, "MAG_STUCK"
 
         try:
             angle = float(snapshot.get("angle", 0.0))
         except (TypeError, ValueError):
             angle = 0.0
-        if snapshot.get("angle_valid", False) and math.isfinite(angle):
-            if snapshot.get("gps_heading_valid", False) and hasattr(self, "_update_bno_heading_offset_from_gps"):
+
+        mag_heading = self._mag_heading_from_snapshot(snapshot)
+        mag_stuck = False
+        if mag_heading is not None:
+            mag_stuck = self._mag_heading_is_stuck(mag_heading)
+
+        if gps_heading is not None:
+            if mag_heading is not None and hasattr(self, "_update_mag_heading_offset_from_gps"):
+                self._update_mag_heading_offset_from_gps(snapshot, gps_heading, mag_heading)
+            if snapshot.get("angle_valid", False) and math.isfinite(angle) and hasattr(self, "_update_bno_heading_offset_from_gps"):
                 self._update_bno_heading_offset_from_gps(snapshot)
-            if hasattr(self, "_bno_heading_aligned_to_gps"):
+
+            return gps_heading, "GPS_PRIMARY"
+
+        if snapshot.get("angle_valid", False) and math.isfinite(angle):
+            if getattr(self, "bno_heading_offset_valid", False) and hasattr(self, "_bno_heading_aligned_to_gps"):
                 aligned = self._bno_heading_aligned_to_gps(snapshot)
                 if aligned is not None:
-                    source = "BNO_ALIGNED" if getattr(self, "bno_heading_offset_valid", False) else "BNO"
-                    return aligned, source
-            return angle, "BNO"
-        if snapshot.get("gps_heading_valid", False):
-            gps_heading = self._normalize_heading_deg(snapshot.get("gps_heading"))
-            if gps_heading is not None:
-                return gps_heading, "GPS_FALLBACK"
+                    return aligned, "BNO_ALIGNED"
+
+        if mag_heading is not None and not mag_stuck:
+            if getattr(self, "mag_heading_offset_valid", False) and hasattr(self, "_mag_heading_aligned_to_gps"):
+                aligned = self._mag_heading_aligned_to_gps(mag_heading)
+                if aligned is not None:
+                    return aligned, "MAG_ALIGNED"
+
+        if mag_stuck:
+            return None, "MAG_STUCK"
         if snapshot.get("angle_valid", False):
-            return None, "BNO_PARSE_FAIL"
+            return None, "BNO_UNALIGNED"
+        if mag_heading is not None:
+            return None, "MAG_UNALIGNED"
         if snapshot.get("gps_heading_valid", False):
             return None, "GPS_PARSE_FAIL"
         return None, "NO_HEADING_SOURCE"
@@ -392,7 +393,7 @@ class MotorManager:
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
                     diff = self._angle_diff_deg(target_heading, nav_heading)
-                    using_gps_fallback = heading_source == "GPS_FALLBACK"
+                    using_gps_fallback = heading_source.startswith("GPS")
                     heading_deadband = (
                         PHASE3_GPS_FALLBACK_DEADBAND_DEG if using_gps_fallback else PHASE3_HEADING_DEADBAND_DEG
                     )
