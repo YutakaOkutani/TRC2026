@@ -355,15 +355,10 @@ class MotorManager:
                     self.phase3_no_heading_start = None
                     diff = self._angle_diff_deg(target_heading, nav_heading)
                     heading_deadband = PHASE3_HEADING_DEADBAND_DEG
-                    turn_scale = 1.0
-                    if heading_source == "GPS_FALLBACK":
-                        # If terminal Diff is already reasonable, do not weaken the
-                        # steering here. Track it directly with the same deadband/scale
-                        # as the legacy left/right/forward Phase3 logic.
-                        heading_deadband = PHASE3_HEADING_DEADBAND_DEG
-                        turn_scale = 1.0
+                    base = self._clamp_percent(BASE_SPEED)
+                    legacy_turn_fast = base
+                    legacy_turn_slow = self._clamp_percent(base * MANUAL_TURN_SPEED_RATIO)
                     if abs(diff) <= heading_deadband:
-                        base = self._clamp_percent(BASE_SPEED)
                         self.set_motors(
                             base,
                             True,
@@ -373,27 +368,22 @@ class MotorManager:
                             cmd_type="phase3_gps_forward",
                         )
                     else:
-                        outer_speed, inner_speed = self._phase3_turn_speeds(
-                            diff,
-                            deadband_deg=heading_deadband,
-                            turn_scale=turn_scale,
-                        )
                         if diff > 0:
-                            # Match legacy main(8).py sign convention:
-                            # positive diff => one-sided steering in the "right" branch.
+                            # Restore the pre-change polarity and use fixed legacy-like
+                            # differential steering instead of scaled turns.
                             self._set_forward_diff_turn(
-                                "right",
-                                outer_speed,
-                                inner_speed,
+                                "left",
+                                legacy_turn_fast,
+                                legacy_turn_slow,
                                 cmd_type="phase3_gps_turn",
                                 ramp_time=PHASE3_TURN_RAMP_TIME,
                             )
                         else:
-                            # negative diff => one-sided steering in the "left" branch.
+                            # Mirror branch for opposite sign.
                             self._set_forward_diff_turn(
-                                "left",
-                                outer_speed,
-                                inner_speed,
+                                "right",
+                                legacy_turn_fast,
+                                legacy_turn_slow,
                                 cmd_type="phase3_gps_turn",
                                 ramp_time=PHASE3_TURN_RAMP_TIME,
                             )
