@@ -46,11 +46,13 @@ from cansat_mission.constants import (
     PHASE2_TURN_INTERVAL,
     PHASE2_RAMP_TIME,
     PHASE3_FORWARD_RAMP_TIME,
+    PHASE3_FORWARD_SPEED,
+    PHASE3_GPS_FALLBACK_DEADBAND_DEG,
+    PHASE3_GPS_FALLBACK_TURN_SCALE,
     PHASE3_HEADING_DEADBAND_DEG,
-    PHASE3_TURN_FULL_ERROR_DEG,
-    PHASE3_TURN_FAST_SPEED,
     PHASE3_TURN_RAMP_TIME,
-    PHASE3_TURN_SLOW_SPEED,
+    PHASE3_TURN_INNER_SPEED,
+    PHASE3_TURN_OUTER_SPEED,
     PHASES_SKIP_OBSTACLE,
     PHASES_STOP_MOTORS,
     PWM_DUTY_MAX,
@@ -212,22 +214,18 @@ class MotorManager:
         heading, _ = self._phase3_heading(snapshot)
         return heading
 
-    def _phase3_turn_speeds(self, diff_deg, deadband_deg=PHASE3_HEADING_DEADBAND_DEG, turn_scale=1.0):
-        base = self._clamp_percent(BASE_SPEED)
-        fast = self._clamp_percent(PHASE3_TURN_FAST_SPEED)
-        slow = self._clamp_percent(PHASE3_TURN_SLOW_SPEED)
-        abs_diff = abs(float(diff_deg))
-        deadband = max(0.0, float(deadband_deg))
-        full_error = max(deadband + 1.0, float(PHASE3_TURN_FULL_ERROR_DEG))
+    def _phase3_legacy_drive_speeds(self, turn_scale=1.0):
+        # Match the proven main(8).py strategy:
+        # - straight: 40/40
+        # - turn: 25/15
+        # For GPS-only fallback, blend back toward straight to reduce wandering.
+        straight = self._clamp_percent(PHASE3_FORWARD_SPEED)
+        outer_legacy = self._clamp_percent(PHASE3_TURN_OUTER_SPEED)
+        inner_legacy = self._clamp_percent(PHASE3_TURN_INNER_SPEED)
         scale = max(0.0, min(1.0, float(turn_scale)))
-        effective_fast = base + (fast - base) * scale
-        effective_slow = base - (base - slow) * scale
-        if abs_diff <= deadband:
-            return base, base
-        ratio = min(1.0, max(0.0, (abs_diff - deadband) / (full_error - deadband)))
-        outer_speed = self._clamp_percent(base + (effective_fast - base) * ratio)
-        inner_speed = self._clamp_percent(base - (base - effective_slow) * ratio)
-        return outer_speed, inner_speed
+        outer = self._clamp_percent(straight - (straight - outer_legacy) * scale)
+        inner = self._clamp_percent(straight - (straight - inner_legacy) * scale)
+        return straight, outer, inner
 
     def _reset_phase45_camera_track(self):
         self.phase45_filtered_cone_dir = None
@@ -354,36 +352,37 @@ class MotorManager:
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
                     diff = self._angle_diff_deg(target_heading, nav_heading)
-                    heading_deadband = PHASE3_HEADING_DEADBAND_DEG
-                    base = self._clamp_percent(BASE_SPEED)
-                    legacy_turn_fast = base
-                    legacy_turn_slow = self._clamp_percent(base * MANUAL_TURN_SPEED_RATIO)
+                    using_gps_fallback = heading_source == "GPS_FALLBACK"
+                    heading_deadband = (
+                        PHASE3_GPS_FALLBACK_DEADBAND_DEG if using_gps_fallback else PHASE3_HEADING_DEADBAND_DEG
+                    )
+                    turn_scale = PHASE3_GPS_FALLBACK_TURN_SCALE if using_gps_fallback else 1.0
+                    straight_speed, turn_outer, turn_inner = self._phase3_legacy_drive_speeds(turn_scale=turn_scale)
                     if abs(diff) <= heading_deadband:
                         self.set_motors(
-                            base,
+                            straight_speed,
                             True,
-                            base,
+                            straight_speed,
                             True,
                             ramp_time=PHASE3_FORWARD_RAMP_TIME,
                             cmd_type="phase3_gps_forward",
                         )
                     else:
                         if diff > 0:
-                            # Restore the pre-change polarity and use fixed legacy-like
-                            # differential steering instead of scaled turns.
+                            # main(8).py positive branch: "left" => right wheel faster.
                             self._set_forward_diff_turn(
-                                "left",
-                                legacy_turn_fast,
-                                legacy_turn_slow,
+                                "right",
+                                turn_outer,
+                                turn_inner,
                                 cmd_type="phase3_gps_turn",
                                 ramp_time=PHASE3_TURN_RAMP_TIME,
                             )
                         else:
-                            # Mirror branch for opposite sign.
+                            # main(8).py negative branch: "right" => left wheel faster.
                             self._set_forward_diff_turn(
-                                "right",
-                                legacy_turn_fast,
-                                legacy_turn_slow,
+                                "left",
+                                turn_outer,
+                                turn_inner,
                                 cmd_type="phase3_gps_turn",
                                 ramp_time=PHASE3_TURN_RAMP_TIME,
                             )
