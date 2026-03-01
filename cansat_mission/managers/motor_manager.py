@@ -369,18 +369,19 @@ class MotorManager:
                         )
                     else:
                         if diff > 0:
-                            # main(8).py positive branch: "left" => right wheel faster.
+                            # Positive diff must keep the pre-fix polarity used in field runs.
+                            # With our left/right motor mapping, left wheel faster steers right.
                             self._set_forward_diff_turn(
-                                "right",
+                                "left",
                                 turn_outer,
                                 turn_inner,
                                 cmd_type="phase3_gps_turn",
                                 ramp_time=PHASE3_TURN_RAMP_TIME,
                             )
                         else:
-                            # main(8).py negative branch: "right" => left wheel faster.
+                            # Mirror branch for opposite sign.
                             self._set_forward_diff_turn(
-                                "left",
+                                "right",
                                 turn_outer,
                                 turn_inner,
                                 cmd_type="phase3_gps_turn",

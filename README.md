@@ -389,8 +389,8 @@ sudo nano /etc/systemd/system/cansat.service
 [Unit]
 Description=CanSat Main Mission Script
 # ネットワークを使う処理（通知・通信など）がある場合に備えて、ネットワーク起動後に開始する
-Wants=network-online.target
-After=network-online.target
+# Wants=network-online.target
+# After=network-online.target
 
 [Service]
 Type=simple
