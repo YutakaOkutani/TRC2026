@@ -19,6 +19,54 @@ DEFAULT_MONITOR_HOST = "0.0.0.0"
 DEFAULT_MONITOR_PORT = 5001
 # Variable parameter: graph history window [sec]
 DEFAULT_HISTORY_SEC = 30.0
+CAMERA_WINDOW_NAME = "Camera Stream (SBC -> PC)"
+
+
+def get_screen_size():
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        width = int(root.winfo_screenwidth())
+        height = int(root.winfo_screenheight())
+        root.destroy()
+        if width > 0 and height > 0:
+            return width, height
+    except Exception:
+        pass
+    return 1920, 1080
+
+
+def fit_frame_to_screen(frame, screen_size):
+    if frame is None:
+        return None
+    screen_w, screen_h = screen_size
+    if screen_w <= 0 or screen_h <= 0:
+        return frame
+
+    h, w = frame.shape[:2]
+    if h <= 0 or w <= 0:
+        return frame
+
+    scale = min(float(screen_w) / float(w), float(screen_h) / float(h))
+    out_w = max(1, int(round(w * scale)))
+    out_h = max(1, int(round(h * scale)))
+    resized = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+    canvas = np.zeros((screen_h, screen_w, 3), dtype=np.uint8)
+    x0 = max(0, (screen_w - out_w) // 2)
+    y0 = max(0, (screen_h - out_h) // 2)
+    canvas[y0 : y0 + out_h, x0 : x0 + out_w] = resized
+    return canvas
+
+
+def setup_camera_window(fullscreen):
+    cv2.namedWindow(CAMERA_WINDOW_NAME, cv2.WINDOW_NORMAL)
+    if fullscreen:
+        try:
+            cv2.setWindowProperty(CAMERA_WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        except Exception:
+            pass
 
 
 def recv_exact(sock, n):
@@ -200,10 +248,12 @@ class RelayServer:
             server.close()
 
 
-def start_ui(state, history_sec):
+def start_ui(state, history_sec, camera_fullscreen=True):
     fig, axes = plt.subplots(2, 2, figsize=(10, 6))
     fig.suptitle("CanSat Camera/BNO055/GPS Realtime Monitor")
     ui_state = {"window_closed": False}
+    screen_size = get_screen_size()
+    setup_camera_window(camera_fullscreen)
 
     line_acc, = axes[0, 0].plot([], [], label="|acc|")
     line_gyro, = axes[0, 0].plot([], [], label="|gyro|")
@@ -285,7 +335,8 @@ def start_ui(state, history_sec):
             status_text.set_text(f"{status} | shutdown requested: {shutdown_reason}")
 
         if frame is not None:
-            cv2.imshow("Camera Stream (SBC -> PC)", frame)
+            camera_view = fit_frame_to_screen(frame, screen_size) if camera_fullscreen else frame
+            cv2.imshow(CAMERA_WINDOW_NAME, camera_view)
             cv2.waitKey(1)
 
         return line_acc, line_gyro, line_mag, line_ang, line_sats, line_hdop, line_detect, status_text
@@ -320,6 +371,12 @@ def parse_args():
     parser.add_argument("--host", default=DEFAULT_MONITOR_HOST, help="listen host")
     parser.add_argument("--port", type=int, default=DEFAULT_MONITOR_PORT, help="listen port")
     parser.add_argument("--history-sec", type=float, default=DEFAULT_HISTORY_SEC, help="plot window seconds")
+    parser.add_argument(
+        "--camera-fullscreen",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="show the camera preview in a fullscreen OpenCV window",
+    )
     return parser.parse_args()
 
 
@@ -332,7 +389,7 @@ def main():
     th.start()
 
     try:
-        start_ui(state, history_sec=args.history_sec)
+        start_ui(state, history_sec=args.history_sec, camera_fullscreen=args.camera_fullscreen)
     except KeyboardInterrupt:
         print("Interrupted by Ctrl+C")
     finally:

@@ -8,9 +8,12 @@ from picamera2 import Picamera2
 
 class detector:
     def __init__(self):
-        # Cone-like shape preference (used only for mid-range confidence scoring)
+        # Cone-like shape preference. Keep fairly close to the proven detector so
+        # Phase4 can lock onto a distant cone before stricter scoring takes over.
         self.cone_ratio = 33 / 70
-        self.ratio_thresh = 0.25
+        self.ratio_thresh = 0.12
+        self.min_component_occupancy = 0.001
+        self.backproj_rescue_min_occupancy = 0.006
 
         # Goal (close contact) judgment: screen should be mostly red and touching edges
         # Goal判定はやや厳しめにする（近距離で画面を大きく占有していること）
@@ -220,7 +223,7 @@ class detector:
                 self.last_capture_error = None
                 # Standardize detector input orientation for this vehicle build (camera is mounted upside down).
                 raw = cv2.rotate(raw, cv2.ROTATE_180)
-                return cv2.blur(raw, (5, 5))
+                return cv2.blur(raw, (8, 8))
             except Exception as exc:
                 last_exc = exc
                 print(f"[Detector] Capture Error (attempt {attempt + 1}/{self.capture_retry_count}): {exc}")
@@ -415,7 +418,7 @@ class detector:
         for idx in range(1, nlabels):
             s = stats[idx]
             area = float(s[cv2.CC_STAT_AREA])
-            if area / img_size < 0.001:
+            if area / img_size < self.min_component_occupancy:
                 continue
             w = max(1, int(s[cv2.CC_STAT_WIDTH]))
             h = max(1, int(s[cv2.CC_STAT_HEIGHT]))
@@ -547,6 +550,8 @@ class detector:
             score -= 0.38 + 0.35 * max(0.0, width_frac - 0.45)
         if aspect > 1.25 and shape < 0.60 and not reached:
             score -= 0.14
+        if candidate.get("debug_method", "").endswith(":backproj"):
+            score += 0.10 * min(float(candidate.get("occupancy", 0.0)) / 0.05, 1.0)
         return score
 
     def __close_range_reached(self, red_mask):
@@ -643,6 +648,8 @@ class detector:
             width_frac = float(best_component.get("width_frac", 0.0))
             aspect = float(best_component.get("aspect", 0.0))
             cone_shape_score = float(best_component.get("cone_shape_score", 0.0))
+            hue_redness_score = float(best_component.get("hue_redness_score", 0.0))
+            sv_score = float(best_component.get("sv_score", 0.0))
             bbox_top_frac = float(top) / float(self.camera_height)
             if bbox_top_frac < 0.22 and width_frac > 0.38 and aspect > 1.10 and cone_shape_score < 0.62:
                 prob *= 0.45
@@ -653,6 +660,16 @@ class detector:
                     prob *= 0.55
                 elif roi_support_ratio < self.roi_hist_min_support_ratio:
                     prob *= 0.78
+                # Proven detector behavior is occupancy-first on backprojection.
+                # Rescue that path when ROI support is real and sky-like penalties are not triggered.
+                if (
+                    best_mode == "backproj"
+                    and occupancy >= self.backproj_rescue_min_occupancy
+                    and roi_support_ratio >= 0.12
+                    and hue_redness_score >= 0.42
+                    and sv_score >= 0.20
+                ):
+                    prob = max(prob, min(0.82, 0.34 + 5.5 * occupancy))
 
         # Candidate quality to resolve RGB/BGR ambiguity across camera setups.
         overall_score = (
