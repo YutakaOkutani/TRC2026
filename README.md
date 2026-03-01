@@ -32,6 +32,8 @@
 │   ├── navigation.py                    # ナビゲーション関連のコード
 │   ├── runners.py                       # フェーズの実行コード
 │   ├── state.py                         # ミッションの状態管理コード
+├── gerber/                             # 基板設計データが入ったフォルダ
+│   ├── TRC2026 v5.zip                   # 基板設計データ   
 ├── library/                            # ライブラリコードが入ったフォルダ
 │   ├── __init__.py                      # ライブラリコード用のディレクトリ
 │   ├── bno055.py                        # BNO055センサー用のライブラリコード
@@ -53,6 +55,8 @@
 │   ├── orchestrator_phase2_to_phase7.py # フェーズ2からフェーズ7のデバッグ用コード
 │   ├── orchestrator_phase3_to_phase4.py # フェーズ3からフェーズ4のデバッグ用コード
 │   ├── orchestrator_phase4_to_phase7.py # フェーズ4からフェーズ7のカメラ誘導デバッグ用コード
+│   ├── sensor_diag.py                   # センサー診断コード
+│   ├── test_phase0_detection.py         # フェーズ0の検知テストコード
 ├── .gitignore                          # Git管理から除外するファイルのリスト
 ├── main.py                             # 本番用コード
 └── README.md                           # このファイル
@@ -71,9 +75,8 @@
 * microSDカード（16GB以上あれば良い）
 * 電源（5V / 2.5A）（PCからのUSB給電でもよいが、不安定になるときがある）
 * PC
-* USBハブ
+* モニター・キーボード・USBハブ（あると便利）
 * Mini HDMI ケーブル（モニター接続用）
-* モニター・キーボード（あると便利）
 
 ### ソフトウェア
 
@@ -429,7 +432,7 @@ WantedBy=multi-user.target
 * `Restart=on-failure` はクラッシュ時に再起動し、`sudo systemctl stop cansat.service` のような手動停止時は再起動しないので運用しやすい
 * 通信を使わない構成なら `network-online.target` は必須ではないが、将来の通知機能などを考えると入れておく方が無難
 
-#### 4. `cansat.timer` の作成（起動から5分後に開始する）
+#### 4. `cansat.timer` の作成（起動から5分後に開始する）（任意）
 
 電源投入直後ではなく、**起動から5分後** に `cansat.service` を開始したい場合は、`timer` を使う。
 
