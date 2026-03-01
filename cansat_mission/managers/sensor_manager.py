@@ -224,6 +224,15 @@ class SensorManager:
             return False
         return len(values) >= 3 and all(math.isfinite(value) for value in values)
 
+    def _vector_norm(self, vec):
+        try:
+            values = [float(value) for value in vec]
+        except Exception:
+            return None
+        if len(values) < 3 or not all(math.isfinite(value) for value in values[:3]):
+            return None
+        return math.sqrt(values[0] ** 2 + values[1] ** 2 + values[2] ** 2)
+
     def _scalar_within(self, value, min_value, max_value):
         try:
             scalar = float(value)
@@ -729,39 +738,67 @@ class SensorManager:
                 time.sleep(CAMERA_IDLE_SLEEP)
 
     def data_thread(self):
+        suspicious_bno_counter = 0
         while True:
+            bno_data = None
             try:
                 bno_data = self.get_bno_data()
-                bmp_data = self.get_bmp_data()
-                sonar_dist = self.get_sonar_data()
-                if bno_data:
-                    self.state.update_imu(
-                        acc=bno_data["acc"],
-                        gyro=bno_data["gyro"],
-                        mag=bno_data["mag"],
-                        fall=bno_data["fall"],
-                        angle=bno_data["angle"],
-                        angle_valid=bno_data["angle_valid"],
-                    )
-                    if bno_data.get("sys_status", {}).get("valid") and bno_data.get("sys_error", {}).get("valid"):
-                        if (
-                            bno_data["sys_error"]["value"] != 0
-                            or bno_data["sys_status"]["value"] not in BNO_FUSION_OK_STATES
-                        ):
-                            print(
-                                f"BNO status warn: sys={bno_data['sys_status']['value']} "
-                                f"err={bno_data['sys_error']['value']}"
-                            )
-                else:
-                    self.state.update_imu(angle_valid=False)
-                if bmp_data:
-                    self.state.update_barometer(
-                        alt=bmp_data["alt"],
-                        pres=bmp_data["pres"],
-                    )
-                if sonar_dist is not None:
-                    self.state.update_obstacle(obstacle_dist=sonar_dist)
             except Exception as exc:
-                print(f"Data Thread Error: {exc}")
+                print(f"BNO Thread Slice Error: {exc}")
                 traceback.print_exc()
+            if bno_data:
+                self.state.update_imu(
+                    acc=bno_data["acc"],
+                    gyro=bno_data["gyro"],
+                    mag=bno_data["mag"],
+                    fall=bno_data["fall"],
+                    angle=bno_data["angle"],
+                    angle_valid=bno_data["angle_valid"],
+                )
+                if bno_data.get("sys_status", {}).get("valid") and bno_data.get("sys_error", {}).get("valid"):
+                    if (
+                        bno_data["sys_error"]["value"] != 0
+                        or bno_data["sys_status"]["value"] not in BNO_FUSION_OK_STATES
+                    ):
+                        print(
+                            f"BNO status warn: sys={bno_data['sys_status']['value']} "
+                            f"err={bno_data['sys_error']['value']}"
+                        )
+                acc_norm = self._vector_norm(bno_data.get("acc"))
+                mag_norm = self._vector_norm(bno_data.get("mag"))
+                if bno_data.get("acc_valid") and acc_norm is not None and mag_norm is not None:
+                    if acc_norm < 1.0 or mag_norm < 1.0:
+                        suspicious_bno_counter += 1
+                        if suspicious_bno_counter % 25 == 0:
+                            print(
+                                "BNO suspicious sample: "
+                                f"acc={bno_data.get('acc')} |acc|={acc_norm:.3f} "
+                                f"mag={bno_data.get('mag')} |mag|={mag_norm:.3f} "
+                                f"angle={float(bno_data.get('angle', 0.0)):.2f}"
+                            )
+                    else:
+                        suspicious_bno_counter = 0
+            else:
+                self.state.update_imu(angle_valid=False)
+
+            try:
+                bmp_data = self.get_bmp_data()
+            except Exception as exc:
+                print(f"BMP Thread Slice Error: {exc}")
+                traceback.print_exc()
+                bmp_data = None
+            if bmp_data:
+                self.state.update_barometer(
+                    alt=bmp_data["alt"],
+                    pres=bmp_data["pres"],
+                )
+
+            try:
+                sonar_dist = self.get_sonar_data()
+            except Exception as exc:
+                print(f"Sonar Thread Slice Error: {exc}")
+                traceback.print_exc()
+                sonar_dist = None
+            if sonar_dist is not None:
+                self.state.update_obstacle(obstacle_dist=sonar_dist)
             time.sleep(DATA_SAMPLING_RATE)
