@@ -324,14 +324,28 @@ class SensorManager:
                         euler_zero = abs(float(euler["value"][0])) <= BNO_FREEZE_EPS
                     except Exception:
                         euler_zero = False
-                freeze = (
+                # A real BNO055 at rest still reports gravity on accel and a non-zero
+                # magnetic field vector. Treat all-zero raw vectors as a dead sensor
+                # even when a stale heading register contains a tiny non-zero value.
+                raw_vectors_dead = (
                     self._vector_near_zero(acc["value"], BNO_FREEZE_EPS)
-                    and self._vector_near_zero(gyro["value"], BNO_FREEZE_EPS)
                     and self._vector_near_zero(mag["value"], BNO_FREEZE_EPS)
+                    and self._vector_near_zero(gyro["value"], BNO_FREEZE_EPS)
+                )
+                freeze = (
+                    raw_vectors_dead
                     and euler_zero
                 )
+                if raw_vectors_dead and not freeze:
+                    freeze = True
                 if freeze:
                     self.bno_fail_count += 1
+                    if self.bno_fail_count % 25 == 0:
+                        print(
+                            "BNO zero-output detected: "
+                            f"acc={acc['value']} gyro={gyro['value']} mag={mag['value']} "
+                            f"sys={sys_status.get('value')} err={sys_error.get('value')}"
+                        )
                     if self.bno_fail_count >= BNO_FAIL_LIMIT:
                         self._try_reinit_bno()
 
