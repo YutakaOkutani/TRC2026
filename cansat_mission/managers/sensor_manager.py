@@ -217,6 +217,13 @@ class SensorManager:
             return False
         return True
 
+    def _vector_finite(self, vec):
+        try:
+            values = [float(value) for value in vec]
+        except Exception:
+            return False
+        return len(values) >= 3 and all(math.isfinite(value) for value in values)
+
     def _scalar_within(self, value, min_value, max_value):
         try:
             scalar = float(value)
@@ -363,7 +370,13 @@ class SensorManager:
             self._mark_bno_acc_stale()
             acc_val = list(self.bno_last_valid["acc"]) if self.bno_last_acc_time > 0.0 else None
             gyro_val = list(self.bno_last_valid["gyro"])
-            mag_val = list(self.bno_last_valid["mag"])
+            raw_mag_available = (
+                mag.get("valid", False)
+                and self._vector_finite(mag.get("value", ()))
+                and (not self._vector_near_zero(mag.get("value", ()), BNO_FREEZE_EPS))
+            )
+            # Phase3 legacy steering derives heading directly from mag XY.
+            mag_val = list(mag["value"]) if raw_mag_available else list(self.bno_last_valid["mag"])
             angle_val = float(self.bno_last_valid["angle"])
             fall = None
             if acc_val is not None:

@@ -53,7 +53,6 @@ from cansat_mission.constants import (
     PHASE3_TURN_FAST_SPEED,
     PHASE3_TURN_RAMP_TIME,
     PHASE3_TURN_SLOW_SPEED,
-    PHASE3_NO_HEADING_TURN_INTERVAL,
     PHASES_SKIP_OBSTACLE,
     PHASES_STOP_MOTORS,
     PWM_DUTY_MAX,
@@ -354,15 +353,19 @@ class MotorManager:
             if phase == Phase.PHASE3:
                 target_heading = direction
                 nav_heading, heading_source = self._phase3_heading(snapshot)
-                turn_fast = self._clamp_percent(PHASE3_TURN_FAST_SPEED)
-                turn_slow = self._clamp_percent(PHASE3_TURN_SLOW_SPEED)
                 if nav_heading is not None:
                     self.phase3_no_heading_start = None
                     diff = self._angle_diff_deg(target_heading, nav_heading)
                     heading_deadband = PHASE3_HEADING_DEADBAND_DEG
                     turn_scale = 1.0
                     if heading_source == "GPS_FALLBACK":
-                        heading_deadband = max(heading_deadband, PHASE3_GPS_FALLBACK_DEADBAND_DEG)
+                        # GPS course-over-ground is much more delayed than the compass-like
+                        # heading used in main(8).py. Keep it as a coarse fallback only.
+                        heading_deadband = max(
+                            heading_deadband,
+                            PHASE3_GPS_FALLBACK_DEADBAND_DEG,
+                            PHASE3_TURN_FULL_ERROR_DEG,
+                        )
                         turn_scale = PHASE3_GPS_FALLBACK_TURN_SCALE
                     if abs(diff) <= heading_deadband:
                         base = self._clamp_percent(BASE_SPEED)
@@ -401,24 +404,17 @@ class MotorManager:
                 else:
                     if self.phase3_no_heading_start is None:
                         self.phase3_no_heading_start = time.time()
-                    elapsed = time.time() - self.phase3_no_heading_start
-                    left_turn = int(elapsed // PHASE3_NO_HEADING_TURN_INTERVAL) % 2 == 0
-                    if left_turn:
-                        self._set_forward_diff_turn(
-                            "left",
-                            turn_fast,
-                            turn_slow,
-                            cmd_type="phase3_no_heading_search",
-                            ramp_time=PHASE3_TURN_RAMP_TIME,
-                        )
-                    else:
-                        self._set_forward_diff_turn(
-                            "right",
-                            turn_fast,
-                            turn_slow,
-                            cmd_type="phase3_no_heading_search",
-                            ramp_time=PHASE3_TURN_RAMP_TIME,
-                        )
+                    # Legacy Phase3 was straight-dominant; alternating left/right search here
+                    # creates the large S-curves seen in recent logs.
+                    base = self._clamp_percent(BASE_SPEED)
+                    self.set_motors(
+                        base,
+                        True,
+                        base,
+                        True,
+                        ramp_time=PHASE3_FORWARD_RAMP_TIME,
+                        cmd_type="phase3_no_heading_forward",
+                    )
             elif phase == Phase.PHASE4:
                 # Phase4 is camera-only: keep all turning forward-only to avoid reverse torque.
                 cone_prob = snapshot.get("cone_probability", 0.0)
