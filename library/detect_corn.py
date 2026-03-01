@@ -61,9 +61,9 @@ class detector:
             (np.array([165, 100, 70], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8)),
         ]
         # Stricter candidate quality floors (user reported cones are visually salient).
-        self.min_shape_score_strict = 0.34
-        self.min_sv_score_strict = 0.26
-        self.min_hue_redness_strict = 0.42
+        self.min_shape_score_strict = 0.26
+        self.min_sv_score_strict = 0.18
+        self.min_hue_redness_strict = 0.34
         self.variant_selection_margin = 0.04
 
     def __roi_focus_mask(self, bgr_img, label):
@@ -495,7 +495,7 @@ class detector:
                 or hue_redness_score < self.min_hue_redness_strict
             ):
                 # Strongly suppress grass/branches and brownish blobs that pass hue threshold loosely.
-                score *= 0.60
+                score *= 0.72
             # Far cone rescue: allow small but very cone-like red silhouettes to survive strict penalties.
             if (
                 occ < 0.035
@@ -660,6 +660,8 @@ class detector:
                     prob *= 0.55
                 elif roi_support_ratio < self.roi_hist_min_support_ratio:
                     prob *= 0.78
+                elif best_mode in ("backproj", "hybrid_overlap", "hybrid_union"):
+                    prob = max(prob, min(0.36, 0.18 + 2.8 * occupancy))
                 # Proven detector behavior is occupancy-first on backprojection.
                 # Rescue that path when ROI support is real and sky-like penalties are not triggered.
                 if (
