@@ -169,6 +169,7 @@ class SensorManager:
             self._coerce_int(bool(motor_cmd.get("motor1_forward", 1))),
             f"{self._coerce_float(motor_cmd.get('motor2_speed', 0.0)):.2f}",
             self._coerce_int(bool(motor_cmd.get("motor2_forward", 1))),
+            str(getattr(self, "phase7_arrival_reason", "RUNNING")),
             str(getattr(self, "mission_end_reason", "RUNNING")),
             self._coerce_int(bool(getattr(self, "mission_total_timeout_triggered", False))),
             f"{self._coerce_float(mission_elapsed_sec):.2f}",

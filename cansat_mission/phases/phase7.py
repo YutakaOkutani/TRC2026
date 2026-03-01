@@ -17,20 +17,27 @@ class Phase7Handler(BasePhaseHandler):
         led_red = controller.devices.get(DEVICE_LED_RED)
         led_green = controller.devices.get(DEVICE_LED_GREEN)
         controller.stop_motors()
-        if getattr(controller, "mission_total_timeout_triggered", False):
-            if getattr(controller, "mission_end_reason", "RUNNING") == "RUNNING":
-                controller.mission_end_reason = "MISSION_TOTAL_TIMEOUT"
-            print("phase7 : Mission End (TOTAL TIMEOUT)")
-            controller.signal_total_timeout_alert()
+        mission_end_reason = getattr(controller, "mission_end_reason", "RUNNING")
+        if mission_end_reason == "RUNNING":
+            controller.mission_end_reason = "PHASE7_EXIT"
+            mission_end_reason = controller.mission_end_reason
+        controller.phase7_arrival_reason = controller._resolve_phase7_arrival_reason()
+
+        give_up = getattr(controller, "mission_total_timeout_triggered", False) or mission_end_reason not in {
+            "GOAL_REACHED",
+            "PHASE7_EXIT",
+        }
+
+        if give_up:
+            print(f"phase7 : Give up ({controller.phase7_arrival_reason})")
+            controller.signal_give_up()
         else:
-            if getattr(controller, "mission_end_reason", "RUNNING") == "RUNNING":
-                controller.mission_end_reason = "PHASE7_EXIT"
-            print("phase7 : Goal!! (stopped after final ram)")
+            print(f"phase7 : Goal!! ({controller.phase7_arrival_reason})")
             if led_red:
                 led_red.on()
             if led_green:
                 led_green.on()
-        sys.exit()
+        controller.request_shutdown(mission_end_reason)
 
 
 def run_standalone():

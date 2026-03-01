@@ -2,6 +2,7 @@ import datetime
 import math
 import os
 import time
+import csv
 
 from cansat_mission.constants import (
     DEFAULT_BNO_CALIB,
@@ -123,6 +124,7 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.phase_entry_time = None
         self.last_phase_observed = None
         self.phase_elapsed_totals = {phase: 0.0 for phase in Phase}
+        self.phase7_arrival_reason = "RUNNING"
         self.mission_end_reason = "RUNNING"
         self.mission_total_timeout_triggered = False
         self._shutdown_requested = False
@@ -144,10 +146,31 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self._shutdown_requested = True
         if self.mission_end_reason == "RUNNING":
             self.mission_end_reason = reason
+        if self.phase7_arrival_reason == "RUNNING" and self.state.snapshot().get("phase") == int(Phase.PHASE7):
+            self.phase7_arrival_reason = self._resolve_phase7_arrival_reason()
         try:
             self.stop_motors()
         except Exception as exc:
             print(f"Emergency stop failed: {exc}")
+        self._write_final_log_row()
+
+    def _resolve_phase7_arrival_reason(self):
+        reason = str(getattr(self, "mission_end_reason", "RUNNING"))
+        if reason == "GOAL_REACHED":
+            return "GOAL_REACHED"
+        if reason == "MISSION_TOTAL_TIMEOUT":
+            return "MISSION_TOTAL_TIMEOUT"
+        if reason == "PHASE5_TIMEOUT_FORCED_GOAL":
+            return "PHASE5_TIMEOUT_FORCED_GOAL"
+        return "OTHER_ABNORMAL_EXIT"
+
+    def _write_final_log_row(self):
+        try:
+            with open(self.log_path, "a", newline="") as file_obj:
+                writer = csv.writer(file_obj)
+                self._append_log_row(writer, file_obj)
+        except Exception as exc:
+            print(f"Final Log Error: {exc}")
 
     def initialize_phase(self, phase):
         phase_enum = Phase(phase)
@@ -204,12 +227,14 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
             self.mission_start_time = now
         mission_elapsed = now - self.mission_start_time
         if mission_elapsed >= MISSION_TIMEOUT_TOTAL:
-            print(f"MISSION TIMEOUT ({mission_elapsed:.1f}s): forcing Phase6")
-            self._commit_active_phase_elapsed(current_phase, now)
-            self.mission_end_reason = "MISSION_TOTAL_TIMEOUT"
-            self.mission_total_timeout_triggered = True
-            self.initialize_phase(Phase.PHASE6)
-            return True
+            if not self.mission_total_timeout_triggered:
+                print(f"MISSION TIMEOUT ({mission_elapsed:.1f}s): forcing Phase7 give-up")
+                self._commit_active_phase_elapsed(current_phase, now)
+                self.mission_end_reason = "MISSION_TOTAL_TIMEOUT"
+                self.mission_total_timeout_triggered = True
+                self.initialize_phase(Phase.PHASE7)
+                return True
+            return current_phase != Phase.PHASE7
 
         phase_budget = MISSION_PHASE_TIME_BUDGETS.get(current_phase)
         if phase_budget is None:

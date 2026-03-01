@@ -172,7 +172,7 @@ def run_demo():
     signal.signal(signal.SIGINT, safe_exit)
 
     print("--- LED test using production cansat_mission handlers/managers ---")
-    print("Covers startup signal, Phase0-7 patterns, and total-timeout alert.")
+    print("Covers startup signal, Phase0-7 patterns, and give-up indication.")
     print("Note: LED_INTERVAL_PHASE3_NEAR exists in constants but is not used by current production phase handlers.\n")
 
     try:
@@ -222,7 +222,7 @@ def run_demo():
         HARNESS.run_phase7_once(total_timeout=False, hold_sec=2.0)
         time.sleep(0.5)
 
-        print("[PH7 total-timeout] fast anti-phase alert (LedManager.signal_total_timeout_alert)")
+        print("[PH7 give-up] red on / green off")
         HARNESS.run_phase7_once(total_timeout=True, hold_sec=0.0)
         time.sleep(0.5)
 

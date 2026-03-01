@@ -1,4 +1,5 @@
 import os
+import os
 from enum import IntEnum
 
 
@@ -24,7 +25,6 @@ TARGET_LAT = 38.266127
 TARGET_LNG = 140.858045
 
 # タイムアウトと動作関連定数
-MISSION_TIMEOUT_TOTAL = 18 * 60
 TIMEOUT_PHASE_0 = 5 * 60
 TIMEOUT_PHASE_1 = 30
 TIMEOUT_PHASE_2 = 30
@@ -32,8 +32,10 @@ TIMEOUT_PHASE_3 = 5 * 60
 TIMEOUT_PHASE_4 = 60
 TIMEOUT_PHASE_5 = 45
 DATA_SAMPLING_RATE = 0.06
+PHASE6_RAM_SPEED = 25
+PHASE6_RAM_DURATION_SEC = 2.5
 
-# ミッション全体(18分)を超えないためのフェーズ累積予算
+# ミッション全体のフェーズ累積予算
 # Phase3-5 は再入を考慮して、個別タイムアウトより大きい累積値を持たせる
 MISSION_PHASE_TIME_BUDGETS = {
     Phase.PHASE0: TIMEOUT_PHASE_0,  # 降下待機
@@ -43,6 +45,15 @@ MISSION_PHASE_TIME_BUDGETS = {
     Phase.PHASE4: 90,               # カメラ探索(複数回)
     Phase.PHASE5: 90,               # 接近(複数回)
 }
+MISSION_PHASE_BUDGET_TOTAL = sum(MISSION_PHASE_TIME_BUDGETS.values())
+# 全体タイムアウトは「フェーズ累積予算合計 + 最終突入 + 遷移吸収マージン」で導出する。
+# 現在値は 960 + 2.5 + 5.0 = 967.5 秒 (約 16 分 7.5 秒)。
+MISSION_TIMEOUT_TRANSITION_GRACE_SEC = 5.0
+MISSION_TIMEOUT_TOTAL = (
+    MISSION_PHASE_BUDGET_TOTAL
+    + PHASE6_RAM_DURATION_SEC
+    + MISSION_TIMEOUT_TRANSITION_GRACE_SEC
+)
 
 MISSION_PHASE_TIMEOUT_TRANSITIONS = {
     Phase.PHASE0: Phase.PHASE1,
@@ -92,8 +103,6 @@ CAMERA_FAIL_LIMIT = 5
 CAMERA_DEAD_TIMEOUT = 30.0
 CAMERA_PHASE4_MAX_ATTEMPTS = 3
 CAMERA_PHASE5_MAX_ATTEMPTS = 3
-PHASE6_RAM_SPEED = 25
-PHASE6_RAM_DURATION_SEC = 2.5
 
 # ロゴ保存パス
 # ROI画像はホーム配下の固定パスを常に参照する
@@ -359,6 +368,7 @@ LOG_HEADER = [
     "Motor1CmdForward",
     "Motor2CmdSpeed",
     "Motor2CmdForward",
+    "Phase7ArrivalReason",
     "MissionEndReason",
     "MissionTotalTimeout",
     "MissionElapsedSec",

@@ -49,3 +49,11 @@ class LedManager:
             led_red.off()
         if led_green:
             led_green.off()
+
+    def signal_give_up(self):
+        led_red = self.devices.get(DEVICE_LED_RED)
+        led_green = self.devices.get(DEVICE_LED_GREEN)
+        if led_red:
+            led_red.on()
+        if led_green:
+            led_green.off()
