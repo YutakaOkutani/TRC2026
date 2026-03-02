@@ -106,6 +106,12 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.camera_phase5_attempts = 0
         self.camera_phase4_start = None
         self.camera_phase5_start = None
+        self.camera_candidate_last_dir = None
+        self.camera_candidate_last_time = 0.0
+        self.camera_candidate_streak = 0
+        self.camera_stable_dir = None
+        self.camera_stable_prob = 0.0
+        self.camera_stable_seen_time = 0.0
         self.phase5_entry_marker = None
         self.phase0_wait_log_counter = 0
         self.obstacle_detect_count = 0

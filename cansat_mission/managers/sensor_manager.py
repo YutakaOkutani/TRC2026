@@ -30,6 +30,12 @@ from cansat_mission.constants import (
     CAMERA_FAIL_LIMIT,
     CAMERA_IDLE_SLEEP,
     CAMERA_REINIT_INTERVAL,
+    CAMERA_TEMPORAL_CONFIRM_FRAMES,
+    CAMERA_TEMPORAL_DIR_FILTER_ALPHA,
+    CAMERA_TEMPORAL_DIR_JUMP_MAX,
+    CAMERA_TEMPORAL_HOLD_SEC,
+    CAMERA_TEMPORAL_MIN_PROBABILITY,
+    CAMERA_TEMPORAL_STRONG_PROBABILITY,
     CONE_CENTER_POSITION,
     DATA_SAMPLING_RATE,
     DEFAULT_BNO_CALIB,
@@ -61,6 +67,75 @@ from cansat_mission.navigation import calc_distance_and_azimuth
 
 
 class SensorManager:
+    def _stabilize_cone_measurement(self, cone_direction, cone_probability, cone_is_reached, cone_method):
+        now = time.time()
+        try:
+            raw_dir = float(cone_direction)
+        except (TypeError, ValueError):
+            raw_dir = CONE_CENTER_POSITION
+        raw_dir = max(0.0, min(1.0, raw_dir))
+        raw_prob = self._coerce_float(cone_probability, 0.0)
+        reached = bool(cone_is_reached)
+
+        if reached:
+            self.camera_candidate_last_dir = raw_dir
+            self.camera_candidate_last_time = now
+            self.camera_candidate_streak = max(
+                int(getattr(self, "camera_candidate_streak", 0)),
+                int(CAMERA_TEMPORAL_CONFIRM_FRAMES),
+            )
+            self.camera_stable_dir = raw_dir
+            self.camera_stable_prob = max(1.0, raw_prob)
+            self.camera_stable_seen_time = now
+            return raw_dir, max(1.0, raw_prob), True, f"{cone_method}:reached"
+
+        min_prob = float(CAMERA_TEMPORAL_MIN_PROBABILITY)
+        strong_prob = float(CAMERA_TEMPORAL_STRONG_PROBABILITY)
+        hold_sec = float(CAMERA_TEMPORAL_HOLD_SEC)
+        dir_jump_max = float(CAMERA_TEMPORAL_DIR_JUMP_MAX)
+        confirm_frames = max(1, int(CAMERA_TEMPORAL_CONFIRM_FRAMES))
+        alpha = max(0.0, min(1.0, float(CAMERA_TEMPORAL_DIR_FILTER_ALPHA)))
+
+        last_candidate_dir = getattr(self, "camera_candidate_last_dir", None)
+        last_candidate_time = float(getattr(self, "camera_candidate_last_time", 0.0) or 0.0)
+        stable_dir = getattr(self, "camera_stable_dir", None)
+        stable_prob = self._coerce_float(getattr(self, "camera_stable_prob", 0.0), 0.0)
+        stable_seen_time = float(getattr(self, "camera_stable_seen_time", 0.0) or 0.0)
+
+        candidate_valid = raw_prob >= min_prob
+        if candidate_valid:
+            consistent = False
+            if last_candidate_dir is not None and (now - last_candidate_time) <= hold_sec:
+                consistent = abs(raw_dir - float(last_candidate_dir)) <= dir_jump_max
+            if consistent:
+                self.camera_candidate_streak = int(getattr(self, "camera_candidate_streak", 0)) + 1
+            else:
+                self.camera_candidate_streak = 1
+            self.camera_candidate_last_dir = raw_dir
+            self.camera_candidate_last_time = now
+
+            stable_now = raw_prob >= strong_prob or self.camera_candidate_streak >= confirm_frames
+            if stable_now:
+                if stable_dir is None:
+                    filtered_dir = raw_dir
+                else:
+                    filtered_dir = (1.0 - alpha) * float(stable_dir) + alpha * raw_dir
+                self.camera_stable_dir = filtered_dir
+                self.camera_stable_prob = raw_prob
+                self.camera_stable_seen_time = now
+                if raw_prob < strong_prob and self.camera_candidate_streak == confirm_frames:
+                    cone_method = f"{cone_method}:stable"
+                return filtered_dir, raw_prob, False, cone_method
+            return CONE_CENTER_POSITION, 0.0, False, f"{cone_method}:pending"
+
+        self.camera_candidate_streak = 0
+        if stable_dir is not None and (now - stable_seen_time) <= hold_sec:
+            held_prob = max(0.0, stable_prob * 0.85)
+            return float(stable_dir), held_prob, False, f"{cone_method}:hold"
+
+        self.camera_stable_prob = 0.0
+        return CONE_CENTER_POSITION, 0.0, False, f"{cone_method}:lost"
+
     def _transform_cone_direction_for_control(self, cone_direction):
         """Map detector X position into the rover control frame."""
         try:
@@ -513,10 +588,16 @@ class SensorManager:
                 cdir = 1.0 - float(detector.cone_direction)
                 cdir = self._transform_cone_direction_for_control(cdir)
             cone_method = str(getattr(detector, "debug_method", "unknown"))
+            cdir, prob, is_reached, cone_method = self._stabilize_cone_measurement(
+                cdir,
+                prob,
+                detector.is_reached,
+                cone_method,
+            )
             self.state.update_cone(
                 cone_direction=cdir,
                 cone_probability=prob,
-                cone_is_reached=detector.is_reached,
+                cone_is_reached=is_reached,
                 cone_method=cone_method,
             )
             last_method = getattr(self, "_last_logged_cone_method", None)

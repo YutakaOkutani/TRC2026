@@ -64,6 +64,8 @@ class detector:
         self.min_shape_score_strict = 0.26
         self.min_sv_score_strict = 0.18
         self.min_hue_redness_strict = 0.34
+        self.min_detect_probability = 0.16
+        self.min_detect_quality_floor = 0.16
         self.variant_selection_margin = 0.12
         self.allow_swap_rb_rescue = False
         self.upper_sky_reject_top_frac = 0.38
@@ -455,13 +457,13 @@ class detector:
             vertical_center_score = 1.0 - min(abs(cy_norm - 0.5) / 0.5, 1.0)
             lower_frame_bonus = max(0.0, min((cy_norm - self.lower_frame_bonus_start) / 0.30, 1.0))
             score = (
-                0.28 * area_score
-                + 0.42 * shape_score
-                + 0.12 * center_score
-                + 0.10 * sv_score
-                + 0.05 * hue_redness_score
-                + 0.01 * vertical_center_score
-                + 0.08 * lower_frame_bonus
+                0.24 * area_score
+                + 0.41 * shape_score
+                + 0.08 * center_score
+                + 0.12 * sv_score
+                + 0.08 * hue_redness_score
+                + 0.02 * vertical_center_score
+                + 0.10 * lower_frame_bonus
             )
             occ = area / img_size
             edge_touch_count = 0
@@ -505,9 +507,10 @@ class detector:
             # Far cone rescue: allow small but very cone-like red silhouettes to survive strict penalties.
             if (
                 occ < 0.035
-                and cone_shape_score >= 0.62
+                and cone_shape_score >= 0.55
                 and hue_redness_score >= 0.68
-                and sv_score >= 0.30
+                and sv_score >= 0.24
+                and cy_norm >= 0.48
             ):
                 score = max(score, 0.34 + 0.36 * cone_shape_score + 0.18 * hue_redness_score)
             item = {
@@ -633,7 +636,7 @@ class detector:
             occupancy = best_component["occupancy"]
             prob = float(max(0.0, min(1.0, best_component["score"])))
             cone_dir = float(best_component["centroid"][0]) / float(self.camera_width)
-            is_detected = True
+            is_detected = prob >= self.min_detect_probability
 
         # If the cone is too close, the component shape often breaks. Promote close-range evidence.
         if reached:
@@ -671,6 +674,19 @@ class detector:
                 and cone_shape_score < 0.72
             ):
                 prob *= 0.18
+            quality_floor = min(cone_shape_score, hue_redness_score, sv_score)
+            if (
+                bbox_bottom_frac < 0.48
+                and occupancy < 0.05
+                and cone_shape_score < 0.58
+                and hue_redness_score < 0.62
+            ):
+                prob *= 0.45
+            if (
+                occupancy < 0.10
+                and quality_floor < self.min_detect_quality_floor
+            ):
+                prob *= 0.35
             if bp_mask is not None:
                 if best_mode == "hue" and roi_support_ratio < self.roi_hist_min_support_ratio:
                     prob *= 0.35
@@ -693,6 +709,14 @@ class detector:
                     and sv_score >= 0.20
                 ):
                     prob = max(prob, min(0.82, 0.34 + 5.5 * occupancy))
+            if (
+                bbox_bottom_frac >= 0.55
+                and occupancy < 0.045
+                and cone_shape_score >= 0.55
+                and hue_redness_score >= 0.62
+                and sv_score >= 0.24
+            ):
+                prob = max(prob, min(0.78, 0.26 + 0.40 * cone_shape_score + 0.18 * hue_redness_score + 1.8 * occupancy))
 
         # Candidate quality to resolve RGB/BGR ambiguity across camera setups.
         overall_score = (

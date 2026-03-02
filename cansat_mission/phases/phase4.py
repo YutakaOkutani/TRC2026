@@ -15,6 +15,7 @@ from cansat_mission.constants import (
     CONE_CENTER_POSITION,
     CONE_PHASE4_CONFIRM_FRAMES,
     CONE_PHASE4_CENTER_TOLERANCE,
+    CONE_PHASE4_STRONG_PROBABILITY,
     CONE_PROBABILITY_THRESHOLD,
     CONE_PROBABILITY_THRESHOLD_PHASE4,
     DEVICE_LED_GREEN,
@@ -98,7 +99,9 @@ class Phase4Handler(BasePhaseHandler):
         except (TypeError, ValueError):
             cone_dir_val = CONE_CENTER_POSITION
         centered = abs(cone_dir_val - CONE_CENTER_POSITION) <= CONE_PHASE4_CENTER_TOLERANCE
-        strict_detect = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4) and centered
+        strict_detect = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4) and (
+            centered or cone_prob >= CONE_PHASE4_STRONG_PROBABILITY
+        )
         loose_detect = cone_prob > CONE_PROBABILITY_THRESHOLD
 
         if cone_reached:
