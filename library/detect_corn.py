@@ -81,6 +81,10 @@ class detector:
         self.ground_band_width_frac = 0.62
         self.ground_band_height_frac = 0.42
         self.ground_band_bottom_frac = 0.58
+        self.close_region_min_hue = 0.56
+        self.close_region_min_sv = 0.26
+        self.close_region_min_shape = 0.22
+        self.close_region_min_roi_support = 0.12
         self.upper_sky_reject_top_frac = 0.38
         self.upper_sky_reject_width_frac = 0.18
         self.lower_frame_bonus_start = 0.52
@@ -775,6 +779,7 @@ class detector:
 
         reached, frame_red_occupancy, edge_touch = self.__close_range_reached(red_mask)
         dominant_red = self.__largest_component_bbox(red_mask)
+        dominant_red_component = self.__component_metrics(red_mask, hsv_img=hsv)
 
         prob = 0.0
         centroid = None
@@ -800,11 +805,29 @@ class detector:
             dom_occ = dom_area / float(self.camera_width * self.camera_height)
             dom_width_frac = float(dom_bbox[2]) / float(self.camera_width)
             dom_height_frac = float(dom_bbox[3]) / float(self.camera_height)
+            dom_bottom_frac = float(dom_bbox[1] + dom_bbox[3]) / float(self.camera_height)
+            dom_shape = float(dominant_red_component.get("cone_shape_score", 0.0)) if dominant_red_component else 0.0
+            dom_hue = float(dominant_red_component.get("hue_redness_score", 0.0)) if dominant_red_component else 0.0
+            dom_sv = float(dominant_red_component.get("sv_score", 0.0)) if dominant_red_component else 0.0
+            dom_ground_penalty = self.__ground_band_penalty(
+                dom_width_frac,
+                dom_height_frac,
+                dom_bottom_frac,
+                float(dom_bbox[2]) / max(float(dom_bbox[3]), 1.0),
+                dom_shape,
+            )
+            close_region_ok = (
+                dom_hue >= self.close_region_min_hue
+                and dom_sv >= self.close_region_min_sv
+                and dom_shape >= self.close_region_min_shape
+                and (roi_support_ratio >= self.close_region_min_roi_support or dom_occ >= 0.20)
+                and dom_ground_penalty >= 0.5
+            )
             dominant_close = (
                 dom_occ >= 0.14
                 or (frame_red_occupancy >= 0.22 and dom_width_frac >= 0.30 and dom_height_frac >= 0.35)
             )
-            if dominant_close:
+            if dominant_close and close_region_ok:
                 bbox = dom_bbox
                 centroid = dom_centroid
                 occupancy = max(occupancy, dom_occ)
@@ -814,7 +837,34 @@ class detector:
                 best_mask = red_mask
                 best_mode = "close_red_region"
 
-        if reached:
+        close_reached_ok = False
+        if dominant_red is not None and dominant_red_component is not None:
+            dom_bbox = dominant_red["bbox"]
+            dom_occ = float(dominant_red["area"]) / float(self.camera_width * self.camera_height)
+            dom_width_frac = float(dom_bbox[2]) / float(self.camera_width)
+            dom_height_frac = float(dom_bbox[3]) / float(self.camera_height)
+            dom_bottom_frac = float(dom_bbox[1] + dom_bbox[3]) / float(self.camera_height)
+            dom_shape = float(dominant_red_component.get("cone_shape_score", 0.0))
+            dom_hue = float(dominant_red_component.get("hue_redness_score", 0.0))
+            dom_sv = float(dominant_red_component.get("sv_score", 0.0))
+            dom_ground_penalty = self.__ground_band_penalty(
+                dom_width_frac,
+                dom_height_frac,
+                dom_bottom_frac,
+                float(dom_bbox[2]) / max(float(dom_bbox[3]), 1.0),
+                dom_shape,
+            )
+            close_reached_ok = (
+                reached
+                and dom_occ >= 0.18
+                and dom_hue >= 0.60
+                and dom_sv >= 0.30
+                and dom_shape >= 0.18
+                and (roi_support_ratio >= 0.10 or dom_occ >= 0.24)
+                and dom_ground_penalty >= 0.5
+            )
+
+        if close_reached_ok:
             is_detected = True
             prob = 1.0
             if dominant_red is not None:
