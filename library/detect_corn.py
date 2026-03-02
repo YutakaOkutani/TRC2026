@@ -78,6 +78,9 @@ class detector:
         self.legacy_backproj_min_hue = 0.40
         self.legacy_backproj_min_sv = 0.18
         self.legacy_backproj_min_roi_support = 0.16
+        self.ground_band_width_frac = 0.62
+        self.ground_band_height_frac = 0.42
+        self.ground_band_bottom_frac = 0.58
         self.upper_sky_reject_top_frac = 0.38
         self.upper_sky_reject_width_frac = 0.18
         self.lower_frame_bonus_start = 0.52
@@ -663,6 +666,20 @@ class detector:
             score += 0.10 * min(float(candidate.get("occupancy", 0.0)) / 0.05, 1.0)
         return score
 
+    def __ground_band_penalty(self, width_frac, height_frac, bbox_bottom_frac, aspect, cone_shape_score):
+        penalty = 1.0
+        if (
+            width_frac >= self.ground_band_width_frac
+            and height_frac <= self.ground_band_height_frac
+            and bbox_bottom_frac >= self.ground_band_bottom_frac
+        ):
+            penalty *= 0.10
+        elif width_frac >= 0.52 and height_frac <= 0.36 and bbox_bottom_frac >= 0.52:
+            penalty *= 0.28
+        if aspect >= 2.2 and cone_shape_score < 0.58:
+            penalty *= 0.35
+        return penalty
+
     def __swap_rb_candidate_is_trustworthy(self, candidate):
         if candidate is None:
             return False
@@ -721,6 +738,7 @@ class detector:
                 ("hybrid_overlap", overlap),
                 ("backproj", bp_mask),
                 ("hybrid_union", union),
+                ("hue", red_mask),
             ]
         else:
             candidates = [("hue", red_mask)]
@@ -735,9 +753,14 @@ class detector:
             comp_score = comp["score"] if comp is not None else 0.0
             # Slight preference for hue-based masks in close range because shape can collapse.
             if mode_name.startswith("hue"):
-                comp_score += 0.02
+                comp_score += 0.04
                 if bp_mask is not None:
-                    comp_score -= 0.12
+                    comp_score -= 0.05
+                if comp is not None and (
+                    float(comp.get("hue_redness_score", 0.0)) >= 0.62
+                    and float(comp.get("sv_score", 0.0)) >= 0.30
+                ):
+                    comp_score += 0.10
             elif mode_name.startswith("hybrid_overlap"):
                 comp_score += 0.05
             elif mode_name.startswith("backproj"):
@@ -834,6 +857,13 @@ class detector:
                 and cone_shape_score < 0.72
             ):
                 prob *= 0.18
+            prob *= self.__ground_band_penalty(
+                width_frac,
+                height_frac,
+                bbox_bottom_frac,
+                aspect,
+                cone_shape_score,
+            )
             quality_floor = min(cone_shape_score, hue_redness_score, sv_score)
             if (
                 bbox_bottom_frac < 0.48
@@ -888,6 +918,9 @@ class detector:
             legacy_top = int(legacy_bbox[1]) if len(legacy_bbox) >= 2 else 0
             legacy_h = int(legacy_bbox[3]) if len(legacy_bbox) >= 4 else 0
             legacy_bottom_frac = float(legacy_top + legacy_h) / float(self.camera_height) if self.camera_height > 0 else 0.0
+            legacy_width_frac = float(legacy_bbox[2]) / float(self.camera_width) if self.camera_width > 0 else 0.0
+            legacy_height_frac = float(legacy_bbox[3]) / float(self.camera_height) if self.camera_height > 0 else 0.0
+            legacy_aspect = float(legacy_component.get("aspect", 0.0))
             legacy_prob = min(0.88, 0.20 + 7.5 * legacy_occ)
             if legacy_occ < self.legacy_backproj_min_occupancy:
                 legacy_prob = 0.0
@@ -901,6 +934,13 @@ class detector:
                 legacy_prob *= 0.40
             if legacy_bottom_frac < 0.42 and legacy_prob < 0.40:
                 legacy_prob *= 0.45
+            legacy_prob *= self.__ground_band_penalty(
+                legacy_width_frac,
+                legacy_height_frac,
+                legacy_bottom_frac,
+                legacy_aspect,
+                legacy_shape,
+            )
 
             if legacy_prob > prob and (
                 legacy_occ >= self.legacy_backproj_min_occupancy
@@ -908,6 +948,7 @@ class detector:
                 and legacy_hue >= self.legacy_backproj_min_hue
                 and legacy_sv >= self.legacy_backproj_min_sv
                 and roi_support_ratio >= self.legacy_backproj_min_roi_support
+                and legacy_prob >= self.min_detect_probability
             ):
                 best_component = legacy_component
                 best_mode = "backproj_legacy"
