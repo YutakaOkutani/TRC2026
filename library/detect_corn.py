@@ -74,9 +74,9 @@ class detector:
         self.swap_rb_min_sv = 0.16
         self.swap_rb_force_margin = 0.24
         self.legacy_backproj_min_occupancy = 0.010
-        self.legacy_backproj_min_shape = 0.28
-        self.legacy_backproj_min_hue = 0.40
-        self.legacy_backproj_min_sv = 0.18
+        self.legacy_backproj_min_shape = 0.45
+        self.legacy_backproj_min_hue = 0.50
+        self.legacy_backproj_min_sv = 0.24
         self.legacy_backproj_min_roi_support = 0.16
         self.ground_band_width_frac = 0.62
         self.ground_band_height_frac = 0.42
@@ -677,11 +677,13 @@ class detector:
             and height_frac <= self.ground_band_height_frac
             and bbox_bottom_frac >= self.ground_band_bottom_frac
         ):
-            penalty *= 0.10
+            penalty *= 0.04
         elif width_frac >= 0.52 and height_frac <= 0.36 and bbox_bottom_frac >= 0.52:
-            penalty *= 0.28
+            penalty *= 0.16
         if aspect >= 2.2 and cone_shape_score < 0.58:
-            penalty *= 0.35
+            penalty *= 0.22
+        if width_frac >= 0.40 and aspect >= 1.60 and cone_shape_score < 0.62:
+            penalty *= 0.30
         return penalty
 
     def __swap_rb_candidate_is_trustworthy(self, candidate):
@@ -765,10 +767,25 @@ class detector:
                     and float(comp.get("sv_score", 0.0)) >= 0.30
                 ):
                     comp_score += 0.10
+                if comp is not None and (
+                    float(comp.get("cone_shape_score", 0.0)) >= 0.48
+                    and float(comp.get("width_frac", 0.0)) <= 0.32
+                ):
+                    comp_score += 0.12
             elif mode_name.startswith("hybrid_overlap"):
                 comp_score += 0.05
+                if comp is not None and (
+                    float(comp.get("cone_shape_score", 0.0)) >= 0.44
+                    and float(comp.get("width_frac", 0.0)) <= 0.36
+                ):
+                    comp_score += 0.08
             elif mode_name.startswith("backproj"):
                 comp_score += 0.03
+                if comp is not None and (
+                    float(comp.get("width_frac", 0.0)) >= 0.42
+                    or float(comp.get("aspect", 0.0)) >= 1.60
+                ):
+                    comp_score -= 0.28
             if comp_score > best_mode_score:
                 best_mode_score = comp_score
                 best_mode = mode_name
@@ -991,6 +1008,8 @@ class detector:
                 legacy_aspect,
                 legacy_shape,
             )
+            if legacy_width_frac >= 0.40 or legacy_aspect >= 1.60:
+                legacy_prob *= 0.18
 
             if legacy_prob > prob and (
                 legacy_occ >= self.legacy_backproj_min_occupancy
