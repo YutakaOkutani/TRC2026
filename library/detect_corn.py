@@ -54,6 +54,10 @@ class detector:
         self.roi_negative_weight = 0.0
         self.negative_backproj_scale = 0.85
         self.roi_hist_min_support_ratio = 0.18
+        self.strict_red_min_hue_score = 0.58
+        self.strict_red_min_sv_score = 0.28
+        self.strict_red_min_shape_score = 0.32
+        self.strict_red_min_prob = 0.18
 
         # Default red HSV ranges (OpenCV H: 0-179)
         self.default_hsv_ranges = [
@@ -73,11 +77,11 @@ class detector:
         self.swap_rb_min_hue = 0.26
         self.swap_rb_min_sv = 0.16
         self.swap_rb_force_margin = 0.24
-        self.legacy_backproj_min_occupancy = 0.010
-        self.legacy_backproj_min_shape = 0.45
-        self.legacy_backproj_min_hue = 0.50
-        self.legacy_backproj_min_sv = 0.24
-        self.legacy_backproj_min_roi_support = 0.16
+        self.legacy_backproj_min_occupancy = 0.018
+        self.legacy_backproj_min_shape = 0.58
+        self.legacy_backproj_min_hue = 0.62
+        self.legacy_backproj_min_sv = 0.30
+        self.legacy_backproj_min_roi_support = 0.28
         self.ground_band_width_frac = 0.62
         self.ground_band_height_frac = 0.42
         self.ground_band_bottom_frac = 0.58
@@ -686,6 +690,32 @@ class detector:
             penalty *= 0.30
         return penalty
 
+    def __strict_red_candidate_ok(self, component, roi_support_ratio):
+        if component is None:
+            return False
+        hue = float(component.get("hue_redness_score", 0.0))
+        sv = float(component.get("sv_score", 0.0))
+        shape = float(component.get("cone_shape_score", 0.0))
+        prob = float(component.get("score", 0.0))
+        width_frac = float(component.get("width_frac", 0.0))
+        height_frac = float(component.get("height_frac", 0.0))
+        bbox = component.get("bbox") or [0, 0, 0, 0]
+        bbox_bottom_frac = float((bbox[1] + bbox[3]) / float(self.camera_height)) if self.camera_height > 0 else 0.0
+        aspect = float(component.get("aspect", 0.0))
+        if hue < self.strict_red_min_hue_score:
+            return False
+        if sv < self.strict_red_min_sv_score:
+            return False
+        if shape < self.strict_red_min_shape_score:
+            return False
+        if prob < self.strict_red_min_prob:
+            return False
+        if self.__ground_band_penalty(width_frac, height_frac, bbox_bottom_frac, aspect, shape) < 0.5:
+            return False
+        if roi_support_ratio < 0.06 and width_frac > 0.26:
+            return False
+        return True
+
     def __swap_rb_candidate_is_trustworthy(self, candidate):
         if candidate is None:
             return False
@@ -742,9 +772,8 @@ class detector:
 
             candidates = [
                 ("hybrid_overlap", overlap),
-                ("backproj", bp_mask),
-                ("hybrid_union", union),
                 ("hue", red_mask),
+                ("backproj", bp_mask),
             ]
         else:
             candidates = [("hue", red_mask)]
@@ -761,7 +790,7 @@ class detector:
             if mode_name.startswith("hue"):
                 comp_score += 0.04
                 if bp_mask is not None:
-                    comp_score -= 0.05
+                    comp_score += 0.02
                 if comp is not None and (
                     float(comp.get("hue_redness_score", 0.0)) >= 0.62
                     and float(comp.get("sv_score", 0.0)) >= 0.30
@@ -780,7 +809,7 @@ class detector:
                 ):
                     comp_score += 0.08
             elif mode_name.startswith("backproj"):
-                comp_score += 0.03
+                comp_score -= 0.10
                 if comp is not None and (
                     float(comp.get("width_frac", 0.0)) >= 0.42
                     or float(comp.get("aspect", 0.0)) >= 1.60
@@ -931,6 +960,9 @@ class detector:
                 aspect,
                 cone_shape_score,
             )
+            strict_red_ok = self.__strict_red_candidate_ok(best_component, roi_support_ratio)
+            if not strict_red_ok:
+                prob *= 0.08
             quality_floor = min(cone_shape_score, hue_redness_score, sv_score)
             if (
                 bbox_bottom_frac < 0.48
@@ -1010,6 +1042,8 @@ class detector:
             )
             if legacy_width_frac >= 0.40 or legacy_aspect >= 1.60:
                 legacy_prob *= 0.18
+            if legacy_hue < self.strict_red_min_hue_score or legacy_sv < self.strict_red_min_sv_score:
+                legacy_prob *= 0.05
 
             if legacy_prob > prob and (
                 legacy_occ >= self.legacy_backproj_min_occupancy
