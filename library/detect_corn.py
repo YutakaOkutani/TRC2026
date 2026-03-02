@@ -68,10 +68,11 @@ class detector:
         self.min_detect_quality_floor = 0.16
         self.variant_selection_margin = 0.20
         self.allow_swap_rb_rescue = True
-        self.swap_rb_min_probability = 0.20
-        self.swap_rb_min_shape = 0.40
-        self.swap_rb_min_hue = 0.52
-        self.swap_rb_min_sv = 0.24
+        self.swap_rb_min_probability = 0.18
+        self.swap_rb_min_shape = 0.22
+        self.swap_rb_min_hue = 0.26
+        self.swap_rb_min_sv = 0.16
+        self.swap_rb_force_margin = 0.24
         self.legacy_backproj_min_occupancy = 0.010
         self.legacy_backproj_min_shape = 0.28
         self.legacy_backproj_min_hue = 0.40
@@ -653,11 +654,11 @@ class detector:
             return False
         if shape < self.swap_rb_min_shape or hue < self.swap_rb_min_hue or sv < self.swap_rb_min_sv:
             return False
-        if quality_floor < 0.22:
+        if quality_floor < 0.14:
             return False
-        if occupancy < 0.010 and roi_support < 0.10:
+        if occupancy < 0.006 and roi_support < 0.06:
             return False
-        if bbox_bottom_frac < 0.45 and prob < 0.32:
+        if bbox_bottom_frac < 0.34 and prob < 0.26:
             return False
         return True
 
@@ -920,12 +921,26 @@ class detector:
             cand2 = self.__build_candidate(cv2.cvtColor(raw_img, cv2.COLOR_RGB2BGR), "swap_rb")
             cand2_select = self.__variant_selection_score(cand2)
             score_margin = cand2_select - cand1_select
+            cand1_prob = float(cand1.get("probability", 0.0))
+            cand2_prob = float(cand2.get("probability", 0.0))
+            cand1_hue = float(cand1.get("hue_redness_score", 0.0))
+            cand2_hue = float(cand2.get("hue_redness_score", 0.0))
+            cand1_shape = float(cand1.get("cone_shape_score", 0.0))
+            cand2_shape = float(cand2.get("cone_shape_score", 0.0))
+            swap_force_win = (
+                score_margin >= self.swap_rb_force_margin
+                and cand2_prob >= self.swap_rb_min_probability
+                and cand2_hue >= max(self.swap_rb_min_hue, cand1_hue + 0.08)
+                and cand2_shape >= max(self.swap_rb_min_shape, cand1_shape - 0.05)
+            )
+            swap_rescue_win = (
+                cand1_prob < self.min_detect_probability
+                and cand2_prob >= self.swap_rb_min_probability
+            )
             if self.__swap_rb_candidate_is_trustworthy(cand2) and (
-                score_margin >= self.variant_selection_margin
-                or (
-                    float(cand1.get("probability", 0.0)) < self.min_detect_probability
-                    and float(cand2.get("probability", 0.0)) >= self.swap_rb_min_probability
-                )
+                swap_force_win
+                or score_margin >= self.variant_selection_margin
+                or swap_rescue_win
             ):
                 best = cand2
 
