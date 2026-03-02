@@ -43,7 +43,7 @@ class detector:
         self.capture_retry_count = 3
         self.capture_retry_sleep = 0.2
         self.last_capture_error = None
-        self.backproj_dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 21))
+        self.backproj_dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
 
         # ROI histogram (None = default red mode)
         self.__roi_hist = None
@@ -72,6 +72,11 @@ class detector:
         self.swap_rb_min_shape = 0.40
         self.swap_rb_min_hue = 0.52
         self.swap_rb_min_sv = 0.24
+        self.legacy_backproj_min_occupancy = 0.010
+        self.legacy_backproj_min_shape = 0.28
+        self.legacy_backproj_min_hue = 0.40
+        self.legacy_backproj_min_sv = 0.18
+        self.legacy_backproj_min_roi_support = 0.16
         self.upper_sky_reject_top_frac = 0.38
         self.upper_sky_reject_width_frac = 0.18
         self.lower_frame_bonus_start = 0.52
@@ -545,6 +550,66 @@ class detector:
                 best = item
         return best
 
+    def __largest_component_metrics(self, mask, hsv_img=None):
+        if mask is None:
+            return None
+        mask_u8 = mask.astype(np.uint8)
+        nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_u8)
+        if nlabels <= 1:
+            return None
+
+        img_size = float(self.camera_width * self.camera_height)
+        best_idx = None
+        best_occ = 0.0
+        for idx in range(1, nlabels):
+            area = float(stats[idx, cv2.CC_STAT_AREA])
+            occ = area / img_size
+            if occ < self.min_component_occupancy:
+                continue
+            if best_idx is None or occ > best_occ:
+                best_idx = idx
+                best_occ = occ
+        if best_idx is None:
+            return None
+
+        s = stats[best_idx]
+        cx, cy = centroids[best_idx]
+        bbox = [
+            int(s[cv2.CC_STAT_LEFT]),
+            int(s[cv2.CC_STAT_TOP]),
+            int(s[cv2.CC_STAT_WIDTH]),
+            int(s[cv2.CC_STAT_HEIGHT]),
+        ]
+        contour_metrics = self.__contour_shape_metrics(labels, best_idx, bbox, float(s[cv2.CC_STAT_AREA]))
+        color_metrics = self.__component_color_metrics(hsv_img, labels, best_idx)
+        w = max(1, int(s[cv2.CC_STAT_WIDTH]))
+        h = max(1, int(s[cv2.CC_STAT_HEIGHT]))
+        aspect = float(w) / float(h)
+        aspect_diff = abs(aspect - self.cone_ratio)
+        aspect_score_std = 1.0 - min(aspect_diff / max(self.ratio_thresh, 1e-6), 1.0)
+        aspect_score_far = 1.0 - min(abs(aspect - 0.24) / 0.18, 1.0)
+        aspect_score = max(aspect_score_std, 0.95 * aspect_score_far)
+        occ = float(s[cv2.CC_STAT_AREA]) / img_size
+        legacy_score = min(0.95, 0.18 + 8.0 * occ)
+        item = {
+            "label_idx": best_idx,
+            "score": legacy_score,
+            "legacy_score": legacy_score,
+            "area": float(s[cv2.CC_STAT_AREA]),
+            "occupancy": occ,
+            "bbox": bbox,
+            "centroid": [int(cx), int(cy)],
+            "aspect": aspect,
+            "aspect_score": aspect_score,
+            "aspect_score_std": aspect_score_std,
+            "aspect_score_far": aspect_score_far,
+            "shape_score": 0.42 * aspect_score + 0.58 * contour_metrics["cone_shape_score"],
+            "labels": labels,
+        }
+        item.update(contour_metrics)
+        item.update(color_metrics)
+        return item
+
     def __variant_selection_score(self, candidate):
         if candidate is None:
             return -1.0
@@ -635,6 +700,7 @@ class detector:
         best_component = None
         best_mask = None
         best_mode_score = -1.0
+        legacy_component = None
         for mode_name, mask in candidates:
             comp = self.__component_metrics(mask, hsv_img=hsv)
             comp_score = comp["score"] if comp is not None else 0.0
@@ -652,6 +718,8 @@ class detector:
                 best_mode = mode_name
                 best_component = comp
                 best_mask = mask
+            if mode_name == "backproj":
+                legacy_component = self.__largest_component_metrics(mask, hsv_img=hsv)
 
         reached, frame_red_occupancy, edge_touch = self.__close_range_reached(red_mask)
 
@@ -750,6 +818,47 @@ class detector:
             ):
                 prob = max(prob, min(0.78, 0.26 + 0.40 * cone_shape_score + 0.18 * hue_redness_score + 1.8 * occupancy))
 
+        legacy_prob = 0.0
+        if legacy_component is not None and bp_mask is not None:
+            legacy_occ = float(legacy_component.get("occupancy", 0.0))
+            legacy_shape = float(legacy_component.get("cone_shape_score", 0.0))
+            legacy_hue = float(legacy_component.get("hue_redness_score", 0.0))
+            legacy_sv = float(legacy_component.get("sv_score", 0.0))
+            legacy_bbox = legacy_component.get("bbox") or [0, 0, 0, 0]
+            legacy_top = int(legacy_bbox[1]) if len(legacy_bbox) >= 2 else 0
+            legacy_h = int(legacy_bbox[3]) if len(legacy_bbox) >= 4 else 0
+            legacy_bottom_frac = float(legacy_top + legacy_h) / float(self.camera_height) if self.camera_height > 0 else 0.0
+            legacy_prob = min(0.88, 0.20 + 7.5 * legacy_occ)
+            if legacy_occ < self.legacy_backproj_min_occupancy:
+                legacy_prob = 0.0
+            if legacy_shape < self.legacy_backproj_min_shape:
+                legacy_prob *= 0.55
+            if legacy_hue < self.legacy_backproj_min_hue:
+                legacy_prob *= 0.45
+            if legacy_sv < self.legacy_backproj_min_sv:
+                legacy_prob *= 0.55
+            if roi_support_ratio < self.legacy_backproj_min_roi_support:
+                legacy_prob *= 0.40
+            if legacy_bottom_frac < 0.42 and legacy_prob < 0.40:
+                legacy_prob *= 0.45
+
+            if legacy_prob > prob and (
+                legacy_occ >= self.legacy_backproj_min_occupancy
+                and legacy_shape >= self.legacy_backproj_min_shape
+                and legacy_hue >= self.legacy_backproj_min_hue
+                and legacy_sv >= self.legacy_backproj_min_sv
+                and roi_support_ratio >= self.legacy_backproj_min_roi_support
+            ):
+                best_component = legacy_component
+                best_mode = "backproj_legacy"
+                best_mask = bp_mask
+                bbox = legacy_component["bbox"]
+                centroid = legacy_component["centroid"]
+                occupancy = legacy_occ
+                cone_dir = float(centroid[0]) / float(self.camera_width)
+                prob = legacy_prob
+                is_detected = prob >= self.min_detect_probability
+
         # Candidate quality to resolve RGB/BGR ambiguity across camera setups.
         overall_score = (
             (2.0 if reached else 0.0)
@@ -775,6 +884,7 @@ class detector:
             "overall_score": overall_score,
             "edge_touch_count": edge_touch,
             "roi_support_ratio": roi_support_ratio,
+            "legacy_prob": legacy_prob,
         }
         if best_component is not None:
             result.update(best_component)
