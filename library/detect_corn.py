@@ -67,7 +67,7 @@ class detector:
         self.min_detect_probability = 0.16
         self.min_detect_quality_floor = 0.16
         self.variant_selection_margin = 0.20
-        self.allow_swap_rb_rescue = True
+        self.allow_swap_rb_rescue = False
         self.swap_rb_min_probability = 0.18
         self.swap_rb_min_shape = 0.22
         self.swap_rb_min_hue = 0.26
@@ -203,7 +203,7 @@ class detector:
 
             self.picam2 = Picamera2()
             config = self.picam2.create_preview_configuration(
-                main={"size": (self.camera_width, self.camera_height), "format": "BGR888"}
+                main={"size": (self.camera_width, self.camera_height), "format": "RGB888"}
             )
             self.picam2.configure(config)
             self.picam2.start()
@@ -719,9 +719,8 @@ class detector:
 
             candidates = [
                 ("hybrid_overlap", overlap),
-                ("hybrid_union", union),
                 ("backproj", bp_mask),
-                ("hue", red_mask),
+                ("hybrid_union", union),
             ]
         else:
             candidates = [("hue", red_mask)]
