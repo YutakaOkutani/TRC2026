@@ -17,8 +17,8 @@ class detector:
 
         # Goal (close contact) judgment: screen should be mostly red and touching edges
         # Goal判定はやや厳しめにする（近距離で画面を大きく占有していること）
-        self.reached_occupancy_thresh = 0.68
-        self.reached_edge_touch_min = 3
+        self.reached_occupancy_thresh = 0.26
+        self.reached_edge_touch_min = 2
 
         # Runtime state
         self.input_img = None
@@ -296,6 +296,35 @@ class detector:
         if np.any(m[:, -1]):
             count += 1
         return count
+
+    def __largest_component_bbox(self, mask):
+        if mask is None or mask.size == 0:
+            return None
+        mask_u8 = mask.astype(np.uint8)
+        nlabels, _, stats, centroids = cv2.connectedComponentsWithStats(mask_u8)
+        if nlabels <= 1:
+            return None
+        best_idx = None
+        best_area = 0
+        for idx in range(1, nlabels):
+            area = int(stats[idx, cv2.CC_STAT_AREA])
+            if area > best_area:
+                best_area = area
+                best_idx = idx
+        if best_idx is None:
+            return None
+        s = stats[best_idx]
+        c = centroids[best_idx]
+        return {
+            "bbox": [
+                int(s[cv2.CC_STAT_LEFT]),
+                int(s[cv2.CC_STAT_TOP]),
+                int(s[cv2.CC_STAT_WIDTH]),
+                int(s[cv2.CC_STAT_HEIGHT]),
+            ],
+            "centroid": [int(c[0]), int(c[1])],
+            "area": float(s[cv2.CC_STAT_AREA]),
+        }
 
     def __row_span_width(self, mask_crop, row_start, row_end):
         if mask_crop is None or mask_crop.size == 0:
@@ -723,6 +752,7 @@ class detector:
                 legacy_component = self.__largest_component_metrics(mask, hsv_img=hsv)
 
         reached, frame_red_occupancy, edge_touch = self.__close_range_reached(red_mask)
+        dominant_red = self.__largest_component_bbox(red_mask)
 
         prob = 0.0
         centroid = None
@@ -739,11 +769,41 @@ class detector:
             cone_dir = float(best_component["centroid"][0]) / float(self.camera_width)
             is_detected = prob >= self.min_detect_probability
 
-        # If the cone is too close, the component shape often breaks. Promote close-range evidence.
+        # If the cone is too close, component scoring tends to latch onto a small side blob.
+        # In that case, promote the dominant red region itself.
+        if dominant_red is not None:
+            dom_bbox = dominant_red["bbox"]
+            dom_centroid = dominant_red["centroid"]
+            dom_area = float(dominant_red["area"])
+            dom_occ = dom_area / float(self.camera_width * self.camera_height)
+            dom_width_frac = float(dom_bbox[2]) / float(self.camera_width)
+            dom_height_frac = float(dom_bbox[3]) / float(self.camera_height)
+            dominant_close = (
+                dom_occ >= 0.14
+                or (frame_red_occupancy >= 0.22 and dom_width_frac >= 0.30 and dom_height_frac >= 0.35)
+            )
+            if dominant_close:
+                bbox = dom_bbox
+                centroid = dom_centroid
+                occupancy = max(occupancy, dom_occ)
+                cone_dir = float(dom_centroid[0]) / float(self.camera_width)
+                prob = max(prob, min(0.98, 0.30 + 2.6 * frame_red_occupancy))
+                is_detected = True
+                best_mask = red_mask
+                best_mode = "close_red_region"
+
         if reached:
             is_detected = True
             prob = 1.0
-            if centroid is None and red_mask is not None and np.count_nonzero(red_mask) > 0:
+            if dominant_red is not None:
+                bbox = dominant_red["bbox"]
+                centroid = dominant_red["centroid"]
+                cone_dir = float(centroid[0]) / float(self.camera_width)
+                occupancy = max(
+                    occupancy,
+                    float(dominant_red["area"]) / float(self.camera_width * self.camera_height),
+                )
+            elif centroid is None and red_mask is not None and np.count_nonzero(red_mask) > 0:
                 m = cv2.moments(red_mask)
                 if m["m00"] > 0:
                     cx = int(m["m10"] / m["m00"])
