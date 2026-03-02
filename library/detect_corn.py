@@ -66,8 +66,12 @@ class detector:
         self.min_hue_redness_strict = 0.34
         self.min_detect_probability = 0.16
         self.min_detect_quality_floor = 0.16
-        self.variant_selection_margin = 0.12
-        self.allow_swap_rb_rescue = False
+        self.variant_selection_margin = 0.20
+        self.allow_swap_rb_rescue = True
+        self.swap_rb_min_probability = 0.20
+        self.swap_rb_min_shape = 0.40
+        self.swap_rb_min_hue = 0.52
+        self.swap_rb_min_sv = 0.24
         self.upper_sky_reject_top_frac = 0.38
         self.upper_sky_reject_width_frac = 0.18
         self.lower_frame_bonus_start = 0.52
@@ -564,6 +568,34 @@ class detector:
             score += 0.10 * min(float(candidate.get("occupancy", 0.0)) / 0.05, 1.0)
         return score
 
+    def __swap_rb_candidate_is_trustworthy(self, candidate):
+        if candidate is None:
+            return False
+        if bool(candidate.get("is_reached", False)):
+            return True
+        prob = float(candidate.get("probability", 0.0))
+        shape = float(candidate.get("cone_shape_score", 0.0))
+        hue = float(candidate.get("hue_redness_score", 0.0))
+        sv = float(candidate.get("sv_score", 0.0))
+        roi_support = float(candidate.get("roi_support_ratio", 0.0))
+        occupancy = float(candidate.get("occupancy", 0.0))
+        bbox = candidate.get("bbox") or [0, 0, 0, 0]
+        top = int(bbox[1]) if len(bbox) >= 2 else 0
+        height = int(bbox[3]) if len(bbox) >= 4 else 0
+        bbox_bottom_frac = float(top + height) / float(self.camera_height) if self.camera_height > 0 else 0.0
+        quality_floor = min(shape, hue, sv)
+        if prob < self.swap_rb_min_probability:
+            return False
+        if shape < self.swap_rb_min_shape or hue < self.swap_rb_min_hue or sv < self.swap_rb_min_sv:
+            return False
+        if quality_floor < 0.22:
+            return False
+        if occupancy < 0.010 and roi_support < 0.10:
+            return False
+        if bbox_bottom_frac < 0.45 and prob < 0.32:
+            return False
+        return True
+
     def __close_range_reached(self, red_mask):
         img_size = float(self.camera_width * self.camera_height)
         red_occ = float(np.count_nonzero(red_mask)) / img_size if red_mask is not None else 0.0
@@ -765,8 +797,8 @@ class detector:
         if raw_img is None:
             return False
 
-        # This vehicle path is configured as BGR888. swap_rb tends to turn evening sky
-        # into false cone candidates, so keep it disabled unless explicitly re-enabled.
+        # Re-evaluate with swap_rb because some Picamera2 setups still deliver RGB-like
+        # arrays in practice. Keep the rescue path heavily gated to preserve false-positive resistance.
         variant_bgr = raw_img
         cand1 = self.__build_candidate(variant_bgr, "as_is")
         cand1_select = self.__variant_selection_score(cand1)
@@ -778,7 +810,13 @@ class detector:
             cand2 = self.__build_candidate(cv2.cvtColor(raw_img, cv2.COLOR_RGB2BGR), "swap_rb")
             cand2_select = self.__variant_selection_score(cand2)
             score_margin = cand2_select - cand1_select
-            if score_margin >= self.variant_selection_margin:
+            if self.__swap_rb_candidate_is_trustworthy(cand2) and (
+                score_margin >= self.variant_selection_margin
+                or (
+                    float(cand1.get("probability", 0.0)) < self.min_detect_probability
+                    and float(cand2.get("probability", 0.0)) >= self.swap_rb_min_probability
+                )
+            ):
                 best = cand2
 
         self.input_img = best["bgr_img"]
