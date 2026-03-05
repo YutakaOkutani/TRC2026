@@ -57,6 +57,8 @@ from cansat_mission.constants import (
     GPS_MAX_SPEED_MPS,
     GPS_MIN_FIX_QUAL,
     GPS_MIN_SATELLITES,
+    GPS_NO_DATA_REOPEN_TIMEOUT,
+    GPS_NON_GGA_REOPEN_TIMEOUT,
     GPS_RECONNECT_SLEEP,
     GPS_STABLE_FIX_COUNT,
     PHASES_CAMERA_ACTIVE,
@@ -638,8 +640,11 @@ class SensorManager:
             )
 
     def gps_thread(self):
-        serial_obj, _, _ = open_gps_serial()
+        serial_obj, selected_port, selected_baud = open_gps_serial()
         last_buffer_clear = time.time()
+        serial_opened_at = last_buffer_clear
+        last_serial_data_time = last_buffer_clear
+        last_gga_time = 0.0
         last_fix_time = 0.0
         last_valid_fix_time = 0.0
         last_valid_latlng = None
@@ -659,30 +664,97 @@ class SensorManager:
             "last_fix_qual": 0,
             "last_sats": 0,
             "last_hdop": 0.0,
+            "last_reopen_reason": "INIT",
+            "reopen_count": 0,
         }
+
+        def _set_gps_inactive_state():
+            self.state.update_gps(
+                gps_detect=GPS_INACTIVE_DETECT,
+                gps_heading_valid=False,
+                gps_speed_mps=0.0,
+            )
+
+        def _force_reopen(reason, now_ts):
+            nonlocal serial_obj, stable_count, recent_valid_fixes, last_valid_latlng
+            nonlocal last_fix_time, last_valid_fix_time, last_heading, last_heading_time
+            nonlocal serial_opened_at, last_serial_data_time, last_gga_time
+            try:
+                if serial_obj is not None:
+                    serial_obj.close()
+            except Exception:
+                pass
+            serial_obj = None
+            stable_count = 0
+            recent_valid_fixes = []
+            last_valid_latlng = None
+            last_fix_time = 0.0
+            last_valid_fix_time = 0.0
+            last_heading = None
+            last_heading_time = 0.0
+            serial_opened_at = now_ts
+            last_serial_data_time = now_ts
+            last_gga_time = 0.0
+            diag["status"] = "REOPENING"
+            diag["last_reopen_reason"] = reason
+            diag["reopen_count"] += 1
+            _set_gps_inactive_state()
+
         while True:
             try:
                 if serial_obj is None or not serial_obj.is_open:
                     diag["status"] = "REOPENING"
-                    serial_obj, _, _ = open_gps_serial()
+                    serial_obj, selected_port, selected_baud = open_gps_serial()
+                    if serial_obj is not None and serial_obj.is_open:
+                        serial_opened_at = time.time()
+                        last_serial_data_time = serial_opened_at
+                        last_gga_time = 0.0
                     time.sleep(GPS_RECONNECT_SLEEP)
                     continue
                 now = time.time()
                 if now - diag_last_log >= GPS_DIAGNOSTIC_LOG_INTERVAL:
+                    no_data_for = max(0.0, now - last_serial_data_time)
+                    no_gga_for = max(0.0, now - max(last_gga_time, serial_opened_at))
                     print(
                         "GPS diag: "
+                        f"port={selected_port or 'none'} baud={selected_baud or 'none'} "
                         f"status={diag['status']} raw={diag['raw_lines']} gga={diag['gga_lines']} "
                         f"qual_fail={diag['qual_fail']} speed_fail={diag['speed_fail']} "
                         f"empty={diag['empty_reads']} stable={stable_count}/{GPS_STABLE_FIX_COUNT} "
                         f"fix={diag['last_fix_qual']} sats={diag['last_sats']} hdop={diag['last_hdop']:.2f} "
+                        f"no_data={no_data_for:.1f}s no_gga={no_gga_for:.1f}s "
+                        f"reopen={diag['reopen_count']}({diag['last_reopen_reason']}) "
                         f"last={diag['last_line'] or 'none'}"
                     )
                     diag_last_log = now
+
+                no_data_elapsed = now - last_serial_data_time
+                if no_data_elapsed >= GPS_NO_DATA_REOPEN_TIMEOUT:
+                    print(
+                        "GPS watchdog: no serial bytes "
+                        f"for {no_data_elapsed:.1f}s on {selected_port or 'unknown'} @ "
+                        f"{selected_baud or 'unknown'}; forcing reopen."
+                    )
+                    _force_reopen("NO_BYTES_TIMEOUT", now)
+                    time.sleep(GPS_RECONNECT_SLEEP)
+                    continue
+
+                no_gga_elapsed = now - max(last_gga_time, serial_opened_at)
+                if diag["raw_lines"] > 0 and no_gga_elapsed >= GPS_NON_GGA_REOPEN_TIMEOUT:
+                    print(
+                        "GPS watchdog: serial bytes are present but no valid GGA "
+                        f"for {no_gga_elapsed:.1f}s on {selected_port or 'unknown'} @ "
+                        f"{selected_baud or 'unknown'}; forcing reopen."
+                    )
+                    _force_reopen("NO_GGA_TIMEOUT", now)
+                    time.sleep(GPS_RECONNECT_SLEEP)
+                    continue
+
                 if last_valid_fix_time > 0 and now - last_valid_fix_time > GPS_FIX_LOSS_TIMEOUT:
                     stable_count = 0
                     recent_valid_fixes = []
                     diag["status"] = "FIX_LOST"
-                    self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False, gps_speed_mps=0.0)
+                    _set_gps_inactive_state()
                 if serial_obj.in_waiting > GPS_BUFFER_CLEAR_THRESHOLD and now - last_buffer_clear >= GPS_BUFFER_CLEAR_INTERVAL:
                     try:
                         serial_obj.reset_input_buffer()
@@ -696,6 +768,7 @@ class SensorManager:
                     diag["status"] = "NO_BYTES"
                     diag["empty_reads"] += 1
                     continue
+                last_serial_data_time = now
                 line = line_bytes.decode("utf-8", errors="ignore").strip()
                 diag["raw_lines"] += 1
                 diag["last_line"] = line[:120]
@@ -703,6 +776,7 @@ class SensorManager:
                 if parsed is None:
                     diag["status"] = "NON_GGA"
                     continue
+                last_gga_time = now
                 diag["gga_lines"] += 1
                 lat = parsed["lat"]
                 lng = parsed["lng"]
@@ -797,16 +871,10 @@ class SensorManager:
                     last_valid_fix_time = now
                     last_valid_latlng = (lat, lng)
                 else:
-                    self.state.update_gps(gps_detect=GPS_INACTIVE_DETECT, gps_heading_valid=False, gps_speed_mps=0.0)
-            except Exception:
-                try:
-                    if serial_obj is not None:
-                        serial_obj.close()
-                except Exception:
-                    pass
-                serial_obj = None
-                print("GPS serial error; attempting reconnect.")
-                diag["status"] = "SERIAL_ERROR"
+                    _set_gps_inactive_state()
+            except Exception as exc:
+                print(f"GPS serial error ({type(exc).__name__}: {exc}); attempting reconnect.")
+                _force_reopen(f"SERIAL_ERROR:{type(exc).__name__}", time.time())
                 time.sleep(GPS_RECONNECT_SLEEP)
 
     def camera_thread(self):
