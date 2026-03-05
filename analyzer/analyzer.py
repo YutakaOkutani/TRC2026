@@ -105,15 +105,11 @@ ANOMALY_HIGHLIGHT_MAX_RATE = 0.80
 
 
 def find_latest_log() -> Path:
-    candidates = []
-    home = Path.home()
-    for target_dir in (home / "Download", home / "Downloads"):
-        if not target_dir.exists():
-            continue
-        candidates.extend(target_dir.glob("robust_log_*.csv"))
+    target_dir = Path.home() / "TRC2026" / "analyzer" / "robust_logs"
+    candidates = list(target_dir.glob("robust_log_*.csv")) if target_dir.exists() else []
 
     if not candidates:
-        raise FileNotFoundError("No robust_log_*.csv found in ~/Download or ~/Downloads")
+        raise FileNotFoundError("No robust_log_*.csv found in ~/TRC2026/analyzer/robust_logs")
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 

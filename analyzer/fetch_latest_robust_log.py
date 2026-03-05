@@ -11,7 +11,7 @@ PI_USER = "pi"
 SSH_PORT = 22
 
 PI_LOG_DIRS = ("/home/pi/TRC2026/log", "/home/pi/TRC2026/tests/log")
-PC_DEST_DIR = "~/Downloads"
+PC_DEST_DIR = "~/TRC2026/analyzer/robust_logs"
 LOG_PATTERN = "robust_log_*.csv"
 
 PC_TO_PI_IDENTITY_FILE = "~/.ssh/id_ed25519_pi"

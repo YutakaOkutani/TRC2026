@@ -1,5 +1,6 @@
 # Analyzer generated outputs (graphs/images/csv summaries)
 analyzer/outputs/
+analyzer/robust_logs/
 
 # Backward compatibility with older analyzer script output locations
 analyzer/*.png
@@ -8,4 +9,3 @@ analyzer/*.png
 __pycache__/
 *.py[cod]
 /.idea/
-
