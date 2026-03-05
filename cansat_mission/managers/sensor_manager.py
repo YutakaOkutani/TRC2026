@@ -6,8 +6,8 @@ import traceback
 
 import serial
 
-from library import bno055
-from library import detect_corn as dc
+from lib import bno055
+from lib import detect_corn as dc
 
 from cansat_mission.constants import (
     BMP_ALTITUDE_MAX_VALID,

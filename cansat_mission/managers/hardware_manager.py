@@ -9,8 +9,8 @@ import cv2
 from gpiozero import DigitalOutputDevice, DistanceSensor, LED, PWMOutputDevice
 from gpiozero.pins.lgpio import LGPIOFactory
 
-from library import bmp180, bno055
-from library import detect_corn as dc
+from lib import bmp180, bno055
+from lib import detect_corn as dc
 
 from cansat_mission.constants import (
     BNO_FUSION_OK_STATES,
