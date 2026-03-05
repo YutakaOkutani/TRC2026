@@ -13,9 +13,8 @@ from cansat_mission.constants import (
     CAMERA_DEAD_TIMEOUT,
     CAMERA_PHASE4_MAX_ATTEMPTS,
     CONE_CENTER_POSITION,
-    CONE_PHASE4_CONFIRM_FRAMES,
     CONE_PHASE4_CENTER_TOLERANCE,
-    CONE_PHASE4_STRONG_PROBABILITY,
+    CONE_PHASE4_CONFIRM_FRAMES,
     CONE_PROBABILITY_THRESHOLD,
     CONE_PROBABILITY_THRESHOLD_PHASE4,
     DEVICE_LED_GREEN,
@@ -79,6 +78,7 @@ class Phase4Handler(BasePhaseHandler):
             if time.time() - controller.time_start_searching_cone >= TIMEOUT_PHASE_4:
                 print("Camera TIMEOUT: Cone not found or Camera dead")
                 controller.searching_flag = False
+                controller.phase5_entry_reason = "phase4_timeout"
                 controller.state.update_navigation(phase=int(Phase.PHASE5))
                 controller.time_phase5_start = time.time()
                 return
@@ -92,46 +92,59 @@ class Phase4Handler(BasePhaseHandler):
         ):
             self._fallback_to_phase3(controller, current_snapshot, "Camera DEAD: Fallback to Phase3 (GPS/Straight)")
             return
-        # Phase4開始時は比較的近距離(数m)のため、Phase5より厳しめの
-        # probability と centered 条件で Phase5 へ直接渡す。
+        # Phase4開始時は比較的近距離(数m)のため、誤検知低減のために
+        # Phase5より厳しめのprobability + 数フレーム連続確認を要求する。
         try:
             cone_dir_val = float(cone_dir)
         except (TypeError, ValueError):
             cone_dir_val = CONE_CENTER_POSITION
         centered = abs(cone_dir_val - CONE_CENTER_POSITION) <= CONE_PHASE4_CENTER_TOLERANCE
-        strict_detect = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4) and (
-            centered or cone_prob >= CONE_PHASE4_STRONG_PROBABILITY
-        )
+        strict_detect = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE4) and centered
         loose_detect = cone_prob > CONE_PROBABILITY_THRESHOLD
+        # Require short-term direction consistency in Phase4 to suppress transient grass false positives.
+        dir_marker = getattr(controller, "phase4_detect_confirm_marker", None)
+        dir_consistent = True
+        if strict_detect:
+            try:
+                if dir_marker is not None:
+                    dir_consistent = abs(cone_dir_val - float(dir_marker)) <= 0.14
+            except (TypeError, ValueError):
+                dir_consistent = True
 
-        if cone_reached:
-            print("Phase4 -> Phase5: close-range visual reached detected")
-            controller.searching_flag = False
+        if cone_reached or strict_detect:
+            if cone_reached:
+                controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
+                controller.phase4_detect_confirm_marker = cone_dir_val
+            elif dir_consistent:
+                controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
+                if dir_marker is None:
+                    controller.phase4_detect_confirm_marker = cone_dir_val
+                else:
+                    controller.phase4_detect_confirm_marker = 0.7 * float(dir_marker) + 0.3 * cone_dir_val
+            else:
+                controller.phase4_detect_confirm_count = 1
+                controller.phase4_detect_confirm_marker = cone_dir_val
+        elif loose_detect:
             controller.phase4_detect_confirm_count = 0
             controller.phase4_detect_confirm_marker = None
+        else:
+            controller.phase4_detect_confirm_count = 0
+            controller.phase4_detect_confirm_marker = None
+
+        # 近距離ではコーンが画面からはみ出してprobが落ちても、到達判定が立てば進める。
+        if cone_reached or controller.phase4_detect_confirm_count >= CONE_PHASE4_CONFIRM_FRAMES:
+            if cone_reached:
+                print("Phase4 -> Phase5: close-range visual reached detected")
+            else:
+                print(
+                    "Phase4 -> Phase5: cone detected "
+                    f"(prob={cone_prob:.2f}, confirm={controller.phase4_detect_confirm_count})"
+                )
+            controller.searching_flag = False
+            controller.phase4_detect_confirm_count = 0
+            controller.phase5_entry_reason = "phase4_detected"
             controller.state.update_navigation(phase=int(Phase.PHASE5))
             return
-
-        if strict_detect:
-            controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
-            if controller.phase4_detect_confirm_count >= CONE_PHASE4_CONFIRM_FRAMES:
-                print(
-                    f"Phase4 -> Phase5: confirmed cone detect x{controller.phase4_detect_confirm_count} "
-                    f"(prob={cone_prob:.2f}, dir={cone_dir_val:.2f})"
-                )
-                controller.searching_flag = False
-                controller.phase4_detect_confirm_count = 0
-                controller.phase4_detect_confirm_marker = None
-                controller.state.update_navigation(phase=int(Phase.PHASE5))
-            elif controller.led_blink_timer % 5 == 0:
-                print(
-                    f"Phase4: holding visual confirm {controller.phase4_detect_confirm_count}/{CONE_PHASE4_CONFIRM_FRAMES} "
-                    f"(prob={cone_prob:.2f}, dir={cone_dir_val:.2f})"
-                )
-            return
-
-        controller.phase4_detect_confirm_count = 0
-        controller.phase4_detect_confirm_marker = None
 
         if loose_detect and controller.led_blink_timer % 10 == 0:
             print(

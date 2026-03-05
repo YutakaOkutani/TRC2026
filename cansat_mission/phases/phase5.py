@@ -21,6 +21,7 @@ from cansat_mission.constants import (
     GPS_PHASE45_MAX_DISTANCE,
     LED_INTERVAL_PHASE5,
     Phase,
+    TIMEOUT_PHASE_5_AFTER_PHASE4_TIMEOUT,
     TIMEOUT_PHASE_5,
 )
 from cansat_mission.navigation import calc_distance_and_azimuth
@@ -46,13 +47,21 @@ class Phase5Handler(BasePhaseHandler):
         else:
             need_phase5_init = getattr(controller, "time_camera_start", 0.0) <= 0.0
         if need_phase5_init:
-            print("phase5 : approaching")
+            entry_reason = str(getattr(controller, "phase5_entry_reason", "unknown"))
+            timeout_limit = (
+                TIMEOUT_PHASE_5_AFTER_PHASE4_TIMEOUT
+                if entry_reason == "phase4_timeout"
+                else TIMEOUT_PHASE_5
+            )
+            print(f"phase5 : approaching ({entry_reason}, timeout={timeout_limit:.1f}s)")
             controller.phase5_entry_marker = entry_marker
+            controller.phase5_timeout_limit_sec = float(timeout_limit)
             controller.time_camera_start = time.time()
             controller.count_cone_lost = 0
             controller.phase5_reach_confirm_count = 0
             controller.camera_phase5_attempts += 1
             controller.camera_phase5_start = controller.time_camera_start
+        timeout_limit = float(getattr(controller, "phase5_timeout_limit_sec", TIMEOUT_PHASE_5))
 
         controller.led_blink_timer += 1
         if (controller.led_blink_timer // LED_INTERVAL_PHASE5) % 2 == 0:
@@ -97,7 +106,7 @@ class Phase5Handler(BasePhaseHandler):
         )
         if camera_dead and (
             controller.camera_phase5_attempts >= CAMERA_PHASE5_MAX_ATTEMPTS
-            or (controller.camera_phase5_start is not None and now - controller.camera_phase5_start >= TIMEOUT_PHASE_5)
+            or (controller.camera_phase5_start is not None and now - controller.camera_phase5_start >= timeout_limit)
         ):
             self._fallback_to_phase3(controller, current_snapshot, "Camera DEAD: Fallback to Phase3 (GPS/Straight)")
             return
@@ -128,9 +137,9 @@ class Phase5Handler(BasePhaseHandler):
         else:
             controller.phase5_reach_confirm_count = 0
 
-        if now - controller.time_camera_start >= TIMEOUT_PHASE_5:
+        if now - controller.time_camera_start >= timeout_limit:
             elapsed = now - controller.time_camera_start
-            print(f"Phase5 TIMEOUT ({elapsed:.1f}s): Giving up, forcing Goal")
+            print(f"Phase5 TIMEOUT ({elapsed:.1f}s / {timeout_limit:.1f}s): Giving up, forcing Goal")
             controller.mission_end_reason = "PHASE5_TIMEOUT_FORCED_GOAL"
             controller.state.update_navigation(phase=int(Phase.PHASE6))
             return
