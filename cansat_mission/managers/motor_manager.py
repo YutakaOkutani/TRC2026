@@ -32,6 +32,8 @@ from cansat_mission.constants import (
     PARACHUTE_DIRECTION,
     PARACHUTE_MOTOR_PULSE,
     PARACHUTE_SEPARATION_SPEED,
+    PHASE1_SOFTSTART_RAMP_TIME,
+    PHASE1_SOFTSTART_STEP,
     PHASE4_SEARCH_SWEEP_INTERVAL,
     PHASE4_ALIGN_FORWARD_SPEED,
     PHASE4_ALIGN_PIVOT_SPEED,
@@ -347,7 +349,8 @@ class MotorManager:
                     True,
                     PARACHUTE_SEPARATION_SPEED,
                     True,
-                    ramp_time=0.0,
+                    ramp_time=PHASE1_SOFTSTART_RAMP_TIME,
+                    step_interval=PHASE1_SOFTSTART_STEP,
                     cmd_type="phase1_parachute_separation",
                 )
                 time.sleep(PARACHUTE_MOTOR_PULSE)
