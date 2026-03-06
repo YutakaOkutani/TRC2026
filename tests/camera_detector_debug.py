@@ -1,5 +1,6 @@
 import argparse
 import csv
+import os
 import sys
 import time
 from pathlib import Path
@@ -49,7 +50,7 @@ def build_parser():
     parser.add_argument(
         "--save-every",
         type=int,
-        default=10,
+        default=1,
         help="Save image artifacts every N frames.",
     )
     parser.add_argument(
@@ -59,6 +60,22 @@ def build_parser():
         help="Output directory. Default: /home/pi/TRC2026/tests/log/camera_debug_<timestamp>.",
     )
     return parser
+
+
+def _make_run_outdir(base_dir: Path) -> Path:
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    subsec = int((time.time() % 1.0) * 1000)
+    outdir = base_dir / f"camera_debug_{ts}_{subsec:03d}"
+    suffix = 0
+    while outdir.exists():
+        suffix += 1
+        outdir = base_dir / f"camera_debug_{ts}_{subsec:03d}_{suffix:02d}"
+    outdir.mkdir(parents=True, exist_ok=False)
+    return outdir
+
+
+def _display_available() -> bool:
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def _overlay(detector, prob_thresh, frame_idx):
@@ -103,9 +120,9 @@ def main():
         else float(CONE_PROBABILITY_THRESHOLD_PHASE5)
     )
 
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    outdir = Path(args.outdir).expanduser().resolve() if args.outdir else (DEFAULT_OUT_BASE / f"camera_debug_{ts}")
-    outdir.mkdir(parents=True, exist_ok=True)
+    outdir = Path(args.outdir).expanduser().resolve() if args.outdir else _make_run_outdir(DEFAULT_OUT_BASE)
+    if args.outdir:
+        outdir.mkdir(parents=True, exist_ok=True)
     csv_path = outdir / "debug.csv"
 
     detector = dc.detector()
@@ -117,7 +134,10 @@ def main():
     except Exception as exc:
         print(f"ROI setup warning: {exc}")
 
-    if not args.headless:
+    gui_enabled = (not args.headless) and _display_available()
+    if (not args.headless) and (not gui_enabled):
+        print("GUI disabled: DISPLAY/WAYLAND_DISPLAY is not set. Running in save-only mode.")
+    if gui_enabled:
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
 
     frame_idx = 0
@@ -197,7 +217,7 @@ def main():
                 if detector.binarized_img is not None:
                     cv2.imwrite(str(outdir / f"{stem}_mask.png"), detector.binarized_img.astype(np.uint8))
 
-            if not args.headless:
+            if gui_enabled:
                 vis = _overlay(detector, prob_thresh, frame_idx)
                 if vis is not None:
                     cv2.imshow(WINDOW_NAME, vis)
@@ -227,7 +247,7 @@ def main():
         detector.close()
     except Exception:
         pass
-    if not args.headless:
+    if gui_enabled:
         cv2.destroyAllWindows()
     return 0
 
