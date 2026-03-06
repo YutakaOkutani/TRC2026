@@ -92,6 +92,11 @@ class detector:
         self.upper_sky_reject_top_frac = 0.38
         self.upper_sky_reject_width_frac = 0.18
         self.lower_frame_bonus_start = 0.52
+        self.clahe_clip_limit = 2.4
+        self.clahe_tile_grid = (8, 8)
+        self.mask_min_component_area_ratio = 0.00008
+        self.mask_open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self.mask_close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
 
     def __roi_focus_mask(self, bgr_img, label):
         alpha_mask = None
@@ -261,12 +266,79 @@ class detector:
         return None
 
     def __red_mask(self, bgr_img):
-        hsv = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
-        masks = [cv2.inRange(hsv, lo, hi) for lo, hi in self.default_hsv_ranges]
-        mask = masks[0]
-        for extra in masks[1:]:
-            mask = cv2.bitwise_or(mask, extra)
-        return hsv, mask
+        pre = self.__preprocess_for_red_mask(bgr_img)
+        hsv = cv2.cvtColor(pre, cv2.COLOR_BGR2HSV)
+        ycrcb = cv2.cvtColor(pre, cv2.COLOR_BGR2YCrCb)
+
+        sat_min, val_min = self.__adaptive_sv_threshold(hsv)
+        lo1 = np.array([0, sat_min, val_min], dtype=np.uint8)
+        hi1 = np.array([16, 255, 255], dtype=np.uint8)
+        lo2 = np.array([165, sat_min, val_min], dtype=np.uint8)
+        hi2 = np.array([179, 255, 255], dtype=np.uint8)
+        hsv_mask = cv2.bitwise_or(cv2.inRange(hsv, lo1, hi1), cv2.inRange(hsv, lo2, hi2))
+
+        cr_min = int(max(138, sat_min + 70))
+        ycrcb_mask = cv2.inRange(
+            ycrcb,
+            np.array([0, cr_min, 60], dtype=np.uint8),
+            np.array([255, 255, 175], dtype=np.uint8),
+        )
+
+        strict_hsv = cv2.bitwise_or(
+            cv2.inRange(hsv, np.array([0, 115, 60], dtype=np.uint8), np.array([12, 255, 255], dtype=np.uint8)),
+            cv2.inRange(hsv, np.array([168, 115, 60], dtype=np.uint8), np.array([179, 255, 255], dtype=np.uint8)),
+        )
+        fused = cv2.bitwise_or(cv2.bitwise_and(hsv_mask, ycrcb_mask), strict_hsv)
+        return hsv, fused
+
+    def __adaptive_sv_threshold(self, hsv_img):
+        if hsv_img is None or hsv_img.size == 0:
+            return 100, 70
+        v_median = float(np.median(hsv_img[:, :, 2]))
+        sat_min = int(np.clip(90.0 - 0.20 * (v_median - 120.0), 55.0, 130.0))
+        val_min = int(np.clip(65.0 - 0.25 * (v_median - 120.0), 35.0, 95.0))
+        return sat_min, val_min
+
+    def __gray_world_balance(self, bgr_img):
+        if bgr_img is None:
+            return bgr_img
+        img = bgr_img.astype(np.float32)
+        mean_b, mean_g, mean_r = np.mean(img[:, :, 0]), np.mean(img[:, :, 1]), np.mean(img[:, :, 2])
+        mean_gray = max((mean_b + mean_g + mean_r) / 3.0, 1.0)
+        scale_b = mean_gray / max(mean_b, 1.0)
+        scale_g = mean_gray / max(mean_g, 1.0)
+        scale_r = mean_gray / max(mean_r, 1.0)
+        img[:, :, 0] *= scale_b
+        img[:, :, 1] *= scale_g
+        img[:, :, 2] *= scale_r
+        return np.clip(img, 0, 255).astype(np.uint8)
+
+    def __preprocess_for_red_mask(self, bgr_img):
+        if bgr_img is None:
+            return bgr_img
+        wb = self.__gray_world_balance(bgr_img)
+        lab = cv2.cvtColor(wb, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=self.clahe_clip_limit, tileGridSize=self.clahe_tile_grid)
+        l_eq = clahe.apply(l)
+        lab_eq = cv2.merge((l_eq, a, b))
+        out = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+        return cv2.GaussianBlur(out, (3, 3), 0)
+
+    def __remove_small_components(self, mask):
+        if mask is None or mask.size == 0:
+            return mask
+        h, w = mask.shape[:2]
+        min_area = max(6, int(float(h * w) * self.mask_min_component_area_ratio))
+        nlabels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if nlabels <= 1:
+            return mask
+        filtered = np.zeros_like(mask)
+        for idx in range(1, nlabels):
+            area = int(stats[idx, cv2.CC_STAT_AREA])
+            if area >= min_area:
+                filtered[labels == idx] = 255
+        return filtered
 
     def __back_projection_mask(self, hsv_img):
         if self.__roi_hist is None:
@@ -287,11 +359,12 @@ class detector:
     def __postprocess_mask(self, mask):
         if mask is None:
             return None
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-        kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        out = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close)
-        out = cv2.morphologyEx(out, cv2.MORPH_OPEN, kernel_open)
-        return out
+        out = cv2.medianBlur(mask, 3)
+        out = cv2.morphologyEx(out, cv2.MORPH_OPEN, self.mask_open_kernel, iterations=1)
+        out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, self.mask_close_kernel, iterations=2)
+        out = self.__remove_small_components(out)
+        out = cv2.morphologyEx(out, cv2.MORPH_DILATE, self.mask_open_kernel, iterations=1)
+        return out.astype(np.uint8)
 
     def __edge_touch_count(self, mask):
         if mask is None or mask.size == 0:
