@@ -45,6 +45,7 @@ class Phase4Handler(BasePhaseHandler):
         cone_prob = current_snapshot["cone_probability"]
         cone_dir = current_snapshot.get("cone_direction", CONE_CENTER_POSITION)
         cone_reached = current_snapshot.get("cone_is_reached", False)
+        cone_reached_effective = bool(cone_reached) and (cone_prob > max(CONE_PROBABILITY_THRESHOLD_PHASE4, 0.28))
         print("phase4 : camera searching")
         if led_red:
             led_red.off()
@@ -111,8 +112,8 @@ class Phase4Handler(BasePhaseHandler):
             except (TypeError, ValueError):
                 dir_consistent = True
 
-        if cone_reached or strict_detect:
-            if cone_reached:
+        if cone_reached_effective or strict_detect:
+            if cone_reached_effective:
                 controller.phase4_detect_confirm_count = getattr(controller, "phase4_detect_confirm_count", 0) + 1
                 controller.phase4_detect_confirm_marker = cone_dir_val
             elif dir_consistent:
@@ -132,8 +133,8 @@ class Phase4Handler(BasePhaseHandler):
             controller.phase4_detect_confirm_marker = None
 
         # 近距離ではコーンが画面からはみ出してprobが落ちても、到達判定が立てば進める。
-        if cone_reached or controller.phase4_detect_confirm_count >= CONE_PHASE4_CONFIRM_FRAMES:
-            if cone_reached:
+        if cone_reached_effective or controller.phase4_detect_confirm_count >= CONE_PHASE4_CONFIRM_FRAMES:
+            if cone_reached_effective:
                 print("Phase4 -> Phase5: close-range visual reached detected")
             else:
                 print(

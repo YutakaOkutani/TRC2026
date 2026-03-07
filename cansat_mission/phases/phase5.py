@@ -98,7 +98,8 @@ class Phase5Handler(BasePhaseHandler):
         is_reach = current_snapshot["cone_is_reached"]
         # 近距離時はprobabilityが落ちても、到達判定が立っていれば見失い扱いにしない
         cone_prob = current_snapshot["cone_probability"]
-        is_det = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE5) or is_reach
+        is_reach_effective = bool(is_reach) and (cone_prob > max(CONE_PROBABILITY_THRESHOLD_PHASE5, 0.30))
+        is_det = (cone_prob > CONE_PROBABILITY_THRESHOLD_PHASE5) or is_reach_effective
         now = time.time()
         camera_dead = (
             controller.camera_dead_since is not None
@@ -124,7 +125,7 @@ class Phase5Handler(BasePhaseHandler):
             controller.state.update_navigation(phase=int(Phase.PHASE4))
             return
 
-        if is_reach:
+        if is_reach_effective:
             controller.phase5_reach_confirm_count = getattr(controller, "phase5_reach_confirm_count", 0) + 1
             if controller.phase5_reach_confirm_count < PHASE5_REACH_CONFIRM_FRAMES:
                 return

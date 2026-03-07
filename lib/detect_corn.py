@@ -96,6 +96,11 @@ class detector:
         self.close_region_min_sv = 0.26
         self.close_region_min_shape = 0.22
         self.close_region_min_roi_support = 0.12
+        self.close_reached_min_prob = 0.28
+        self.close_reached_min_shape = 0.34
+        self.close_reached_min_sv = 0.34
+        self.close_reached_max_aspect = 1.35
+        self.close_reached_max_width_frac = 0.86
         self.upper_sky_reject_top_frac = 0.38
         self.upper_sky_reject_width_frac = 0.18
         self.lower_frame_bonus_start = 0.52
@@ -360,16 +365,16 @@ class detector:
         proj = cv2.GaussianBlur(proj, (9, 9), 0)
         proj_u8 = cv2.normalize(proj, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
-        # If ROI backprojection is too weak (domain shift / bright stripes), inject a conservative hue prior.
+        # If ROI backprojection is too weak, inject a conservative hue prior.
         p99 = float(np.percentile(proj_u8, 99.0)) if proj_u8.size > 0 else 0.0
-        if p99 < 42.0:
+        if p99 < 30.0:
             hue_prior = None
             for lo, hi in self.default_hsv_ranges:
                 part = cv2.inRange(hsv_img, lo, hi)
                 hue_prior = part if hue_prior is None else cv2.bitwise_or(hue_prior, part)
             if hue_prior is not None:
                 hue_prior = cv2.GaussianBlur(hue_prior, (7, 7), 0)
-                proj_u8 = cv2.max(proj_u8, (hue_prior.astype(np.float32) * 0.42).astype(np.uint8))
+                proj_u8 = cv2.max(proj_u8, (hue_prior.astype(np.float32) * 0.25).astype(np.uint8))
 
         _, bp_bin = cv2.threshold(proj_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         bp_bin = cv2.morphologyEx(bp_bin, cv2.MORPH_DILATE, self.backproj_dilate_kernel)
@@ -545,16 +550,15 @@ class detector:
         hue_dist = np.minimum(hue, 180.0 - hue)
         hue_redness = 1.0 - np.clip(hue_dist / 18.0, 0.0, 1.0)
 
-        # White stripes/reflections on cones have low saturation and destabilize plain hue mean.
-        # Score hue mainly on color-valid pixels, then weight by saturation.
-        color_valid = np.logical_and(sat >= 70.0, val >= 45.0)
+        # Score hue mainly on strongly chromatic pixels to suppress grass/ground false positives.
+        color_valid = np.logical_and(sat >= 90.0, val >= 50.0)
         if np.count_nonzero(color_valid) >= max(12, int(0.05 * hue_redness.size)):
             hue_redness_valid = hue_redness[color_valid]
             sat_valid = sat[color_valid]
-            sat_weight = np.clip((sat_valid - 70.0) / 120.0, 0.10, 1.0)
+            sat_weight = np.clip((sat_valid - 90.0) / 100.0, 0.20, 1.0)
             hue_redness_score = float(np.sum(hue_redness_valid * sat_weight) / max(np.sum(sat_weight), 1e-6))
         else:
-            sat_weight = np.clip((sat - 45.0) / 160.0, 0.08, 1.0)
+            sat_weight = np.clip((sat - 70.0) / 120.0, 0.05, 1.0)
             hue_redness_score = float(np.sum(hue_redness * sat_weight) / max(np.sum(sat_weight), 1e-6))
 
         sat_score = max(0.0, min((sat_mean - 110.0) / 90.0, 1.0))
@@ -1020,6 +1024,7 @@ class detector:
             dom_width_frac = float(dom_bbox[2]) / float(self.camera_width)
             dom_height_frac = float(dom_bbox[3]) / float(self.camera_height)
             dom_bottom_frac = float(dom_bbox[1] + dom_bbox[3]) / float(self.camera_height)
+            dom_aspect = float(dom_bbox[2]) / max(float(dom_bbox[3]), 1.0)
             dom_shape = float(dominant_red_component.get("cone_shape_score", 0.0))
             dom_hue = float(dominant_red_component.get("hue_redness_score", 0.0))
             dom_sv = float(dominant_red_component.get("sv_score", 0.0))
@@ -1027,15 +1032,21 @@ class detector:
                 dom_width_frac,
                 dom_height_frac,
                 dom_bottom_frac,
-                float(dom_bbox[2]) / max(float(dom_bbox[3]), 1.0),
+                dom_aspect,
                 dom_shape,
+            )
+            reached_shape_ok = (
+                dom_shape >= self.close_reached_min_shape
+                and dom_sv >= self.close_reached_min_sv
+                and dom_width_frac <= self.close_reached_max_width_frac
+                and (dom_aspect <= self.close_reached_max_aspect or dom_shape >= 0.56)
             )
             close_reached_ok = (
                 reached
                 and dom_occ >= 0.18
                 and dom_hue >= 0.60
-                and dom_sv >= 0.30
-                and dom_shape >= 0.18
+                and reached_shape_ok
+                and prob >= self.close_reached_min_prob
                 and (roi_support_ratio >= 0.10 or dom_occ >= 0.24)
                 and dom_ground_penalty >= 0.5
             )
