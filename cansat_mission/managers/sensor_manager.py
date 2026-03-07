@@ -782,8 +782,12 @@ class SensorManager:
         while True:
             current_phase = self.state.snapshot()["phase"]
             if current_phase in PHASES_CAMERA_ACTIVE:
+                t_start = time.time()
                 self.cone_detect()
-                time.sleep(CAMERA_ACTIVE_SLEEP)
+                elapsed = time.time() - t_start
+                remain = float(CAMERA_ACTIVE_SLEEP) - elapsed
+                if remain > 0.0:
+                    time.sleep(remain)
             else:
                 time.sleep(CAMERA_IDLE_SLEEP)
 

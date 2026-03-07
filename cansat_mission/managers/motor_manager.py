@@ -38,8 +38,11 @@ from cansat_mission.constants import (
     PHASE4_ALIGN_FORWARD_SPEED,
     PHASE4_ALIGN_PIVOT_SPEED,
     PHASE4_ALIGN_STOP_DEADBAND,
+    PHASE4_MOTOR_RAMP_TIME,
     PHASE45_CONE_DIR_FILTER_ALPHA,
+    PHASE45_MOTOR_LOOP_INTERVAL,
     PHASE5_BASE_SPEED,
+    PHASE5_MOTOR_RAMP_TIME,
     PHASE5_STEER_DEADBAND,
     PHASE5_TURN_CLAMP,
     PHASE2_SPEED,
@@ -121,14 +124,21 @@ class MotorManager:
         else:
             self.set_motors(speed_slow, True, speed_fast, True, ramp_time=ramp_time, cmd_type=cmd_type)
 
-    def _set_forward_pivot_turn(self, turn_side, speed_outer, cmd_type, speed_inner=0.0):
+    def _set_forward_pivot_turn(
+        self,
+        turn_side,
+        speed_outer,
+        cmd_type,
+        speed_inner=0.0,
+        ramp_time=MOTOR_RAMP_TIME,
+    ):
         """Turn with one wheel driving forward and the inner wheel stopped."""
         speed_outer = self._clamp_percent(speed_outer)
         speed_inner = self._clamp_percent(speed_inner)
         if turn_side == "left":
-            self.set_motors(speed_inner, True, speed_outer, True, cmd_type=cmd_type)
+            self.set_motors(speed_inner, True, speed_outer, True, ramp_time=ramp_time, cmd_type=cmd_type)
         else:
-            self.set_motors(speed_outer, True, speed_inner, True, cmd_type=cmd_type)
+            self.set_motors(speed_outer, True, speed_inner, True, ramp_time=ramp_time, cmd_type=cmd_type)
 
     def _mag_heading_from_snapshot(self, snapshot):
         mag = snapshot.get("mag")
@@ -462,15 +472,18 @@ class MotorManager:
                             True,
                             PHASE4_ALIGN_FORWARD_SPEED,
                             True,
+                            ramp_time=PHASE4_MOTOR_RAMP_TIME,
                             cmd_type="phase4_camera_center_forward",
                         )
-                        time.sleep(MOTOR_LOOP_INTERVAL)
+                        time.sleep(PHASE45_MOTOR_LOOP_INTERVAL)
                         continue
                     turn_side = "right" if err > 0 else "left"
                     self._set_forward_pivot_turn(
                         turn_side,
                         PHASE4_ALIGN_PIVOT_SPEED,
                         cmd_type="phase4_camera_pivot_align",
+                        speed_inner=0.0,
+                        ramp_time=PHASE4_MOTOR_RAMP_TIME,
                     )
                 else:
                     self._update_phase45_filtered_cone_dir(cone_direction, False)
@@ -480,6 +493,7 @@ class MotorManager:
                         "left",
                         SEARCH_ROTATION_SPEED,
                         cmd_type="phase4_search_pivot",
+                        ramp_time=PHASE4_MOTOR_RAMP_TIME,
                     )
             elif phase == Phase.PHASE5:
                 cone_prob = snapshot.get("cone_probability", 0.0)
@@ -494,6 +508,7 @@ class MotorManager:
                         True,
                         PHASE5_BASE_SPEED,
                         True,
+                        ramp_time=PHASE5_MOTOR_RAMP_TIME,
                         cmd_type="phase5_approach_forward",
                     )
                 else:
@@ -510,6 +525,7 @@ class MotorManager:
                             True,
                             inner_speed,
                             True,
+                            ramp_time=PHASE5_MOTOR_RAMP_TIME,
                             cmd_type="phase5_approach_steer_right",
                         )
                     else:
@@ -518,10 +534,14 @@ class MotorManager:
                             True,
                             outer_speed,
                             True,
+                            ramp_time=PHASE5_MOTOR_RAMP_TIME,
                             cmd_type="phase5_approach_steer_left",
                         )
 
-            time.sleep(MOTOR_LOOP_INTERVAL)
+            if phase in (Phase.PHASE4, Phase.PHASE5):
+                time.sleep(PHASE45_MOTOR_LOOP_INTERVAL)
+            else:
+                time.sleep(MOTOR_LOOP_INTERVAL)
         self.stop_motors()
 
     def _ramp_pwm(self, pwm_dev, start_speed, target_speed, ramp_time, step_interval=MOTOR_RAMP_STEP):
