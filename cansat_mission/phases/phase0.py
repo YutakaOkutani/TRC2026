@@ -11,6 +11,7 @@ from cansat_mission.constants import (
     DROP_ALTITUDE_DIFF_THRESHOLD,
     IMPACT_FALL_THRESHOLD,
     LED_INTERVAL_PHASE0,
+    PHASE0_DROP_TO_PHASE1_DELAY_SEC,
     PHASE0_SENSOR_STALE_TIMEOUT,
     Phase,
     TIMEOUT_PHASE_0,
@@ -27,6 +28,7 @@ class Phase0Handler(BasePhaseHandler):
         if getattr(controller, "phase0_entry_marker", None) != entry_marker:
             controller.phase0_entry_marker = entry_marker
             controller.phase0_initial_alt = None
+            controller.phase0_drop_detect_time = None
             controller.phase0_wait_log_counter = 0
             print("phase0 : falling")
 
@@ -69,10 +71,21 @@ class Phase0Handler(BasePhaseHandler):
                 )
 
         if is_drop:
-            print(f"Detected Drop: {altitude_diff:.2f}m")
-            controller.state.update_navigation(phase=int(Phase.PHASE1))
-            controller.time_phase1_start = now
-            return
+            if controller.phase0_drop_detect_time is None:
+                controller.phase0_drop_detect_time = now
+                print(
+                    f"Detected Drop: {altitude_diff:.2f}m "
+                    f"(waiting {PHASE0_DROP_TO_PHASE1_DELAY_SEC:.1f}s before Phase1)"
+                )
+            elif now - controller.phase0_drop_detect_time >= PHASE0_DROP_TO_PHASE1_DELAY_SEC:
+                print(f"Drop hold complete: {altitude_diff:.2f}m -> Phase1")
+                controller.state.update_navigation(phase=int(Phase.PHASE1))
+                controller.time_phase1_start = now
+                return
+        else:
+            if controller.phase0_drop_detect_time is not None:
+                print("Drop hold canceled: altitude difference returned below threshold")
+            controller.phase0_drop_detect_time = None
 
         if is_impact:
             print(f"Detected Impact: {snapshot['fall']:.2f}m/s^2")

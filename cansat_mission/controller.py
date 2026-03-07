@@ -66,6 +66,7 @@ class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager)
         self.time_phase1_start = None
         self.phase0_entry_marker = None
         self.phase0_initial_alt = None
+        self.phase0_drop_detect_time = None
         self.time_phase3_start = 0.0
         self.time_phase4_start = 0.0
         self.time_phase5_start = 0.0
