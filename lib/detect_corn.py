@@ -70,6 +70,13 @@ class detector:
         self.min_hue_redness_strict = 0.34
         self.min_detect_probability = 0.16
         self.min_detect_quality_floor = 0.16
+        self.temporal_prob_alpha = 0.62
+        self.temporal_prob_drop_floor = 0.68
+        self.temporal_prob_quality_shape = 0.64
+        self.temporal_prob_quality_hue = 0.58
+        self.temporal_prob_quality_sv = 0.55
+        self.temporal_prob_quality_occ = 0.014
+        self._prev_probability = 0.0
         self.variant_selection_margin = 0.20
         self.allow_swap_rb_rescue = False
         self.swap_rb_min_probability = 0.18
@@ -352,6 +359,18 @@ class detector:
             proj = cv2.max(proj_pos - (self.negative_backproj_scale * proj_neg), 0.0)
         proj = cv2.GaussianBlur(proj, (9, 9), 0)
         proj_u8 = cv2.normalize(proj, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        # If ROI backprojection is too weak (domain shift / bright stripes), inject a conservative hue prior.
+        p99 = float(np.percentile(proj_u8, 99.0)) if proj_u8.size > 0 else 0.0
+        if p99 < 42.0:
+            hue_prior = None
+            for lo, hi in self.default_hsv_ranges:
+                part = cv2.inRange(hsv_img, lo, hi)
+                hue_prior = part if hue_prior is None else cv2.bitwise_or(hue_prior, part)
+            if hue_prior is not None:
+                hue_prior = cv2.GaussianBlur(hue_prior, (7, 7), 0)
+                proj_u8 = cv2.max(proj_u8, (hue_prior.astype(np.float32) * 0.42).astype(np.uint8))
+
         _, bp_bin = cv2.threshold(proj_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         bp_bin = cv2.morphologyEx(bp_bin, cv2.MORPH_DILATE, self.backproj_dilate_kernel)
         return proj_u8, bp_bin
@@ -518,12 +537,26 @@ class detector:
         if pix.size == 0:
             return {"sv_score": 0.0, "sat_mean": 0.0, "val_mean": 0.0, "hue_redness_score": 0.0}
         hue = pix[:, 0].astype(np.float32)
-        sat_mean = float(np.mean(pix[:, 1]))
-        val_mean = float(np.mean(pix[:, 2]))
+        sat = pix[:, 1].astype(np.float32)
+        val = pix[:, 2].astype(np.float32)
+        sat_mean = float(np.mean(sat))
+        val_mean = float(np.mean(val))
         # Circular distance on OpenCV hue scale [0,179]; red is near 0/179.
         hue_dist = np.minimum(hue, 180.0 - hue)
         hue_redness = 1.0 - np.clip(hue_dist / 18.0, 0.0, 1.0)
-        hue_redness_score = float(np.mean(hue_redness))
+
+        # White stripes/reflections on cones have low saturation and destabilize plain hue mean.
+        # Score hue mainly on color-valid pixels, then weight by saturation.
+        color_valid = np.logical_and(sat >= 70.0, val >= 45.0)
+        if np.count_nonzero(color_valid) >= max(12, int(0.05 * hue_redness.size)):
+            hue_redness_valid = hue_redness[color_valid]
+            sat_valid = sat[color_valid]
+            sat_weight = np.clip((sat_valid - 70.0) / 120.0, 0.10, 1.0)
+            hue_redness_score = float(np.sum(hue_redness_valid * sat_weight) / max(np.sum(sat_weight), 1e-6))
+        else:
+            sat_weight = np.clip((sat - 45.0) / 160.0, 0.08, 1.0)
+            hue_redness_score = float(np.sum(hue_redness * sat_weight) / max(np.sum(sat_weight), 1e-6))
+
         sat_score = max(0.0, min((sat_mean - 110.0) / 90.0, 1.0))
         val_score = max(0.0, min((val_mean - 70.0) / 90.0, 1.0))
         sv_score = 0.6 * sat_score + 0.4 * val_score
@@ -817,6 +850,30 @@ class detector:
             return False
         return True
 
+    def __temporal_stabilize_probability(self, prob, candidate):
+        if candidate is None:
+            self._prev_probability = float(prob)
+            return float(prob)
+
+        shape = float(candidate.get("cone_shape_score", 0.0))
+        hue = float(candidate.get("hue_redness_score", 0.0))
+        sv = float(candidate.get("sv_score", 0.0))
+        occ = float(candidate.get("occupancy", 0.0))
+        quality_ok = (
+            shape >= self.temporal_prob_quality_shape
+            and hue >= self.temporal_prob_quality_hue
+            and sv >= self.temporal_prob_quality_sv
+            and occ >= self.temporal_prob_quality_occ
+        )
+        if quality_ok and self._prev_probability > 0.0:
+            ema = (self.temporal_prob_alpha * float(prob)) + ((1.0 - self.temporal_prob_alpha) * self._prev_probability)
+            if prob < self._prev_probability:
+                ema = max(ema, self._prev_probability * self.temporal_prob_drop_floor)
+            prob = float(min(1.0, max(0.0, ema)))
+
+        self._prev_probability = float(prob)
+        return float(prob)
+
     def __close_range_reached(self, red_mask):
         img_size = float(self.camera_width * self.camera_height)
         red_occ = float(np.count_nonzero(red_mask)) / img_size if red_mask is not None else 0.0
@@ -1050,12 +1107,25 @@ class detector:
             ):
                 prob *= 0.35
             if bp_mask is not None:
-                if best_mode == "hue" and roi_support_ratio < self.roi_hist_min_support_ratio:
-                    prob *= 0.35
-                elif roi_support_ratio < 0.08:
-                    prob *= 0.55
+                pure_red_strong = (
+                    cone_shape_score >= 0.72
+                    and hue_redness_score >= 0.60
+                    and sv_score >= 0.66
+                    and occupancy >= 0.020
+                    and bbox_bottom_frac >= 0.42
+                )
+                if roi_support_ratio < 0.08:
+                    if best_mode == "hue" and pure_red_strong:
+                        prob *= 0.80
+                    else:
+                        prob *= 0.55
                 elif roi_support_ratio < self.roi_hist_min_support_ratio:
-                    prob *= 0.78
+                    if best_mode == "hue" and pure_red_strong:
+                        prob *= 0.92
+                    elif best_mode == "hue":
+                        prob *= 0.35
+                    else:
+                        prob *= 0.78
                 elif best_mode in ("backproj", "hybrid_overlap", "hybrid_union"):
                     prob = max(prob, min(0.36, 0.18 + 2.8 * occupancy))
                 if best_mode == "backproj" and roi_support_ratio < 0.20:
@@ -1224,7 +1294,8 @@ class detector:
         self.projected_img = best["projected_img"]
         self.binarized_img = best["binarized_img"]
         self.detected = best["bbox"]
-        self.probability = float(best["probability"])
+        raw_probability = float(best["probability"])
+        self.probability = self.__temporal_stabilize_probability(raw_probability, best)
         self.centroids = np.array(best["centroid"], dtype=float) if best["centroid"] is not None else None
         self.cone_direction = float(best["cone_direction"])
         self.occupancy = float(best["occupancy"])
@@ -1243,6 +1314,8 @@ class detector:
             "roi_support": float(best.get("roi_support_ratio", 0.0)),
             "swap_margin": float(score_margin),
             "swap_used": 1.0 if (cand2 is not None and best is cand2) else 0.0,
+            "raw_prob": raw_probability,
+            "stabilized_prob": float(self.probability),
             "as_is_prob": float(cand1.get("probability", 0.0)),
             "swap_prob": float(cand2.get("probability", 0.0)) if cand2 is not None else 0.0,
             "as_is_shape": float(cand1.get("cone_shape_score", 0.0)),

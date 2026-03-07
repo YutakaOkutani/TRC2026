@@ -9,3 +9,6 @@ analyzer/*.png
 __pycache__/
 *.py[cod]
 /.idea/
+
+# Test logs
+/tests/log/
