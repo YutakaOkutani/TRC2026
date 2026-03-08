@@ -1,2 +1,0 @@
-rule,column,rows_flagged,flag_rate,used_for_highlight,min_threshold,max_threshold
-BMP pressure out of range,Pres,9955,0.784847,True,300.0,1200.0
