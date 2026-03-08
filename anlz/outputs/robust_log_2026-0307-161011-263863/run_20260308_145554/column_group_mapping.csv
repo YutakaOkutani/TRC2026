@@ -1,0 +1,42 @@
+group_key,group_title,column,in_csv,in_log_header
+time_and_phase,Time & Mission Phase,ElapsedSec,True,True
+time_and_phase,Time & Mission Phase,Phase,True,True
+time_and_phase,Time & Mission Phase,MissionElapsedSec,True,True
+time_and_phase,Time & Mission Phase,MissionEndReason,True,True
+time_and_phase,Time & Mission Phase,MissionTotalTimeout,True,True
+imu_accel,IMU - Acceleration,AccX,True,True
+imu_accel,IMU - Acceleration,AccY,True,True
+imu_accel,IMU - Acceleration,AccZ,True,True
+imu_gyro,IMU - Gyroscope,GyroX,True,True
+imu_gyro,IMU - Gyroscope,GyroY,True,True
+imu_gyro,IMU - Gyroscope,GyroZ,True,True
+imu_mag,IMU - Magnetometer,MagX,True,True
+imu_mag,IMU - Magnetometer,MagY,True,True
+imu_mag,IMU - Magnetometer,MagZ,True,True
+gps_position,GPS - Position & Quality,LAT,True,True
+gps_position,GPS - Position & Quality,LNG,True,True
+gps_position,GPS - Position & Quality,GpsSpeedMps,True,True
+gps_position,GPS - Position & Quality,GPSFixQual,True,True
+gps_position,GPS - Position & Quality,GPSSats,True,True
+gps_position,GPS - Position & Quality,GPSHdop,True,True
+altitude_pressure,Altitude & Pressure,ALT,True,True
+altitude_pressure,Altitude & Pressure,Pres,True,True
+navigation,Navigation,Distance,True,True
+navigation,Navigation,Azimuth,True,True
+navigation,Navigation,TargetLat,True,True
+navigation,Navigation,TargetLng,True,True
+navigation,Navigation,Angle,True,True
+navigation,Navigation,Direction,True,True
+navigation,Navigation,AngleValid,True,True
+vision_detection,Vision / Detection,ConeDir,True,True
+vision_detection,Vision / Detection,ConeProb,True,True
+vision_detection,Vision / Detection,ConeMethod,True,True
+vision_detection,Vision / Detection,ObstacleDist,True,True
+fall_and_sensor_health,Fall & Sensor Health,Fall,True,True
+fall_and_sensor_health,Fall & Sensor Health,BNOStaleSec,True,True
+motor_commands,Motor Commands,MotorCmdType,True,True
+motor_commands,Motor Commands,MotorCmdUpdatedElapsedSec,True,True
+motor_commands,Motor Commands,Motor1CmdSpeed,True,True
+motor_commands,Motor Commands,Motor1CmdForward,True,True
+motor_commands,Motor Commands,Motor2CmdSpeed,True,True
+motor_commands,Motor Commands,Motor2CmdForward,True,True

@@ -3,60 +3,67 @@
 ## ファイル構成
 
 ```plaintext
-├── analyzer/                           # ログ解析コードが入ったフォルダ
-│   ├── analyzer.py                      # ログ解析コード
-├── cansat_mission/                     # ミッションコードが入ったフォルダ
-│   ├── managers/                        # センサーやモーターなどのハードウェアを管理するコード
-│       ├── __init__.py                     # マネージャコード用のディレクトリ
-│       ├── hardware_manager.py             # ハードウェア全体を管理するコード
-│       ├── led_manager.py                  # LED管理コード
-│       ├── motor_manager.py                # モーター管理コード
-│       ├── sensor_manager.py               # センサー管理コード
-│   ├── phases/                          # ミッションの各フェーズのコード
-│       ├── __init__.py                     # フェーズコード用のディレクトリ
-│       ├── base.py                         # フェーズの基底クラスコード
-│       ├── phase0.py                       # フェーズ0のコード
-│       ├── phase1.py                       # フェーズ1のコード
-│       ├── phase2.py                       # フェーズ2のコード
-│       ├── phase3.py                       # フェーズ3のコード
-│       ├── phase4.py                       # フェーズ4のコード 
-│       ├── phase5.py                       # フェーズ5のコード
-│       ├── phase6.py                       # フェーズ6のコード
-│       ├── phase7.py                       # フェーズ7のコード
-│   ├── __init__.py                      # ミッションコード用のディレクトリ
-│   ├── ARCHITECTURE_SUMMARY.md          # アーキテクチャの概要説明
-│   ├── constants.py                     # 定数定義
-│   ├── controller.py                    # ミッション全体の制御コード
-│   ├── gps_utils.py                     # GPS関連のユーティリティコード
-│   ├── navigation.py                    # ナビゲーション関連のコード
-│   ├── runners.py                       # フェーズの実行コード
-│   ├── state.py                         # ミッションの状態管理コード
-├── gerber/                             # 基板設計データが入ったフォルダ
-│   ├── TRC2026 v5.zip                   # 基板設計データ   
-├── lib/                            # ライブラリコードが入ったフォルダ
-│   ├── __init__.py                      # ライブラリコード用のディレクトリ
-│   ├── bno055.py                        # BNO055センサー用のライブラリコード
-│   ├── bmp180.py                        # BMP180センサー用のライブラリコード
-│   ├── capture_roi_img.py               # ゴール画像撮影用コード
-│   ├── detect_corn.py                   # カメラフェーズ用コード
-├── tests/                              # テストコードが入ったフォルダ
-│   ├── camera_capture_dataset.py        # カメラキャプチャのデータセット作成コード
-│   ├── camera_phase_monitor_pc.py       # カメラフェーズのリレーコード（PC側）
-│   ├── camera_phase_relay_README.md     # カメラフェーズのリレーコードの説明
-│   ├── camera_phase_relay_sbc.py        # カメラフェーズのリレーコード（SBC側）
-│   ├── gps_test.py                      # GPSからの生データ取得テストコード
-│   ├── landing_impact.py                # 着地衝撃試験用テストコード（共通オーケストレーターを呼び出し、ログ保存先のみ切り替える）
-│   ├── led.py                           # LEDテストコード
-│   ├── motor_test.py                    # モーター制御テストコード
-│   ├── open_parachute.py                # 開傘衝撃試験用テストコード（共通オーケストレーターを呼び出し、ログ保存先のみ切り替える）
-│   ├── orchestrator_phase1_to_phase7.py # フェーズ1からフェーズ7までのE2E試験用コード
-│   ├── orchestrator_phase2_to_phase3.py # フェーズ2からフェーズ3のGPS, IMU誘導デバッグ用コード
-│   ├── orchestrator_phase2_to_phase7.py # フェーズ2からフェーズ7のデバッグ用コード
-│   ├── orchestrator_phase3_to_phase4.py # フェーズ3からフェーズ4のデバッグ用コード
-│   ├── orchestrator_phase4_to_phase7.py # フェーズ4からフェーズ7のカメラ誘導デバッグ用コード
-│   ├── phase0_logging_orchestrator.py   # フェーズ0のログ取得用コード（共通オーケストレーター）
-│   ├── sensor_diag.py                   # センサー診断コード
-│   ├── test_phase0_detection.py         # フェーズ0の検知テストコード
+├── anlz/                               # ログ解析
+│   └── log_anlz.py
+├── csmn/                               # ミッション本体
+│   ├── __init__.py
+│   ├── arch_summary.md
+│   ├── const.py
+│   ├── ctrl.py
+│   ├── gps_util.py
+│   ├── nav.py
+│   ├── run.py
+│   ├── st.py
+│   ├── mgr/
+│   │   ├── __init__.py
+│   │   ├── hw_mgr.py
+│   │   ├── led_mgr.py
+│   │   ├── mtr_mgr.py
+│   │   └── sns_mgr.py
+│   └── phs/
+│       ├── __init__.py
+│       ├── base.py
+│       ├── p0.py
+│       ├── p1.py
+│       ├── p2.py
+│       ├── p3.py
+│       ├── p4.py
+│       ├── p5.py
+│       ├── p6.py
+│       └── p7.py
+├── runs/                               # 実行用スクリプト群
+│   ├── cam/
+│   │   ├── cam_capture_data.py
+│   │   ├── cam_detector_dbg.py
+│   │   ├── cam_relay_pc.py
+│   │   ├── cam_relay_sbc.py
+│   │   └── cam_relay_readme.md
+│   ├── diag/
+│   │   ├── gps_diag.py
+│   │   ├── led_diag.py
+│   │   ├── motor_diag.py
+│   │   └── sensor_diag.py
+│   ├── evt/
+│   │   ├── landing_impact.py
+│   │   └── open_parachute.py
+│   ├── orch/
+│   │   ├── orch_p0_log.py
+│   │   ├── orch_p1_p3.py
+│   │   ├── orch_p1_p7.py
+│   │   ├── orch_p2_p3.py
+│   │   ├── orch_p2_p7.py
+│   │   ├── orch_p3_p4.py
+│   │   └── orch_p4_p7.py
+│   └── spec/
+│       └── p0_detection.py
+├── lib/                                # センサー・画像処理ライブラリ
+│   ├── __init__.py
+│   ├── bmp180.py
+│   ├── bno055.py
+│   ├── capture_roi_img.py
+│   └── detect_corn.py
+├── gerber/
+│   └── TRC2026 v5.zip
 ├── .gitignore                          # Git管理から除外するファイルのリスト
 ├── main.py                             # 本番用コード
 └── README.md                           # このファイル
@@ -64,8 +71,8 @@
 
 * 構成のポイント
   * テストコードのデバッグがそのまま本番コードのデバッグにつながるように、テストコードはできるだけ本番コードと同じ構成・呼び出しになるようにしている（例: フェーズ1からフェーズ7までのE2E試験用コードは、実際のミッションコードと同じ関数を呼び出す形で書いている）。
-  * main.py をテスト用に書き換え、戻し忘れるリスクをできるだけ回避するため、main.py はミッション全体の司令塔のみを役割とし、フェーズの切り替えや状態管理などは `~/cansat_mission` 以下に役割ごとに細かく分割した。
-  * ログを解析するanalyzer.pyを用意した。使い方は自分のPC（WindowsはWSL2推奨）の `/TRC2026/analyzer/robust_logs` に出力された `robust_log_*.csv` を置いて、自分のPCでanalyzer.pyを実行する。これにより、最新のログが自動で分類、グラフ化、可視化される。出力データは `~/analyzer/outputs/robust_log_*` にすべて置かれる。Plotlyを使っているので、.htmlを開くと、ウェブブラウザ上で細かくグラフを見られるようになっている。注意としては、ラズパイ上でこのコードを実行すると処理が非常に重くなるので、実行はPC上のみですること。
+  * main.py をテスト用に書き換え、戻し忘れるリスクをできるだけ回避するため、main.py はミッション全体の司令塔のみを役割とし、フェーズの切り替えや状態管理などは `~/csmn` 以下に役割ごとに細かく分割した。
+  * ログを解析する `anlz/log_anlz.py` を用意した。使い方は自分のPC（WindowsはWSL2推奨）の `/TRC2026/anlz/robust_logs` に出力された `robust_log_*.csv` を置いて、自分のPCで `log_anlz.py` を実行する。これにより、最新のログが自動で分類、グラフ化、可視化される。出力データは `~/anlz/outputs/robust_log_*` にすべて置かれる。Plotlyを使っているので、`.html` を開くとウェブブラウザ上で細かくグラフを見られる。注意として、ラズパイ上でこのコードを実行すると処理が非常に重くなるため、実行はPC上のみですること。
 
 ## 1. 環境構築の準備
 

@@ -11,7 +11,7 @@ __pycache__/
 /.idea/
 
 # Test logs
-/tests/log/
+/runs/log/
 
 # Virtual environment
 /venv

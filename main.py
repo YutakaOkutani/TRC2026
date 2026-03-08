@@ -1,4 +1,4 @@
-from cansat_mission.runners import run_full_mission
+from csmn.run import run_full_mission
 
 
 def main():
