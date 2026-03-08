@@ -1,9 +1,10 @@
 # Analyzer generated outputs (graphs/images/csv summaries)
 anlz/outputs/
 anlz/robust_logs/
+anlz/*.png
 
 # Backward compatibility with older analyzer script output locations
-anlz/*.png
+analyzer/
 
 # Python cache
 __pycache__/
@@ -15,3 +16,6 @@ __pycache__/
 
 # Virtual environment
 /venv
+
+# Visual Studio
+.vs/
