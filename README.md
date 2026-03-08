@@ -72,7 +72,7 @@
 * 構成のポイント
   * テストコードのデバッグがそのまま本番コードのデバッグにつながるように、テストコードはできるだけ本番コードと同じ構成・呼び出しになるようにしている（例: フェーズ1からフェーズ7までのE2E試験用コードは、実際のミッションコードと同じ関数を呼び出す形で書いている）。
   * main.py をテスト用に書き換え、戻し忘れるリスクをできるだけ回避するため、main.py はミッション全体の司令塔のみを役割とし、フェーズの切り替えや状態管理などは `~/csmn` 以下に役割ごとに細かく分割した。
-  * ログを解析する `anlz/log_anlz.py` を用意した。使い方は自分のPC（WindowsはWSL2推奨）の `/TRC2026/anlz/robust_logs` に出力された `robust_log_*.csv` を置いて、自分のPCで `log_anlz.py` を実行する。これにより、最新のログが自動で分類、グラフ化、可視化される。出力データは `~/anlz/outputs/robust_log_*` にすべて置かれる。Plotlyを使っているので、`.html` を開くとウェブブラウザ上で細かくグラフを見られる。注意として、ラズパイ上でこのコードを実行すると処理が非常に重くなるため、実行はPC上のみですること。
+  * ログを解析する `anlz/log_anlz.py` を用意した。使い方は自分のPCの `/TRC2026/anlz/robust_logs` に出力された `robust_log_*.csv` を置いて、自分のPCで `log_anlz.py` を実行する。これにより、最新のログが自動で分類、グラフ化、可視化される。出力データは `~/anlz/outputs/robust_log_*` にすべて置かれる。Plotlyを使っているので、`.html` を開くとウェブブラウザ上で細かくグラフを見られる。注意として、ラズパイ上でこのコードを実行すると処理が非常に重くなるため、実行はPC上のみですること。
 
 ## 1. 環境構築の準備
 
@@ -90,7 +90,7 @@
 * Raspberry Pi Imager
 * Git
 * ターミナル
-* WSL2（Windowsユーザーのみ）
+* WSL2（Windowsユーザーは推奨）
 
 ---
 
@@ -101,11 +101,11 @@
 1. Raspberry Pi Imager をインストールする（ <https://www.raspberrypi.com/software/> ）
 2. 起動後、
 
-* Device → *Raspberry PI Zero 2 W*
-* OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
-* Storage → MicroSDカード
+   * Device → *Raspberry PI Zero 2 W*
+   * OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
+   * Storage → MicroSDカード
 
-1. 以下を設定・有効化する
+3. 以下を設定・有効化する
 
    * Hostname
    * Localisation（国・キーボード設定）
@@ -114,7 +114,7 @@
    * Remote access（SSHの有効化、パスワード認証で十分）
    * Raspberry Pi Connect（オフでよい）
 
-2. Writing（書き込み）を実行
+4. Writing（書き込み）を実行
 
 ---
 
@@ -237,7 +237,6 @@ sudo raspi-config
 ### 4.2 以下を有効化
 
 * Interface Options → I2C
-
 * Interface Options → Serial
 
 完了後、再起動。
@@ -259,12 +258,12 @@ cd TRC2026
 
 ## 5.1 ドキュメントの役割分担（重複を避けるため）
 
-- `README.md`
-  - セットアップ手順、実行コマンド、運用手順。
-- `csmn/arch_summary.md`
-  - `csmn/` の設計責務と保守ルールのみ。
-- `runs/cam/cam_relay_readme.md`
-  - カメラ中継テスト（SBC↔PC）の手順のみ。
+* `README.md`
+  * セットアップ手順、実行コマンド、運用手順。
+* `csmn/arch_summary.md`
+  * `csmn/` の設計内容と保守ルールのみ。
+* `runs/cam/cam_relay_readme.md`
+  * カメラ中継テスト（SBC↔PC）の手順のみ。
 
 ---
 
@@ -272,8 +271,8 @@ cd TRC2026
 
 前提:
 
-- 作業ディレクトリは `~/TRC2026`
-- 必要なら先に仮想環境を有効化: `source venv/bin/activate`
+* 作業ディレクトリは `~/TRC2026`
+* 必要なら先に仮想環境を有効化: `source venv/bin/activate`
 
 ```bash
 # 本番実行
@@ -287,13 +286,13 @@ python3 runs/orch/orch_p4_p7.py
 python3 runs/orch/orch_p1_p7.py
 python3 runs/orch/orch_p2_p7.py
 
-# 診断
+# 各種テストコード
 python3 runs/diag/sensor_diag.py
 python3 runs/diag/gps_diag.py
 python3 runs/diag/motor_diag.py
 python3 runs/diag/led_diag.py
 
-# イベント系（フェーズ0試験）
+# 審査書試験系（フェーズ0試験）
 python3 runs/evt/open_parachute.py
 python3 runs/evt/landing_impact.py
 
@@ -764,9 +763,7 @@ ssh pi@100.64.12.34
 
 Tailscale管理画面に行くと：
 
-```
-raspberrypi.tailnet-name.ts.net
-```
+`raspberrypi.tailnet-name.ts.net`
 
 みたいな名前が付くので、
 
