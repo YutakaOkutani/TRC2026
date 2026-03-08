@@ -1,63 +1,57 @@
 # CanSat Mission Architecture Summary
 
-このファイルは、`csmn` の役割分担を短時間で把握するための引継ぎメモです。
+このファイルは `csmn/` の設計責務だけを把握するための資料です。
+
+- セットアップ手順・運用手順: `README.md`
+- カメラ中継試験の実行手順: `runs/cam/cam_relay_readme.md`
 
 ## 全体像
 
-- `main.py`: 本番用の最小司令塔エントリ。`run_full_mission()` を呼ぶだけ。
-- `csmn/`: 実ロジック本体（定数・状態・司令塔・フェーズ・I/O管理）。
-- `runs/orch/orch_*.py`: フェーズ限定デバッグ用の司令塔。
+- `main.py`
+  - 本番エントリポイント。
+  - `run_full_mission()` を呼ぶだけの最小司令塔。
+- `csmn/`
+  - ミッション実装本体（定数・状態・司令塔・フェーズ・I/O管理）。
+- `runs/orch/orch_*.py`
+  - フェーズ限定デバッグ用の入口。
 
-## ディレクトリごとの役割
+## ディレクトリごとの責務
 
 - `csmn/const.py`
-  - すべての定数を一元管理。
-  - フェーズ番号、タイムアウト、閾値、GPIOピン、速度、ログ設定などを定義。
-
+  - 定数の一元管理（フェーズ番号、閾値、GPIO、タイムアウトなど）。
 - `csmn/st.py`
-  - `CanSatState`（スレッドセーフな共有状態）を管理。
-  - IMU/GPS/BMP/カメラ結果、ナビ値、現在フェーズなどを保持。
-
-- `csmn/gps_util.py`
-  - GPS関連のユーティリティ関数。
-  - 緯度経度の距離・方位計算、座標変換などを提供。  
-
+  - `CanSatState`（スレッドセーフな共有状態）の管理。
 - `csmn/nav.py`
-  - 純関数系ユーティリティ。
-  - 距離・方位計算、ミリ秒時刻生成。
-
+  - 純関数ユーティリティ（距離・方位など）。
+- `csmn/gps_util.py`
+  - GPS入出力・NMEA処理ユーティリティ。
 - `csmn/ctrl.py`
-  - 実行の司令塔 `CanSatController`。
-  - 初期化、フェーズディスパッチ、許可フェーズ制限実行（デバッグ用）を担当。
-
+  - `CanSatController` 本体。
+  - 初期化、フェーズディスパッチ、デバッグ用の実行範囲制限を担当。
 - `csmn/run.py`
-  - 実行モードの入口を提供。
-  - `run_full_mission()`, `run_phase_sequence()`, `run_single_phase()` を公開。
+  - 実行モード入口（`run_full_mission()`, `run_phase_sequence()`, `run_single_phase()`）。
 
-- `csmn/mgr/`
-  - `hw_mgr.py`: ハード初期化、スレッド起動、ログヘッダ作成。
-  - `sns_mgr.py`: BNO/BMP/SONAR/GPS/カメラの取得・再初期化・ログ追記。
-  - `mtr_mgr.py`: モータ制御と障害物回避、フェーズ別駆動ロジック。
-  - `led_mgr.py`: LED点滅・シグナル処理。
+- `csmn/mgr/hw_mgr.py`
+  - ハード初期化、スレッド起動、ログヘッダ作成。
+- `csmn/mgr/sns_mgr.py`
+  - BNO/BMP/SONAR/GPS/カメラ取得、再初期化、ログ追記。
+- `csmn/mgr/mtr_mgr.py`
+  - モータ制御、障害物回避、フェーズ別駆動ロジック。
+- `csmn/mgr/led_mgr.py`
+  - LED点滅・シグナル処理。
 
-- `csmn/phs/`
-  - `p0.py`〜`p6.py`: フェーズごとの状態遷移ロジックを分離。
-  - 各ファイルは単体実行エントリ（`run_standalone()`）を保持。
-  - `base.py`: フェーズ共通インターフェース。
+- `csmn/phs/base.py`
+  - フェーズ共通インターフェース。
+- `csmn/phs/p0.py` 〜 `p7.py`
+  - フェーズごとの状態遷移ロジック。
 
-## フェーズ遷移の基本
+## フェーズ遷移
 
-- 通常系: `0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7`
-- フェーズ内フォールバックあり（例: ゴールコーンから10m以上離れたら、4から3へ戻る）。
+- 通常遷移: `0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7`
+- 一部フェーズはフォールバックあり（例: `4 -> 3` 戻り）。
 
-## デバッグ時の主な入口
+## 変更ルール
 
-- 本番相当フル実行: `main.py`
-- フェーズ2→3限定: `runs/orch/orch_p2_p3.py`
-- フェーズ4→7限定: `runs/orch/orch_p4_p7.py`
-
-## 重要な運用ルール
-
-- マジックナンバーは禁止。値追加/変更は `const.py` のみで行う。
-- フェーズロジック変更は、対象 `pX.py` を優先して修正する。
-- ハード依存の不具合調査は `mgr/sns_mgr.py` と `mgr/hw_mgr.py` を先に確認する。
+- マジックナンバー禁止。値変更は `csmn/const.py` のみで実施。
+- フェーズ仕様の変更は対象 `csmn/phs/pX.py` を優先修正。
+- ハード不具合調査は `csmn/mgr/sns_mgr.py` と `csmn/mgr/hw_mgr.py` を優先確認。

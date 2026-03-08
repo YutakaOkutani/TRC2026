@@ -179,7 +179,7 @@ sudo reboot
 
 ```bash
 # ===== 基本ツール =====
-sudo apt install -y git screen tmux i2c-tools
+sudo apt install -y git tmux i2c-tools
 
 # ===== 実行に必要なPythonライブラリ（apt）=====
 # GPIO / シリアル / I2C
@@ -257,21 +257,67 @@ cd TRC2026
 
 ---
 
+## 5.1 ドキュメントの役割分担（重複を避けるため）
+
+- `README.md`
+  - セットアップ手順、実行コマンド、運用手順。
+- `csmn/arch_summary.md`
+  - `csmn/` の設計責務と保守ルールのみ。
+- `runs/cam/cam_relay_readme.md`
+  - カメラ中継テスト（SBC↔PC）の手順のみ。
+
+---
+
+## 5.2 実行コマンド早見表
+
+前提:
+
+- 作業ディレクトリは `~/TRC2026`
+- 必要なら先に仮想環境を有効化: `source venv/bin/activate`
+
+```bash
+# 本番実行
+python3 main.py
+
+# フェーズ限定オーケストレーション
+python3 runs/orch/orch_p1_p3.py
+python3 runs/orch/orch_p2_p3.py
+python3 runs/orch/orch_p3_p4.py
+python3 runs/orch/orch_p4_p7.py
+python3 runs/orch/orch_p1_p7.py
+python3 runs/orch/orch_p2_p7.py
+
+# 診断
+python3 runs/diag/sensor_diag.py
+python3 runs/diag/gps_diag.py
+python3 runs/diag/motor_diag.py
+python3 runs/diag/led_diag.py
+
+# イベント系（フェーズ0試験）
+python3 runs/evt/open_parachute.py
+python3 runs/evt/landing_impact.py
+
+# 画像・カメラ系
+python3 runs/cam/cam_capture_data.py --count 10 --interval 0.5 --prefix sample
+python3 runs/cam/cam_detector_dbg.py --phase 4
+
+# ログ解析（PC上で実行）
+python3 anlz/log_anlz.py
+```
+
+---
+
 ## 6. カメラの設定
 
 ### カメラの初期設定
 
 ```bash
-# バージョン確認
-lsb_release -a 
-```
-
-```bash
-# 設定ファイル編集
+# 設定ファイルを編集（OV5647を明示する場合）
 sudo nano /boot/firmware/config.txt
-# 以下の内容を追加または修正
-dtoverlay=OV5647 # OV5647 カメラを明示指定
-camera_auto_detect=0 # カメラ自動検出を無効化
+
+# 以下を追加または修正（行がある場合は値を合わせる）
+camera_auto_detect=0
+dtoverlay=ov5647
 ```
 
 ```bash
@@ -283,28 +329,35 @@ sudo reboot
 
 ```bash
 # 認識デバイスの一覧
-libcamera-hello --list-cameras
+rpicam-hello --list-cameras
+
 # dmesg による初期化ログ確認
-dmesg | grep -i ov5647
+sudo dmesg | grep -Ei "ov5647|camera|unicam" | tail -n 30
+
 # 初期化時間の確認
 time rpicam-hello -t 1
 ```
 
-### カメラのプロパティ確認
+### カメラコマンドの確認
 
 ```bash
-rpicam-hello *--info-text*
+rpicam-hello --help
+rpicam-still --help
+rpicam-vid --help
 ```
 
 ### カメラ映像のテスト
 
 ```bash
 # ライブプレビュー
-rpicam-hello -t 0 # モニターに繋げば映像が見えるはず
+rpicam-hello -t 0
+
 # 静止画撮影
 rpicam-still -o test.jpg
+
 # 動画撮影
 rpicam-vid -t 10000 -o test.h264
+
 # 高解像度での静止画撮影テスト
 rpicam-still --width 2592 --height 1944 -o maxres.jpg
 ```
@@ -344,14 +397,6 @@ python3 main.py
 # 離脱時は Ctrl+b → d
 # 再接続後は `tmux attach -t cansat`
 ```
-
-### GPSからの生データ取得（テストコードのほうが見やすいが一応）
-
-```bash
-sudo screen /dev/ttyAMA0 115200 # ボーレートが違う場合、9600や38400も試す
-```
-
----
 
 ## 8. トラブルシューティング
 
