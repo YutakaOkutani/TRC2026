@@ -49,15 +49,26 @@ from cansat_mission.state import CanSatState
 
 
 class CanSatController(HardwareManager, SensorManager, MotorManager, LedManager):
+    @staticmethod
+    def _build_unique_log_path(log_dir, now_time):
+        log_stem = LOG_PREFIX + now_time.strftime(LOG_FILE_DATETIME_FORMAT) + f"-{now_time.microsecond:06d}"
+        log_path = os.path.join(log_dir, log_stem + ".csv")
+        if not os.path.exists(log_path):
+            return log_path
+        suffix = 1
+        while True:
+            candidate = os.path.join(log_dir, f"{log_stem}-{suffix}.csv")
+            if not os.path.exists(candidate):
+                return candidate
+            suffix += 1
+
     def __init__(self, target_lat, target_lng):
         self.state = CanSatState()
         self.target_lat = target_lat
         self.target_lng = target_lng
         now_time = datetime.datetime.now()
         os.makedirs(LOG_DIR, exist_ok=True)
-        # Add microseconds to avoid overwriting logs when restarting within the same second.
-        log_stem = LOG_PREFIX + now_time.strftime(LOG_FILE_DATETIME_FORMAT) + f"-{now_time.microsecond:06d}"
-        self.log_path = os.path.join(LOG_DIR, log_stem + ".csv")
+        self.log_path = self._build_unique_log_path(LOG_DIR, now_time)
 
         self.devices = {key: None for key in DEVICE_KEYS}
         self.led_blink_timer = 0

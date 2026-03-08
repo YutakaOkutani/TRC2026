@@ -12,3 +12,6 @@ __pycache__/
 
 # Test logs
 /tests/log/
+
+# Virtual environment
+/venv

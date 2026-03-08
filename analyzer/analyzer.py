@@ -8,6 +8,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 try:
@@ -148,21 +149,33 @@ def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
         return result
 
     result = df.copy()
-    anomaly_count = pd.Series(0, index=result.index, dtype="int32")
-    highlight_count = pd.Series(0, index=result.index, dtype="int32")
-    missing_count = pd.Series(0, index=result.index, dtype="int32")
+    n = len(result)
+    anomaly_count = np.zeros(n, dtype=np.int16)
+    highlight_count = np.zeros(n, dtype=np.int16)
+    missing_count = np.zeros(n, dtype=np.int16)
     summary_records = []
     missing_summary_records = []
     phase0_mask = _phase0_mask(result)
     active_mask = (~phase0_mask).fillna(True)
+    active_np = active_mask.to_numpy(dtype=bool, copy=False)
+
+    # Cache numeric conversions once to avoid repeated to_numeric() calls on large logs.
+    numeric_cache: dict[str, pd.Series] = {}
+
+    def num(col: str) -> pd.Series:
+        s = numeric_cache.get(col)
+        if s is None:
+            s = _safe_numeric_series(result, col)
+            numeric_cache[col] = s
+        return s
 
     # Treat zero pressure as "missing/unavailable" instead of anomaly for this project logs.
     pressure_zero_mask = pd.Series(False, index=result.index)
     if "Pres" in result.columns:
-        pres = _safe_numeric_series(result, "Pres")
+        pres = num("Pres")
         pressure_zero_mask = (pres == 0).fillna(False)
         if pressure_zero_mask.any():
-            missing_count = missing_count.add(pressure_zero_mask.astype("int32"), fill_value=0).astype("int32")
+            missing_count += pressure_zero_mask.to_numpy(dtype=np.int16, na_value=0)
             missing_summary_records.append(
                 {
                     "missing_type": "BMP pressure missing (Pres==0)",
@@ -176,18 +189,19 @@ def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
     for col, rule in ANOMALY_RULES.items():
         if col not in result.columns:
             continue
-        s = _safe_numeric_series(result, col)
+        s = num(col)
         valid_mask = s.notna()
         if col == "Pres":
             valid_mask = valid_mask & (~pressure_zero_mask)
         bad = (valid_mask & ((s < rule["min"]) | (s > rule["max"]))).fillna(False)
         bad = (bad & active_mask).fillna(False)  # Weaken detection during Phase0 initialization.
         if bad.any():
-            anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
-            rate = float(bad.mean())
+            bad_np = bad.to_numpy(dtype=np.int16, na_value=0)
+            anomaly_count += bad_np
+            rate = float(bad_np.mean())
             used_for_highlight = rate <= ANOMALY_HIGHLIGHT_MAX_RATE
             if used_for_highlight:
-                highlight_count = highlight_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+                highlight_count += bad_np
             summary_records.append(
                 {
                     "rule": rule["label"],
@@ -201,17 +215,18 @@ def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
             )
 
     if {"GPSFixQual", "LAT", "LNG"}.issubset(result.columns):
-        fix = _safe_numeric_series(result, "GPSFixQual")
-        lat = _safe_numeric_series(result, "LAT")
-        lng = _safe_numeric_series(result, "LNG")
+        fix = num("GPSFixQual")
+        lat = num("LAT")
+        lng = num("LNG")
         bad = ((fix > 0) & ((lat == 0) | (lng == 0))).fillna(False)
         bad = (bad & active_mask).fillna(False)
         if bad.any():
-            anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
-            rate = float(bad.mean())
+            bad_np = bad.to_numpy(dtype=np.int16, na_value=0)
+            anomaly_count += bad_np
+            rate = float(bad_np.mean())
             used_for_highlight = rate <= ANOMALY_HIGHLIGHT_MAX_RATE
             if used_for_highlight:
-                highlight_count = highlight_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+                highlight_count += bad_np
             summary_records.append(
                 {
                     "rule": "GPS fix reported but LAT/LNG is zero",
@@ -225,15 +240,16 @@ def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
             )
 
     if "GPSSats" in result.columns:
-        sats = _safe_numeric_series(result, "GPSSats")
+        sats = num("GPSSats")
         bad = (sats.notna() & (sats < 4)).fillna(False)
         bad = (bad & active_mask).fillna(False)
         if bad.any():
-            anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
-            rate = float(bad.mean())
+            bad_np = bad.to_numpy(dtype=np.int16, na_value=0)
+            anomaly_count += bad_np
+            rate = float(bad_np.mean())
             used_for_highlight = rate <= ANOMALY_HIGHLIGHT_MAX_RATE
             if used_for_highlight:
-                highlight_count = highlight_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+                highlight_count += bad_np
             summary_records.append(
                 {
                     "rule": "Low GPS satellites",
@@ -253,19 +269,21 @@ def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
     ]
     for c1, c2, c3, label in imu_triplets:
         if {c1, c2, c3}.issubset(result.columns):
-            bad = (_safe_numeric_series(result, c1).isna() & _safe_numeric_series(result, c2).isna() & _safe_numeric_series(result, c3).isna()).fillna(False)
-            bad = (bad & active_mask).fillna(False)
-            if bad.any():
-                anomaly_count = anomaly_count.add(bad.astype("int32"), fill_value=0).astype("int32")
-                rate = float(bad.mean())
+            s1 = num(c1)
+            s2 = num(c2)
+            s3 = num(c3)
+            bad_np = (s1.isna().to_numpy() & s2.isna().to_numpy() & s3.isna().to_numpy() & active_np).astype(np.int16)
+            if bad_np.any():
+                anomaly_count += bad_np
+                rate = float(bad_np.mean())
                 used_for_highlight = rate <= ANOMALY_HIGHLIGHT_MAX_RATE
                 if used_for_highlight:
-                    highlight_count = highlight_count.add(bad.astype("int32"), fill_value=0).astype("int32")
+                    highlight_count += bad_np
                 summary_records.append(
                     {
                         "rule": label,
                         "column": f"{c1},{c2},{c3}",
-                        "rows_flagged": int(bad.sum()),
+                        "rows_flagged": int(bad_np.sum()),
                         "flag_rate": round(rate, 6),
                         "used_for_highlight": used_for_highlight,
                         "min_threshold": None,
@@ -273,9 +291,9 @@ def detect_anomalies(df: pd.DataFrame, out_dir: Path) -> pd.DataFrame:
                     }
                 )
 
-    result["AnomalyCount"] = anomaly_count
-    result["HighlightAnomalyCount"] = highlight_count
-    result["MissingCount"] = missing_count
+    result["AnomalyCount"] = anomaly_count.astype(np.int32)
+    result["HighlightAnomalyCount"] = highlight_count.astype(np.int32)
+    result["MissingCount"] = missing_count.astype(np.int32)
     result["HasAnomaly"] = result["AnomalyCount"] > 0
     result["HasHighlightAnomaly"] = result["HighlightAnomalyCount"] > 0
     result["IsPhase0"] = phase0_mask
@@ -382,20 +400,6 @@ def write_basic_summaries(df: pd.DataFrame, out_dir: Path) -> None:
         pd.DataFrame(categorical_rows).to_csv(out_dir / "categorical_value_counts_top20.csv", index=False)
 
 
-def _anomaly_event_times(df: pd.DataFrame) -> list[float]:
-    if "ElapsedSec" not in df.columns:
-        return []
-    t = _safe_numeric_series(df, "ElapsedSec")
-    if "HasHighlightAnomaly" in df.columns:
-        mask = df["HasHighlightAnomaly"].fillna(False)
-    elif "HasAnomaly" in df.columns:
-        mask = df["HasAnomaly"].fillna(False)
-    else:
-        return []
-    vals = t[mask].dropna().tolist()
-    return sorted(set(float(v) for v in vals))
-
-
 def plot_integrated_timeseries(df: pd.DataFrame, out_dir: Path) -> None:
     if "ElapsedSec" not in df.columns:
         return
@@ -423,8 +427,6 @@ def plot_integrated_timeseries(df: pd.DataFrame, out_dir: Path) -> None:
     for ax, (title, cols) in zip(axes, plot_groups):
         for col in cols:
             ax.plot(t, _safe_numeric_series(df, col), label=col, alpha=0.85, linewidth=1.0)
-        for event_t in _anomaly_event_times(df):
-            ax.axvline(event_t, color="red", alpha=0.08, linewidth=0.8)
         ax.set_title(title, fontweight="bold")
         ax.grid(True, linestyle="--", alpha=0.4)
         ax.legend(loc="upper right", fontsize="x-small", ncol=2)

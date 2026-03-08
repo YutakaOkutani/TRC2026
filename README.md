@@ -5,7 +5,6 @@
 ```plaintext
 ├── analyzer/                           # ログ解析コードが入ったフォルダ
 │   ├── analyzer.py                      # ログ解析コード
-│   ├── fetch_latest_robust_log.py       # 最新のrobust_log_*.csvをPCの~/Downloadsに移動するコード     
 ├── cansat_mission/                     # ミッションコードが入ったフォルダ
 │   ├── managers/                        # センサーやモーターなどのハードウェアを管理するコード
 │       ├── __init__.py                     # マネージャコード用のディレクトリ
@@ -34,7 +33,7 @@
 │   ├── state.py                         # ミッションの状態管理コード
 ├── gerber/                             # 基板設計データが入ったフォルダ
 │   ├── TRC2026 v5.zip                   # 基板設計データ   
-├── library/                            # ライブラリコードが入ったフォルダ
+├── lib/                            # ライブラリコードが入ったフォルダ
 │   ├── __init__.py                      # ライブラリコード用のディレクトリ
 │   ├── bno055.py                        # BNO055センサー用のライブラリコード
 │   ├── bmp180.py                        # BMP180センサー用のライブラリコード
@@ -46,15 +45,16 @@
 │   ├── camera_phase_relay_README.md     # カメラフェーズのリレーコードの説明
 │   ├── camera_phase_relay_sbc.py        # カメラフェーズのリレーコード（SBC側）
 │   ├── gps_test.py                      # GPSからの生データ取得テストコード
-│   ├── landing_impact.py                # 着地衝撃試験用テストコード
+│   ├── landing_impact.py                # 着地衝撃試験用テストコード（共通オーケストレーターを呼び出し、ログ保存先のみ切り替える）
 │   ├── led.py                           # LEDテストコード
 │   ├── motor_test.py                    # モーター制御テストコード
-│   ├── open_parachute.py                # 開傘衝撃試験用テストコード（landing_impact.py と同じ内容。ログファイルを分けるために別ファイルにしている）
+│   ├── open_parachute.py                # 開傘衝撃試験用テストコード（共通オーケストレーターを呼び出し、ログ保存先のみ切り替える）
 │   ├── orchestrator_phase1_to_phase7.py # フェーズ1からフェーズ7までのE2E試験用コード
 │   ├── orchestrator_phase2_to_phase3.py # フェーズ2からフェーズ3のGPS, IMU誘導デバッグ用コード
 │   ├── orchestrator_phase2_to_phase7.py # フェーズ2からフェーズ7のデバッグ用コード
 │   ├── orchestrator_phase3_to_phase4.py # フェーズ3からフェーズ4のデバッグ用コード
 │   ├── orchestrator_phase4_to_phase7.py # フェーズ4からフェーズ7のカメラ誘導デバッグ用コード
+│   ├── phase0_logging_orchestrator.py   # フェーズ0のログ取得用コード（共通オーケストレーター）
 │   ├── sensor_diag.py                   # センサー診断コード
 │   ├── test_phase0_detection.py         # フェーズ0の検知テストコード
 ├── .gitignore                          # Git管理から除外するファイルのリスト
@@ -65,7 +65,7 @@
 * 構成のポイント
   * テストコードのデバッグがそのまま本番コードのデバッグにつながるように、テストコードはできるだけ本番コードと同じ構成・呼び出しになるようにしている（例: フェーズ1からフェーズ7までのE2E試験用コードは、実際のミッションコードと同じ関数を呼び出す形で書いている）。
   * main.py をテスト用に書き換え、戻し忘れるリスクをできるだけ回避するため、main.py はミッション全体の司令塔のみを役割とし、フェーズの切り替えや状態管理などは `~/cansat_mission` 以下に役割ごとに細かく分割した。
-  * ログを解析するanalyzer.pyを用意した。使い方は自分のPCの `~/Downloads` に出力された `robust_log_*.csv` を置いて、自分のPCでanalyzer.pyを実行する。これにより、最新のログが自動で分類、グラフ化、可視化される。出力データは `~/analyzer/outputs/robust_log_*` にすべて置かれる。Plotlyを使っているので、.htmlを開くと、ウェブブラウザ上で細かくグラフを見られるようになっている。注意としては、ラズパイ上でこのコードを実行すると処理が非常に重くなるので、実行はPC上のみにすることを推奨する。
+  * ログを解析するanalyzer.pyを用意した。使い方は自分のPC（WindowsはWSL2推奨）の `/TRC2026/analyzer/robust_logs` に出力された `robust_log_*.csv` を置いて、自分のPCでanalyzer.pyを実行する。これにより、最新のログが自動で分類、グラフ化、可視化される。出力データは `~/analyzer/outputs/robust_log_*` にすべて置かれる。Plotlyを使っているので、.htmlを開くと、ウェブブラウザ上で細かくグラフを見られるようになっている。注意としては、ラズパイ上でこのコードを実行すると処理が非常に重くなるので、実行はPC上のみですること。
 
 ## 1. 環境構築の準備
 
@@ -83,6 +83,7 @@
 * Raspberry Pi Imager
 * Git
 * ターミナル
+* WSL2（Windowsユーザーのみ）
 
 ---
 
