@@ -4,7 +4,7 @@
 
 - SBC side (`cam_relay_sbc.py`):
   - Calls `csmn/phs/p4.py`, `p5.py`, `p6.py` handlers directly for phase behavior.
-  - Uses shared managers (`SensorManager`, `MotorManager`, `LedManager`) instead of duplicating phase logic.
+  - Uses shared managers (`sns_mgr.py`, `mtr_mgr.py`, `led_mgr.py`) instead of duplicating phase logic.
   - Keeps only SBC-specific realtime debug relay (overlay + telemetry transport).
   - Adds camera debug overlay (bbox, centroid, phase, GOAL sign).
   - Sends telemetry and compressed camera frames to PC.
@@ -29,7 +29,7 @@
 1. Start PC monitor:
 
 ```bash
-python cam_relay_pc.py
+python3 cam_relay_pc.py
 ```
 
 1. Start SBC relay:
