@@ -39,10 +39,10 @@
 │   │   ├── cam_relay_sbc.py
 │   │   └── cam_relay_readme.md
 │   ├── diag/
-│   │   ├── gps_diag.py
-│   │   ├── led_diag.py
-│   │   ├── motor_diag.py
-│   │   └── sensor_diag.py
+│   │   ├── gps.py
+│   │   ├── led.py
+│   │   ├── motor.py
+│   │   └── sensor.py
 │   ├── evt/
 │   │   ├── landing_impact.py
 │   │   └── open_parachute.py
@@ -62,7 +62,7 @@
 │   ├── bno055.py
 │   ├── capture_roi_img.py
 │   └── detect_corn.py
-├── gerber/
+├── gerber/                             # 基板設計データ
 │   └── TRC2026 v5.zip
 ├── .gitignore                          # Git管理から除外するファイルのリスト
 ├── main.py                             # 本番用コード
@@ -101,7 +101,7 @@
 1. Raspberry Pi Imager をインストールする（ <https://www.raspberrypi.com/software/> ）
 2. 起動後、
 
-   * Device → *Raspberry PI Zero 2 W*
+   * Device → *Raspberry Pi Zero 2 W*
    * OS → *Raspberry Pi OS(other)*から*Raspberry Pi OS Lite（64-bit）* （GUIは要らない）
    * Storage → MicroSDカード
 
@@ -287,10 +287,10 @@ python3 runs/orch/orch_p1_p7.py
 python3 runs/orch/orch_p2_p7.py
 
 # 各種テストコード
-python3 runs/diag/sensor_diag.py
-python3 runs/diag/gps_diag.py
-python3 runs/diag/motor_diag.py
-python3 runs/diag/led_diag.py
+python3 runs/diag/sensor.py
+python3 runs/diag/gps.py
+python3 runs/diag/motor.py
+python3 runs/diag/led.py
 
 # 審査書試験系（フェーズ0試験）
 python3 runs/evt/open_parachute.py
@@ -755,29 +755,7 @@ Windowsから：
 ssh pi@100.64.12.34
 ```
 
----
-
-##### さらに便利なところ
-
-###### ホスト名でSSHできるようになる
-
-Tailscale管理画面に行くと：
-
-`raspberrypi.tailnet-name.ts.net`
-
-みたいな名前が付くので、
-
-これで
-
-```powershell
-ssh pi@raspberrypi
-```
-
-も可能になる（Windows PowerShellでOK）。
-
----
-
-###### 再起動時に自動接続
+##### 8. 再起動時に自動接続
 
 通常は自動で再接続されるが、念のため
 
