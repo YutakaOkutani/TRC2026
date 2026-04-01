@@ -9,7 +9,6 @@ analyzer/
 # Python cache
 __pycache__/
 *.py[cod]
-/.idea/
 
 # Test logs
 /runs/log/
@@ -19,3 +18,6 @@ __pycache__/
 
 # Visual Studio
 .vs/
+
+# IDE specific files
+/.idea/
