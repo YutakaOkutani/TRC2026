@@ -1,6 +1,7 @@
 # Analyzer generated outputs (graphs/images/csv summaries)
 anlz/outputs/
-anlz/robust_logs/
+anlz/robust_logs/*
+!anlz/robust_logs/.gitkeep
 anlz/*.png
 
 # Backward compatibility with older analyzer script output locations
